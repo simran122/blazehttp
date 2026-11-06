@@ -413,6 +413,29 @@ First of {completion, failure, abort, deadline, close, teardown, poison} wins (o
 
 `PreparedRequest` is a value object. Guardrails: composition over inheritance — only `Error` is extended (`HttpError`, `TransportError`); interfaces at every seam; **TypeScript:** lookup maps, not `switch`; **Rust:** exhaustive `enum` + `match` (static dispatch), no `Box<dyn …>` on the hot path; functions where no state/polymorphism is needed. Names: TS `AgentRegistry` (undici agents) vs the Rust profile registry; one name `SubmissionBatchBuilder` everywhere.
 
+### 13.1 Code structure (owner rule: production-grade layout)
+Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming Language* ch. 7 (modules) and ch. 11.3 (test organisation), Rust API Guidelines; mirrors mature engines (hyper `proto/h1`, undici `lib/dispatcher`).
+
+1. **Organise by component, not by file type.** Each component is one module: `h1/` (HTTP/1.1 protocol: parser, writer, connection), `shard/`, `pool/`, `connector/`, `middleware/`, `completion/`. Never create crate-wide `types.rs`, `utils.rs`, `helpers.rs` or `constants.rs`. A constant lives with the component that owns it, or in the generated spec (`generated/`).
+2. **One responsibility per file, split by growth.** When a file holds more than one responsibility or grows past about 500 lines, it becomes a directory module: `h1/parser.rs` → `h1/parser/{mod.rs, state.rs, facts.rs}`. Code shared by two components goes in one clearly named shared module, for example `h1/grammar.rs` shared by the parser and the writer.
+3. **Narrow public surfaces.** Each module exposes a small API from `mod.rs` (Rust) or `index.ts` (TS). Everything else is private or `pub(crate)`. Components use each other only through those APIs and never import another component's internals.
+4. **Tests follow the language norms.**
+   - Unit tests sit with their code: Rust `#[cfg(test)] mod tests` inside the file, TS `*.test.ts` beside the file.
+   - Integration tests live in `crates/<crate>/tests/<component>.rs` and `packages/<pkg>/test/`.
+   - Fuzz targets, benchmarks/examples, test-vector directories and the design note all carry the **same component name**, so one name finds everything about a component. Example: `src/h1/parser.rs` · `tests/h1_response.rs` · `fuzz_targets/h1_response.rs` · `examples/h1_parse_bench.rs` · `tests/vectors/h1-response/` · `docs/notes/response-parser.md`.
+5. **Fixed top level.**
+   - `crates/` holds Rust crates.
+   - `packages/` holds npm packages and `npm/<target>/` the platform binaries.
+   - `tools/` holds dev scripts and `bench/` the benchmark harness.
+   - `tests/vectors/` holds shared test data.
+   - `docs/notes/` holds one note per component and `docs/perf/` the speed programme.
+   - `policy/` holds `spec.json`.
+
+   Nothing else at the top level without a design change.
+6. **Generated code is isolated** in `generated/` directories, never edited by hand, and checked for drift in CI.
+7. **One-way dependencies.** `engine-simd` ← `engine-core` ← {`node-binding`, `engine-bench`}; `bench-server` is standalone. The core never depends on Node, napi or benchmark code. In TypeScript: `client/` → `transports/` → `native/`, with no cycles. CI enforces it: `cargo tree` crate directions, and a lint for import cycles and cross-feature internal imports.
+8. **The same rules apply in TypeScript:** `packages/blazehttp/src/<feature>/` (`client/`, `transports/<name>/`, `native/`, `errors/`, `generated/`), each with an `index.ts` entry.
+
 ## 14. Tech decisions
 | Decision | Choice | Rejected | Why |
 |---|---|---|---|
