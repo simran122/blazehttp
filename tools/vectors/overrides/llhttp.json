@@ -1,0 +1,38 @@
+{
+  "sample / RTSP response": {
+    "native": {
+      "error": "PROTOCOL/malformed-response"
+    },
+    "rule": "§5.2 Status line: exactly HTTP/1.0 or HTTP/1.1"
+  },
+  "sample / ICE response": {
+    "native": {
+      "error": "PROTOCOL/malformed-response"
+    },
+    "rule": "§5.2 Status line: exactly HTTP/1.0 or HTTP/1.1"
+  },
+  "sample / HTTP version 0.9": {
+    "native": {
+      "error": "PROTOCOL/malformed-response"
+    },
+    "rule": "§5.2 Status line: exactly HTTP/1.0 or HTTP/1.1; HTTP/0.9 rejected"
+  },
+  "sample / Response starting with CRLF": {
+    "native": {
+      "error": "PROTOCOL/malformed-response"
+    },
+    "rule": "§5.2 Status line: the head starts with HTTP/1.0 or HTTP/1.1 (no empty lines are skipped before it)"
+  },
+  "connection / HTTP 100 first, then 400": {
+    "native": {
+      "error": "PROTOCOL/malformed-response"
+    },
+    "rule": "§5.2 Status line: the head after an interim response starts with HTTP/1.0 or HTTP/1.1 (no empty lines are skipped before it)"
+  },
+  "invalid / CR before response and tab after HTTP version": {
+    "native": {
+      "error": "PROTOCOL/malformed-response"
+    },
+    "rule": "§5.2 Line endings: a bare CR anywhere in the head is rejected"
+  }
+}

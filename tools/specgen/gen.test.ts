@@ -46,11 +46,21 @@ describe('generate', () => {
         return ERROR_FORMAT[code](detail);
       }
 
+      /** Display form of every engine (wire) error, one per detail, in \`ErrorCode::ALL_SAMPLES\` order. */
+      export const ENGINE_ERRORS: readonly string[] = [
+        'TIMEOUT/connect',
+        'TIMEOUT/slow-body',
+        'QUEUE_FULL/client',
+        'QUEUE_FULL/global',
+      ];
+
       export const H1_LIMITS = {
         maxHeadBytes: 65536,
       } as const;
 
-      export type Method = 'GET' | 'POST';
+      export const METHODS = ['GET', 'POST'] as const;
+
+      export type Method = (typeof METHODS)[number];
       "
     `);
     expect(rust).toMatchInlineSnapshot(`
