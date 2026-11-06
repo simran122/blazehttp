@@ -36,4 +36,16 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm knip
+      - run: pnpm specgen --check
       - run: pnpm test
+
+  rust:
+    runs-on: ubuntu-24.04
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test -p engine-core

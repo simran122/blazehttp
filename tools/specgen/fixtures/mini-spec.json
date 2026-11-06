@@ -1,0 +1,9 @@
+{
+  "errors": [
+    { "code": "TIMEOUT", "details": ["connect", "slow-body"] },
+    { "code": "HTTP_STATUS", "fields": { "status": "u32" }, "wire": false },
+    { "code": "QUEUE_FULL", "fields": { "scope": ["client", "global"], "bound": "u32" }, "enumType": "QueueScope" }
+  ],
+  "limits": { "h1": { "maxHeadBytes": 65536 } },
+  "methods": ["GET", "POST"]
+}
