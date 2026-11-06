@@ -30,6 +30,14 @@ test('engine crates may not depend on HTTP engines', () => {
   expect(v('crates/engine-core/Cargo.toml', '[dependencies]\nhyper = "1"')).toEqual(['no-http-engine-dep']);
   expect(v('crates/engine-bench/Cargo.toml', '[dependencies]\nhyper = "1"')).toEqual([]);
 });
+test('dotted keys and package renames are matched', () => {
+  const engine = (toml: string) => v('crates/engine-core/Cargo.toml', toml);
+  expect(engine('[dependencies]\nhyper.workspace = true')).toEqual(['no-http-engine-dep']);
+  expect(engine('[dependencies]\nreqwest.version = "0.12"')).toEqual(['no-http-engine-dep']);
+  expect(engine('[dependencies]\nx = { package = "hyper" }')).toEqual(['no-http-engine-dep']);
+  expect(engine('[dependencies.x]\npackage = "ureq"\nversion = "3"')).toEqual(['no-http-engine-dep']);
+  expect(engine('[dependencies.x]\nversion = "3"')).toEqual([]);
+});
 test('reports file, line and message', () => {
   expect(checkFile('a.ts', 'x\n// TODO: y', { packageVersion: '0.0.0' })).toEqual([
     { file: 'a.ts', line: 2, rule: 'todo-needs-issue', message: expect.any(String) as string },

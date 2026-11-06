@@ -5,6 +5,7 @@ import { checkFile, type Violation } from './rules.ts';
 /** Contains rule-violating strings as test fixtures. */
 const EXCLUDED = new Set(['tools/policy-check/rules.test.ts']);
 /** Frozen benchmark prototypes kept as evidence, not product code. */
+// removal: P0 Task 14 (#2)
 const EXCLUDED_DIRS = ['spike/'];
 const MANIFEST = 'packages/blazehttp/package.json';
 
