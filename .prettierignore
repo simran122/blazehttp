@@ -5,3 +5,4 @@ docs
 .superpowers
 .claude
 coverage
+packages/blazehttp/src/generated/

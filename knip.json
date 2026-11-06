@@ -4,6 +4,10 @@
     ".": {
       "entry": ["tools/policy-check/{check,npm-deprecated}.ts"],
       "project": ["*.{ts,js}", "tools/**/*.ts"]
+    },
+    "packages/blazehttp": {
+      "entry": ["src/index.ts", "test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
     }
   }
 }

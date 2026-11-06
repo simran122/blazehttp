@@ -1,0 +1,9 @@
+{
+  "name": "blazehttp",
+  "version": "0.0.0",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  }
+}

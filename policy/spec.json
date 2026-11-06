@@ -1,0 +1,88 @@
+{
+  "errors": [
+    {
+      "code": "TIMEOUT",
+      "details": ["connect", "headers", "idleBody", "idleSend", "total", "queue", "stall", "slow-body"]
+    },
+    { "code": "ABORTED", "details": ["signal", "client-closed", "environment-teardown", "engine-dropped"] },
+    {
+      "code": "NETWORK",
+      "details": [
+        "dns/notfound",
+        "dns/timeout",
+        "dns/servfail",
+        "refused",
+        "reset",
+        "unreachable",
+        "closed-before-response",
+        "upload-stream-failed",
+        "other"
+      ]
+    },
+    {
+      "code": "TLS",
+      "details": [
+        "handshake",
+        "certificate/expired",
+        "certificate/hostname",
+        "certificate/unknown-ca",
+        "certificate/other",
+        "protocol-version",
+        "other"
+      ]
+    },
+    { "code": "HTTP_STATUS", "fields": { "status": "u32" }, "wire": false },
+    {
+      "code": "PROTOCOL",
+      "details": [
+        "malformed-response",
+        "incomplete-body",
+        "truncated",
+        "invalid-chunked",
+        "smuggling-risk",
+        "unexpected-data",
+        "decode",
+        "other"
+      ]
+    },
+    { "code": "PARSE", "details": ["json", "charset"], "wire": false },
+    {
+      "code": "TOO_LARGE",
+      "details": [
+        "request-body",
+        "response-body",
+        "decompressed-ratio",
+        "decompression-window",
+        "headers",
+        "encoding-layers",
+        "url"
+      ]
+    },
+    { "code": "TOO_MANY_REDIRECTS", "fields": { "count": "u32" } },
+    {
+      "code": "REDIRECT_REJECTED",
+      "details": [
+        "downgrade",
+        "non-http-scheme",
+        "userinfo",
+        "missing-location",
+        "invalid-location",
+        "body-not-replayable",
+        "cross-origin-body"
+      ]
+    },
+    { "code": "PROXY", "details": ["connect", "auth", "tunnel"] },
+    { "code": "SSRF_BLOCKED", "fields": { "address": "string", "rule": "string" }, "wire": false },
+    {
+      "code": "QUEUE_FULL",
+      "fields": { "scope": ["client", "origin", "bytes", "contexts", "global"], "bound": "u32" },
+      "enumType": "QueueScope"
+    },
+    { "code": "INVALID_CONFIG", "fields": { "field": "string", "reason": "string" }, "wire": false },
+    { "code": "ENGINE", "details": ["binary-load", "integrity", "panic", "poisoned", "resource-exhausted", "internal"] }
+  ],
+  "limits": {
+    "h1": { "maxHeadBytes": 65536, "maxStatusLineBytes": 8192, "maxHeaderFields": 100, "maxInterimResponses": 10 }
+  },
+  "methods": ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "QUERY"]
+}
