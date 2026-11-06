@@ -1,0 +1,22 @@
+HTTP/1.1 200 OK
+content-type: application/json
+content-length: 847
+date: Fri, 06 Nov 2026 12:00:00 GMT
+x-bench-header-01: value-01-abcdefghijklmnopqrstuv
+x-bench-header-02: value-02-abcdefghijklmnopqrstuv
+x-bench-header-03: value-03-abcdefghijklmnopqrstuv
+x-bench-header-04: value-04-abcdefghijklmnopqrstuv
+x-bench-header-05: value-05-abcdefghijklmnopqrstuv
+x-bench-header-06: value-06-abcdefghijklmnopqrstuv
+x-bench-header-07: value-07-abcdefghijklmnopqrstuv
+x-bench-header-08: value-08-abcdefghijklmnopqrstuv
+x-bench-header-09: value-09-abcdefghijklmnopqrstuv
+x-bench-header-10: value-10-abcdefghijklmnopqrstuv
+x-bench-header-11: value-11-abcdefghijklmnopqrstuv
+x-bench-header-12: value-12-abcdefghijklmnopqrstuv
+x-bench-header-13: value-13-abcdefghijklmnopqrstuv
+x-bench-header-14: value-14-abcdefghijklmnopqrstuv
+x-bench-header-15: value-15-abcdefghijklmnopqrstuv
+x-bench-header-16: value-16-abcdefghijklmnopqrstuv
+x-bench-header-17: value-17-abcdefghijklmnopqrstuv
+

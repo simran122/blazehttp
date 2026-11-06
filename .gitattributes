@@ -1,0 +1,2 @@
+# Raw HTTP head fixtures: exact bytes (CRLF), never converted.
+tests/fixtures/**/*.http -text
