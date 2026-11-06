@@ -105,12 +105,21 @@ fn decode(raw: RawCase) -> Case {
 ///
 /// # Panics
 ///
+/// As [`load_suite_in`].
+#[must_use]
+pub fn load_suite(suite: &str) -> Vec<(String, Case)> {
+    load_suite_in(Path::new(VECTORS_ROOT), suite)
+}
+
+/// [`load_suite`] for the vectors directory `root`.
+///
+/// # Panics
+///
 /// When `index.json` or a vector file cannot be read or parsed, when `suite` has no files, when a
 /// file has no cases, or when a `.json` file sits in a directory of the suite's files without being
 /// registered in `index.json`.
 #[must_use]
-pub fn load_suite(suite: &str) -> Vec<(String, Case)> {
-    let root = Path::new(VECTORS_ROOT);
+pub fn load_suite_in(root: &Path, suite: &str) -> Vec<(String, Case)> {
     let index: BTreeMap<String, Vec<String>> = read_json(&root.join(INDEX_FILE));
     let files: Vec<&String> = index
         .iter()
@@ -129,10 +138,8 @@ pub fn load_suite(suite: &str) -> Vec<(String, Case)> {
         let entries = fs::read_dir(root.join(dir)).unwrap_or_else(|e| panic!("{dir}: {e}"));
         for entry in entries {
             let path = entry.unwrap_or_else(|e| panic!("{dir}: {e}")).path();
-            if path
-                .extension()
-                .is_none_or(|ext| !ext.eq_ignore_ascii_case("json"))
-            {
+            // Case-sensitive, like `listVectorFiles` in tools/vectors/schema.ts.
+            if path.extension().is_none_or(|ext| ext != "json") {
                 continue;
             }
             let name = path

@@ -1,3 +1,5 @@
+import { asArray, asBoolean, asNumber, asObject, asRecord, asString, asStrings, fail } from '../json-guards.ts';
+
 /** A field is a number, a string, or an enum given as its ordered values. */
 export type FieldType = 'u32' | 'string' | readonly string[];
 
@@ -21,31 +23,18 @@ export interface Spec {
   readonly methods: readonly string[];
 }
 
-const ERROR_KEYS = new Set(['code', 'details', 'fields', 'wire', 'enumType']);
+const OPTIONAL_ERROR_KEYS = ['details', 'fields', 'wire', 'enumType'];
 const MAX_WIRE_CODES = 256;
 const CODE_NAME = /^[A-Z][A-Z_]*$/;
 const LIMIT_NAME = /^[a-z][A-Za-z0-9]*$/;
 
-const fail = (path: string, problem: string): never => {
-  throw new Error(`spec.json ${path}: ${problem}`);
-};
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const asRecord = (v: unknown, path: string): Record<string, unknown> =>
-  isRecord(v) ? v : fail(path, 'expected an object');
-const asArray = (v: unknown, path: string): unknown[] =>
-  Array.isArray(v) ? (v as unknown[]) : fail(path, 'expected an array');
-const asString = (v: unknown, path: string): string => (typeof v === 'string' ? v : fail(path, 'expected a string'));
-const asStrings = (v: unknown, path: string): string[] =>
-  asArray(v, path).map((x, i) => asString(x, `${path}[${String(i)}]`));
-const asNumber = (v: unknown, path: string): number => (typeof v === 'number' ? v : fail(path, 'expected a number'));
-const asBoolean = (v: unknown, path: string): boolean =>
-  typeof v === 'boolean' ? v : fail(path, 'expected a boolean');
+/** Root of every JSON path in errors, e.g. `spec.json $.errors[0].code: expected a string`. */
+const SPEC = 'spec.json $';
 
 const parseField = (v: unknown, path: string): FieldType => (v === 'u32' || v === 'string' ? v : asStrings(v, path));
 
 const parseError = (raw: unknown, path: string): ErrorSpec => {
-  const e = asRecord(raw, path);
-  for (const key of Object.keys(e)) if (!ERROR_KEYS.has(key)) fail(`${path}.${key}`, 'unknown key');
+  const e = asObject(raw, path, ['code'], OPTIONAL_ERROR_KEYS);
   const { details, fields, wire, enumType } = e;
   return {
     code: asString(e.code, `${path}.code`),
@@ -67,12 +56,12 @@ const parseError = (raw: unknown, path: string): ErrorSpec => {
 
 /** Structural validation of the parsed JSON. Errors name the JSON path. */
 export function parseSpec(raw: unknown): Spec {
-  const root = asRecord(raw, '$');
-  const h1 = asRecord(asRecord(root.limits, '$.limits').h1, '$.limits.h1');
+  const root = asRecord(raw, SPEC);
+  const h1 = asRecord(asRecord(root.limits, `${SPEC}.limits`).h1, `${SPEC}.limits.h1`);
   return {
-    errors: asArray(root.errors, '$.errors').map((e, i) => parseError(e, `$.errors[${String(i)}]`)),
-    limits: { h1: Object.fromEntries(Object.entries(h1).map(([k, v]) => [k, asNumber(v, `$.limits.h1.${k}`)])) },
-    methods: asStrings(root.methods, '$.methods'),
+    errors: asArray(root.errors, `${SPEC}.errors`).map((e, i) => parseError(e, `${SPEC}.errors[${String(i)}]`)),
+    limits: { h1: Object.fromEntries(Object.entries(h1).map(([k, v]) => [k, asNumber(v, `${SPEC}.limits.h1.${k}`)])) },
+    methods: asStrings(root.methods, `${SPEC}.methods`),
   };
 }
 
@@ -93,7 +82,7 @@ const checkDetailList = (where: string, values: readonly string[], idBits: numbe
 };
 
 const checkError = (e: ErrorSpec, index: number): void => {
-  const where = `$.errors[${String(index)}] (${e.code})`;
+  const where = `${SPEC}.errors[${String(index)}] (${e.code})`;
   if (!CODE_NAME.test(e.code)) fail(where, 'code must be UPPER_SNAKE_CASE');
   if ((e.details === undefined) === (e.fields === undefined)) fail(where, 'exactly one of details or fields');
   if (e.details !== undefined) {
@@ -114,15 +103,16 @@ const checkError = (e: ErrorSpec, index: number): void => {
 
 /** Semantic validation: ids must fit the wire format and stay unambiguous. */
 export function validateSpec(spec: Readonly<Spec>): void {
-  if (spec.errors.length > MAX_WIRE_CODES) fail('$.errors', `more than ${String(MAX_WIRE_CODES)} codes`);
+  if (spec.errors.length > MAX_WIRE_CODES) fail(`${SPEC}.errors`, `more than ${String(MAX_WIRE_CODES)} codes`);
   const dup = duplicates(spec.errors.map((e) => e.code));
-  if (dup !== undefined) fail('$.errors', `duplicate code "${dup}"`);
+  if (dup !== undefined) fail(`${SPEC}.errors`, `duplicate code "${dup}"`);
   spec.errors.forEach(checkError);
-  checkDetailList('$.methods', spec.methods, 256);
-  if (spec.methods.includes('CONNECT')) fail('$.methods', 'CONNECT must never be representable (design section 12)');
+  checkDetailList(`${SPEC}.methods`, spec.methods, 256);
+  if (spec.methods.includes('CONNECT'))
+    fail(`${SPEC}.methods`, 'CONNECT must never be representable (design section 12)');
   for (const [name, value] of Object.entries(spec.limits.h1)) {
     if (!LIMIT_NAME.test(name) || !Number.isSafeInteger(value) || value < 0) {
-      fail(`$.limits.h1.${name}`, 'limits are camelCase names with non-negative integer values');
+      fail(`${SPEC}.limits.h1.${name}`, 'limits are camelCase names with non-negative integer values');
     }
   }
 }

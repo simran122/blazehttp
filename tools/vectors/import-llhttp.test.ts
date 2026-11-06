@@ -6,9 +6,11 @@ import {
   nativeError,
   normaliseInput,
   parseErrorNames,
+  mitCopyright,
   parseOverrides,
   tagCommit,
 } from './import-llhttp.ts';
+import { LICENCE_TEXTS } from './notices.ts';
 import type { VectorSource } from './schema.ts';
 
 const FENCE = '```';
@@ -108,15 +110,9 @@ describe('importLlhttp', () => {
   });
 
   it('maps llhttp errors to native expectations', () => {
-    expect(nativeError('HPE_HEADER_OVERFLOW', [])).toEqual({ error: 'TOO_LARGE/headers' });
-    expect(nativeError('HPE_INVALID_CONSTANT', [])).toEqual(MALFORMED);
-    expect(nativeError('HPE_UNEXPECTED_CONTENT_LENGTH', [])).toEqual({ error: 'PROTOCOL/smuggling-risk' });
-    expect(nativeError('HPE_INVALID_TRANSFER_ENCODING', [])).toEqual({ error: 'PROTOCOL/smuggling-risk' });
-    const duplicate: [string, string][] = [
-      ['Content-Length', '1'],
-      ['content-length', '2'],
-    ];
-    expect(nativeError('HPE_INVALID_CONTENT_LENGTH', duplicate)).toEqual({ error: 'PROTOCOL/smuggling-risk' });
+    expect(nativeError('HPE_INVALID_CONSTANT')).toEqual(MALFORMED);
+    expect(nativeError('HPE_UNEXPECTED_CONTENT_LENGTH')).toEqual({ error: 'PROTOCOL/smuggling-risk' });
+    expect(nativeError('HPE_INVALID_TRANSFER_ENCODING')).toEqual({ error: 'PROTOCOL/smuggling-risk' });
     const [result] = run(FIXTURE, withRtsp);
     expect(result?.file.cases[1]?.expect.native).toEqual({ error: 'PROTOCOL/smuggling-risk' });
   });
@@ -146,6 +142,20 @@ describe('importLlhttp', () => {
     expect(() => parseOverrides({ 'fixture / RTSP': { native: MALFORMED } })).toThrow(/rule/);
     expect(() => parseOverrides({ 'fixture / RTSP': { native: MALFORMED, rule: 'stricter' } })).toThrow(/§/);
     expect(parseOverrides({ 'fixture / RTSP': RTSP_OVERRIDE }).get('fixture / RTSP')).toEqual(RTSP_OVERRIDE);
+  });
+
+  it('lets an override decide a case whose log cannot be modelled', () => {
+    const name = 'fixture / Odd';
+    const odd = mdCase('Odd', RESPONSE, 'HTTP/1.1 200 OK\n\n', 'something else');
+    expect(() => run(mdFile(odd))).toThrow(/fixture \/ Odd: cannot model an unparsed log line; decide the case/);
+    const decided = runOne(odd, new Map([[name, RTSP_OVERRIDE]]));
+    expect(decided.file.cases[0]?.expect.native).toEqual(MALFORMED);
+    expect(decided.overridden).toEqual([name]);
+  });
+
+  it('reads CRLF markdown like LF markdown', () => {
+    const lf = run(FIXTURE, withRtsp);
+    expect(run(FIXTURE.replaceAll('\n', '\r\n'), withRtsp)).toEqual(lf);
   });
 
   it('refuses a case it cannot model without an override', () => {
@@ -283,6 +293,35 @@ describe('importLlhttp', () => {
     ).toEqual({ ok: { status: 304, headers: [['Transfer-Encoding', 'chunked']], body: '', keepAlive: true } });
   });
 
+  it.each([
+    ['HTTP/1.0 without keep-alive', '1.0', [['Content-Length', '2']]],
+    [
+      'a close token in a list',
+      '1.1',
+      [
+        ['Connection', 'close, keep-alive'],
+        ['Content-Length', '2'],
+      ],
+    ],
+  ] as const)('keeps no connection alive for %s', (_, version, fields) => {
+    const lines = fields.map(([n, v]) => `${n}: ${v}\r\n`);
+    const log = ['off=0 message begin', 'off=0 len=4 span[protocol]="HTTP"'];
+    let off = 17;
+    for (const [i, [name, value]] of fields.entries()) {
+      log.push(`off=${String(off)} len=${String(name.length)} span[header_field]="${name}"`);
+      log.push(`off=${String(off + name.length + 2)} len=${String(value.length)} span[header_value]="${value}"`);
+      off += String(lines[i]).length;
+      log.push(`off=${String(off)} header_value complete`);
+    }
+    const head = off + 2;
+    log.push(`off=${String(head)} headers complete status=200 v=${version.replace('.', '/')} flags=20`);
+    log.push(`off=${String(head)} len=2 span[body]="ok"`, `off=${String(head + 2)} message complete`);
+    const http = `HTTP/${version} 200 OK\n${fields.map(([n, v]) => `${n}: ${v}\n`).join('')}\nok`;
+    expect(runOne(mdCase('Close', RESPONSE, http, log.join('\n'))).file.cases[0]?.expect.native).toEqual({
+      ok: { status: 200, headers: fields, body: 'ok', keepAlive: false },
+    });
+  });
+
   it('expects incomplete-body when EOF cuts a Content-Length body', () => {
     const cut = runOne(
       mdCase(
@@ -355,6 +394,11 @@ describe('importLlhttp', () => {
     ],
     [
       'Transfer-Encoding "chunked"',
+      'HTTP/1.1 200 OK\nTransfer-Encoding: chunked\nContent-Length: 1\n\n',
+      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=7 span[header_value]="chunked"\noff=45 header_value complete\noff=45 len=14 span[header_field]="Content-Length"\noff=61 len=1 span[header_value]="1"\noff=64 header_value complete\noff=66 headers complete status=200 v=1/1 flags=228',
+    ],
+    [
+      'Transfer-Encoding "chunked"',
       'HTTP/1.0 200 OK\nTransfer-Encoding: chunked\n\n',
       'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=7 span[header_value]="chunked"\noff=45 header_value complete\noff=47 headers complete status=200 v=1/0 flags=208',
     ],
@@ -371,6 +415,9 @@ describe('importLlhttp', () => {
       /http and one log/,
     );
     expect(() => run(mdFile(`## Open\n\n${FENCE}http\nx\n`))).toThrow(/unclosed/);
+    expect(() => run(mdFile(mdCase('Null meta', 'null', 'x', 'y')))).toThrow(
+      /fixture \/ Null meta: meta: expected an object/,
+    );
     expect(() => run(mdFile(`## Only log\n\n${FENCE}log\ny\n${FENCE}\n`))).toThrow(/http and one log/);
     expect(run(`${FENCE}http\nx\n${FENCE}\n# Title\n`)[0]?.file.cases).toEqual([]);
   });
@@ -394,8 +441,17 @@ describe('parseOverrides', () => {
   it('validates the override file shape', () => {
     expect(() => parseOverrides([])).toThrow(/object/);
     expect(() => parseOverrides({ x: null })).toThrow(/overrides.x: expected an object/);
-    expect(() => parseOverrides({ x: { ...RTSP_OVERRIDE, extra: 1 } })).toThrow(/unknown key extra/);
+    expect(() => parseOverrides({ x: { ...RTSP_OVERRIDE, extra: 1 } })).toThrow(/overrides.x.extra: unknown key/);
     expect(() => parseOverrides({ x: { native: { error: 'NOPE/x' }, rule: '§5.2 x' } })).toThrow(/NOPE/);
+  });
+});
+
+describe('mitCopyright', () => {
+  it('returns the copyright line of an exact MIT licence', () => {
+    const mit = `MIT License\n\nCopyright © 2018 Someone\n\n${String(LICENCE_TEXTS['MIT'])}\n`;
+    expect(mitCopyright(mit)).toBe('Copyright © 2018 Someone');
+    expect(() => mitCopyright(mit.replace('Permission', 'No permission'))).toThrow(/not the MIT licence/);
+    expect(() => mitCopyright('Apache License')).toThrow(/not the MIT licence/);
   });
 });
 

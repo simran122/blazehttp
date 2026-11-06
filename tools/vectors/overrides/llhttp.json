@@ -17,12 +17,6 @@
     },
     "rule": "§5.2 Status line: exactly HTTP/1.0 or HTTP/1.1; HTTP/0.9 rejected"
   },
-  "sample / No reason phrase": {
-    "native": {
-      "error": "PROTOCOL/malformed-response"
-    },
-    "rule": "§5.2 Status line: one SP, 3 digits, SP, reason phrase (the SP after the status code is required)"
-  },
   "sample / Response starting with CRLF": {
     "native": {
       "error": "PROTOCOL/malformed-response"

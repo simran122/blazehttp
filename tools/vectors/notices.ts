@@ -1,14 +1,14 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { listVectorFiles, loadVectorFile, type VectorSource, VECTORS_ROOT } from './schema.ts';
+import { listVectorFiles, loadVectorFile, REPO_ROOT, VECTORS_DIR, type VectorSource } from './schema.ts';
 
-const NOTICES_FILE = 'THIRD_PARTY_NOTICES';
+const NOTICES_FILE = join(REPO_ROOT, 'THIRD_PARTY_NOTICES');
 /** Our own vectors carry our licence and need no third-party notice. */
 const OWN_PROJECT = 'blazehttp';
 const RULE = '='.repeat(80);
 
 /** Licence texts by SPDX id; the copyright line comes from each vector file's source. */
-const LICENCE_TEXTS: Readonly<Record<string, string>> = {
+export const LICENCE_TEXTS: Readonly<Record<string, string>> = {
   MIT: `Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the
 "Software"), to deal in the Software without restriction, including
@@ -50,7 +50,7 @@ export function renderNotices(files: readonly NoticeInput[]): string {
     if (source.project === OWN_PROJECT) continue;
     const key = JSON.stringify([source.project, source.licence, source.copyright]);
     const block = blocks.get(key) ?? { source, lines: [] };
-    block.lines.push(`  ${VECTORS_ROOT}/${path} (from ${source.url})`);
+    block.lines.push(`  ${VECTORS_DIR}/${path} (from ${source.url})`);
     blocks.set(key, block);
   }
   const rendered = [...blocks.values()].map(({ source, lines }) => {
@@ -74,14 +74,15 @@ export function renderNotices(files: readonly NoticeInput[]): string {
 
 /* v8 ignore start -- CLI wrapper, exercised by `pnpm vectors:notices --check` in CI */
 if (import.meta.main) {
-  const files = listVectorFiles(VECTORS_ROOT).map((path) => ({
+  const root = join(REPO_ROOT, VECTORS_DIR);
+  const files = listVectorFiles(root).map((path) => ({
     path,
-    source: loadVectorFile(join(VECTORS_ROOT, path)).source,
+    source: loadVectorFile(join(root, path)).source,
   }));
   const text = renderNotices(files);
   if (process.argv.includes('--check')) {
     const current = readFileSync(NOTICES_FILE, 'utf8');
-    if (current !== text) console.error(`${NOTICES_FILE} is out of date; run pnpm vectors:notices`);
+    if (current !== text) console.error(`THIRD_PARTY_NOTICES is out of date; run pnpm vectors:notices`);
     process.exitCode = current === text ? 0 : 1;
   } else {
     writeFileSync(NOTICES_FILE, text);

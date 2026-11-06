@@ -46,6 +46,9 @@ const toWireCode = (e: ErrorSpec, id: number): WireCode => {
 const wireCodes = (spec: Spec): WireCode[] =>
   spec.errors.flatMap((e, id) => (e.wire === false ? [] : [toWireCode(e, id)]));
 
+/** Display forms of a wire code, one per detail value; the Rust `Display` arms below print the same strings. */
+const displays = (c: WireCode): string[] => (c.values ? c.values.map((v) => `${c.code}/${v}`) : [c.code]);
+
 const tsFieldType = (t: FieldType): string => (isEnum(t) ? t.map(q).join(' | ') : t === 'u32' ? 'number' : 'string');
 
 const tsDetail = (e: ErrorSpec): string =>
@@ -100,11 +103,20 @@ const generateTs = (spec: Spec): string =>
     '  return ERROR_FORMAT[code](detail);',
     '}',
     '',
+    '/** Display form of every engine (wire) error, one per detail, in `ErrorCode::ALL_SAMPLES` order. */',
+    'export const ENGINE_ERRORS: readonly string[] = [',
+    ...wireCodes(spec)
+      .flatMap(displays)
+      .map((d) => `  ${q(d)},`),
+    '];',
+    '',
     'export const H1_LIMITS = {',
     ...Object.entries(spec.limits.h1).map(([k, v]) => `  ${k}: ${String(v)},`),
     '} as const;',
     '',
-    `export type Method = ${spec.methods.map(q).join(' | ')};`,
+    `export const METHODS = [${spec.methods.map(q).join(', ')}] as const;`,
+    '',
+    'export type Method = (typeof METHODS)[number];',
     '',
   ].join('\n');
 

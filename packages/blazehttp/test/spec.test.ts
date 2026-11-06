@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ENGINE_ERRORS,
   ERROR_WIRE,
   formatErrorCode,
   H1_LIMITS,
   type ErrorDetailMap,
   type HttpErrorCode,
+  METHODS,
   type Method,
 } from '../src/generated/spec.ts';
 
@@ -53,5 +55,18 @@ describe('generated spec', () => {
     });
     const methods: Method[] = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'QUERY'];
     expect(methods).toHaveLength(8);
+  });
+  it('lists engine errors in formatErrorCode form, wire codes only', () => {
+    expect(ENGINE_ERRORS).toContain(formatErrorCode('PROTOCOL', 'malformed-response'));
+    expect(ENGINE_ERRORS).toContain(formatErrorCode('QUEUE_FULL', { scope: 'global', bound: 1 }));
+    expect(ENGINE_ERRORS).toContain(formatErrorCode('TOO_MANY_REDIRECTS', { count: 21 }));
+    expect(ENGINE_ERRORS).not.toContain(formatErrorCode('HTTP_STATUS', { status: 500 }));
+    expect(ENGINE_ERRORS).not.toContain(formatErrorCode('PARSE', 'json'));
+    expect(new Set(ENGINE_ERRORS).size).toBe(ENGINE_ERRORS.length);
+  });
+
+  it('lists the methods at runtime', () => {
+    const methods: readonly Method[] = METHODS;
+    expect(methods).toContain('QUERY');
   });
 });

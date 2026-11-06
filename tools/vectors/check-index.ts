@@ -1,4 +1,5 @@
-import { listVectorFiles, readIndex, VECTORS_ROOT } from './schema.ts';
+import { join } from 'node:path';
+import { listVectorFiles, readIndex, REPO_ROOT, VECTORS_DIR } from './schema.ts';
 
 /** Problems with `<root>/index.json`: files on disk it does not list, listed files that are gone, files with no suite. */
 export function checkIndex(root: string): string[] {
@@ -18,8 +19,8 @@ export function checkIndex(root: string): string[] {
 
 /* v8 ignore start -- CLI wrapper, exercised by `pnpm vectors:index` in CI */
 if (import.meta.main) {
-  const problems = checkIndex(VECTORS_ROOT);
-  for (const p of problems) console.error(`${VECTORS_ROOT}/index.json: ${p}`);
+  const problems = checkIndex(join(REPO_ROOT, VECTORS_DIR));
+  for (const p of problems) console.error(`${VECTORS_DIR}/index.json: ${p}`);
   process.exitCode = problems.length === 0 ? 0 : 1;
 }
 /* v8 ignore stop */

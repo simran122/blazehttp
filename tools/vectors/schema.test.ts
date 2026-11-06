@@ -1,7 +1,7 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { loadVectorFile, parseIndex, parseVectorFile, type VectorFile } from './schema.ts';
 
 const VALID: VectorFile = {
@@ -40,18 +40,40 @@ const mutate = (edit: (file: { cases: Record<string, unknown>[] } & Record<strin
 
 describe('loadVectorFile', () => {
   it('loads a valid file', () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'vectors-')), 'v.json');
+    const dir = mkdtempSync(join(tmpdir(), 'vectors-'));
+    onTestFinished(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const path = join(dir, 'v.json');
     writeFileSync(path, JSON.stringify(VALID));
     expect(loadVectorFile(path)).toEqual(VALID);
   });
 
   it.each([
     ['not an object', () => 1, /f: expected an object/],
-    ['unknown key', () => mutate((f) => (f['extra'] = 1)), /f: unknown key extra/],
+    ['unknown key', () => mutate((f) => (f['extra'] = 1)), /f\.extra: unknown key/],
     ['missing source field', () => mutate((f) => delete (f['source'] as Record<string, unknown>)['url']), /url/],
     ['no cases', () => mutate((f) => (f.cases = [])), /at least one case/],
     ['cases not an array', () => mutate((f) => Object.assign(f, { cases: {} })), /cases: expected an array/],
     ['bad encoding', () => mutate((f) => (f.cases[0] = { ...f.cases[0], inputEncoding: 'base64' })), /utf8/],
+    [
+      'an error the engine cannot produce',
+      () => mutate((f) => (f.cases[1] = { ...f.cases[1], expect: { native: { error: 'HTTP_STATUS' } } })),
+      /HTTP_STATUS is not an engine error/,
+    ],
+    [
+      'a status outside 100..=599',
+      () =>
+        mutate(
+          (f) => ((f.cases[0] as { expect: { native: { ok: { status: number } } } }).expect.native.ok.status = 70000),
+        ),
+      /status: expected an integer in 100\.\.=599/,
+    ],
+    [
+      'an unknown method',
+      () => mutate((f) => (f.cases[0] = { ...f.cases[0], request: { method: 'CONNECT' } })),
+      /CONNECT is not a generated Method/,
+    ],
     [
       'unknown error',
       () => mutate((f) => (f.cases[1] = { ...f.cases[1], expect: { native: { error: 'X/y' } } })),

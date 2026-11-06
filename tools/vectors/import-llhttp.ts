@@ -1,17 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { asObject, asRecord } from '../json-guards.ts';
+import { LICENCE_TEXTS } from './notices.ts';
 import {
+  loadVectorFile,
   type NativeExpect,
-  object,
   parseNativeExpect,
   parseVectorFile,
+  REPO_ROOT,
   type VectorCase,
   type VectorFile,
-  loadVectorFile,
-  record,
+  VECTORS_DIR,
   type VectorSource,
-  VECTORS_ROOT,
 } from './schema.ts';
 
 /** Upstream cases come from the latest published release; tag and commit are recorded per file (docs/notes/vectors.md). */
@@ -19,16 +20,19 @@ const LLHTTP_REPO = 'https://github.com/nodejs/llhttp';
 const LLHTTP_LATEST_RELEASE = 'https://api.github.com/repos/nodejs/llhttp/releases/latest';
 /** llhttp publishes each release as `release/vX` (generated C sources) and `vX` (source tree with `test/`). */
 const BUILD_TAG_PREFIX = /^release\//;
-/** P0 response files; `transfer-encoding.md` waits for chunked decoding (P1a). */
+/** P0 response files; `transfer-encoding.md` waits for chunked decoding. */
+// removal: P1a (#7)
 const STEMS = ['sample', 'content-length', 'connection', 'invalid'] as const;
-const OUT_DIR = join(VECTORS_ROOT, 'h1-response');
+const OUT_DIR = join(REPO_ROOT, VECTORS_DIR, 'h1-response');
+/** Repo-relative, as named in messages; read through `REPO_ROOT`. */
 const OVERRIDES_FILE = 'tools/vectors/overrides/llhttp.json';
+/** Network calls give up after this long. */
+const NETWORK_TIMEOUT_MS = 30_000;
 
 const MALFORMED = 'PROTOCOL/malformed-response';
 const SMUGGLING = 'PROTOCOL/smuggling-risk';
 /** llhttp errors with a more specific engine error than `PROTOCOL/malformed-response`. */
 const ERROR_BY_LLHTTP: Readonly<Record<string, string>> = {
-  HPE_HEADER_OVERFLOW: 'TOO_LARGE/headers',
   HPE_UNEXPECTED_CONTENT_LENGTH: SMUGGLING,
   HPE_INVALID_TRANSFER_ENCODING: SMUGGLING,
 };
@@ -98,10 +102,16 @@ export interface ImportResult {
 
 type Header = [string, string];
 
-/** Engine error for an llhttp error, given the header fields completed before it. */
-export function nativeError(llhttpName: string, headers: readonly (readonly [string, string])[]): NativeExpect {
-  const duplicateLength = headers.filter(([n]) => n.toLowerCase() === 'content-length').length > 1;
-  return { error: duplicateLength ? SMUGGLING : (ERROR_BY_LLHTTP[llhttpName] ?? MALFORMED) };
+/** Engine error for an llhttp error (`HPE_*` name). */
+export function nativeError(llhttpName: string): NativeExpect {
+  return { error: ERROR_BY_LLHTTP[llhttpName] ?? MALFORMED };
+}
+
+/** Copyright line of an upstream MIT licence file, after checking its text is exactly the MIT licence. */
+export function mitCopyright(licence: string): string {
+  const match = /^MIT License\n\n(Copyright [^\n]+)\n\n([\s\S]*?)\n*$/.exec(licence);
+  if (match === null || match[2] !== LICENCE_TEXTS['MIT']) throw new Error('upstream licence is not the MIT licence');
+  return String(match[1]);
 }
 
 /** Input normalisation of llhttp `test/md-test.ts`, step for step (POSIX path; `${…}` is never evaluated). */
@@ -129,9 +139,9 @@ export function parseErrorNames(constantsTs: string): ReadonlyMap<number, string
 
 export function parseOverrides(data: unknown): ReadonlyMap<string, LlhttpOverride> {
   return new Map(
-    Object.entries(record(data, 'overrides')).map(([name, entry]) => {
+    Object.entries(asRecord(data, 'overrides')).map(([name, entry]) => {
       const at = `overrides.${name}`;
-      const { native, rule } = object(entry, at, ['native', 'rule']);
+      const { native, rule } = asObject(entry, at, ['native', 'rule']);
       if (typeof rule !== 'string' || !CITED_RULE.test(rule)) {
         throw new Error(`${at}.rule: must cite a design section, e.g. "§5.2 …"`);
       }
@@ -156,13 +166,13 @@ const META = /<!--\s+meta=(.*)\s+-->/;
 const FENCE_OPEN = /^```(\S*)\s*$/;
 const FENCE_CLOSE = /^```\s*$/;
 
-/** Headings at depth ≥ 2 that own fenced blocks become tests, as in mdgator. */
+/** Headings at depth ≥ 2 that own fenced blocks become tests, as in mdgator (which normalises CR and CRLF to LF). */
 const parseMarkdown = (md: string): MdTest[] => {
   const tests: MdTest[] = [];
   let current: MdTest | undefined;
   let pendingMeta: unknown;
   let fence: { readonly info: string; readonly line: number; readonly body: string[] } | undefined;
-  for (const [i, line] of md.split('\n').entries()) {
+  for (const [i, line] of md.split(/\r\n?|\n/).entries()) {
     if (fence !== undefined) {
       if (!FENCE_CLOSE.test(line)) {
         fence.body.push(`${line}\n`);
@@ -206,6 +216,11 @@ const SPAN = /^len=(\d+) span\[([\w.]+)\]=("(?:.*)"|lf|cr)$/;
 const HEADERS = /^headers complete status=(\d+) v=(\d+)\/(\d+) /;
 const ERROR = /^error code=(\d+) reason=/;
 const SPAN_CHAR: Readonly<Record<string, string>> = { lf: '\n', cr: '\r' };
+const FIXED_EVENTS: Readonly<Record<string, (off: number) => LogEvent>> = {
+  'message begin': (off) => ({ kind: 'begin', off }),
+  'message complete': (off) => ({ kind: 'complete', off }),
+  'header_value complete': () => ({ kind: 'valueComplete' }),
+};
 
 const parseLogLine = (line: string, fail: (why: string) => never): LogEvent => {
   const match = LOG_LINE.exec(line) ?? fail('an unparsed log line');
@@ -228,12 +243,7 @@ const parseLogLine = (line: string, fail: (why: string) => never): LogEvent => {
   }
   const error = ERROR.exec(rest);
   if (error !== null) return { kind: 'error', code: Number(error[1]) };
-  const fixed: Readonly<Record<string, LogEvent>> = {
-    'message begin': { kind: 'begin', off },
-    'message complete': { kind: 'complete', off },
-    'header_value complete': { kind: 'valueComplete' },
-  };
-  return fixed[rest] ?? { kind: 'other' };
+  return FIXED_EVENTS[rest]?.(off) ?? { kind: 'other' };
 };
 
 /** Log lines with md-test's expected-output escapes applied (`\t`, `\f`). */
@@ -274,9 +284,9 @@ const finalOutcome = (msg: Message, method: string, fail: (why: string) => never
   });
   if (te.length > 0) {
     if (te.join() !== 'chunked' || cl.length > 0 || msg.version !== '1.1') fail(`Transfer-Encoding "${te.join(', ')}"`);
-    return noBody
-      ? ok('', persistent)
-      : { skip: 'chunked body: chunked decoding and transfer-encoding.md arrive in P1a' };
+    if (noBody) return ok('', persistent);
+    // removal: P1a (#7)
+    return { skip: 'chunked body: chunked decoding and transfer-encoding.md arrive in P1a (#7)' };
   }
   if (cl.length > 0) {
     const [length = ''] = cl;
@@ -326,7 +336,7 @@ const outcomeOf = (
       msg = undefined;
     } else if (event.kind === 'error') {
       const name = errorNames.get(event.code) ?? fail('an unknown llhttp error code');
-      return { native: nativeError(name, msg?.headers ?? []) };
+      return { native: nativeError(name) };
     }
   }
   return finalOutcome(msg ?? fail('input that ends after an interim response'), method, fail);
@@ -351,24 +361,29 @@ const importCase = (
   ctx: ImportContext,
 ): { readonly case: VectorCase; readonly overridden: boolean } | SkippedCase => {
   const fail = (why: string): never => {
-    throw new Error(`${name}: cannot model ${why}; add an override to ${OVERRIDES_FILE}`);
+    throw new Error(`${name}: cannot model ${why}; decide the case with an override in ${OVERRIDES_FILE}`);
   };
   const [http, ...moreHttp] = test.blocks.get('http') ?? [];
   const [log, ...moreLogs] = test.blocks.get('log') ?? [];
   if (http === undefined || log === undefined || moreHttp.length > 0 || moreLogs.length > 0) {
     throw new Error(`${name}: expected one http and one log block`);
   }
-  const meta = test.meta.get('http') as Readonly<Record<string, unknown>> | undefined;
-  if (meta === undefined) throw new Error(`${name}: missing meta comment before the http block`);
+  if (!test.meta.has('http')) throw new Error(`${name}: missing meta comment before the http block`);
+  const meta = asRecord(test.meta.get('http'), `${name}: meta`);
   if (meta['type'] !== 'response')
     return { name, reason: `llhttp ${String(meta['type'])} mode; blazehttp has no lenient modes (§5.2)` };
   const input = normaliseInput(http);
   if (INLINE_JS.test(input)) return { name, reason: 'inline JavaScript in the input; the importer never evaluates it' };
-  const events = logLines(log).map((line) => parseLogLine(line, fail));
-  checkSpans(events, Buffer.from(input), fail);
   const method = meta['skipBody'] === true ? 'HEAD' : 'GET';
+  // An override decides the case outright: llhttp's log is neither modelled nor span-checked for it.
   const override = ctx.overrides.get(name);
-  const outcome = override ?? outcomeOf(events, method, ctx.errorNames, fail);
+  const outcome =
+    override ??
+    ((): Outcome => {
+      const events = logLines(log).map((line) => parseLogLine(line, fail));
+      checkSpans(events, Buffer.from(input), fail);
+      return outcomeOf(events, method, ctx.errorNames, fail);
+    })();
   if ('skip' in outcome) return { name, reason: outcome.skip };
   return {
     overridden: override !== undefined,
@@ -411,34 +426,43 @@ export function importLlhttp(files: readonly LlhttpInput[], ctx: ImportContext):
 
 /* v8 ignore start -- network CLI, run by hand (docs/notes/vectors.md) */
 if (import.meta.main) {
+  const refresh = process.argv.includes('--refresh');
   const paths = STEMS.map((stem) => join(OUT_DIR, `llhttp-${stem}.json`));
   const previous = paths.map((path) => (existsSync(path) ? loadVectorFile(path) : undefined));
-  const recorded = new Set(previous.flatMap((file) => (file?.source.tag === undefined ? [] : [file.source.tag])));
-  if (recorded.size > 1) throw new Error(`llhttp vector files record different tags: ${[...recorded].join(', ')}`);
+  const recorded = new Set(
+    previous.flatMap((file) => (file?.source.tag === undefined ? [] : [`${file.source.tag} ${file.source.commit}`])),
+  );
+  if (recorded.size > 1) throw new Error(`llhttp vector files record different releases: ${[...recorded].join(', ')}`);
+  const [pinned] = recorded;
+  const signal = (): AbortSignal => AbortSignal.timeout(NETWORK_TIMEOUT_MS);
   // `--refresh` moves to the latest published release; otherwise re-import the recorded tag (e.g. after an override change).
   const latestTag = async (): Promise<string> => {
-    const response = await fetch(LLHTTP_LATEST_RELEASE, { headers: { accept: 'application/vnd.github+json' } });
+    const response = await fetch(LLHTTP_LATEST_RELEASE, {
+      headers: { accept: 'application/vnd.github+json' },
+      signal: signal(),
+    });
     if (!response.ok) throw new Error(`${LLHTTP_LATEST_RELEASE}: HTTP ${String(response.status)}`);
     const { tag_name: tagName } = (await response.json()) as { tag_name: unknown };
     return String(tagName).replace(BUILD_TAG_PREFIX, '');
   };
-  const [pinned] = recorded;
-  const tag = process.argv.includes('--refresh') || pinned === undefined ? await latestTag() : pinned;
+  const tag = refresh || pinned === undefined ? await latestTag() : String(pinned.split(' ')[0]);
   const lsRemote = execFileSync('git', ['ls-remote', `${LLHTTP_REPO}.git`, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], {
     encoding: 'utf8',
+    timeout: NETWORK_TIMEOUT_MS,
   });
   const commit = tagCommit(lsRemote, tag);
+  if (!refresh && pinned !== undefined && pinned !== `${tag} ${commit}`) {
+    throw new Error(`tag ${tag} now points to ${commit}, not the recorded ${pinned}; review it with --refresh`);
+  }
   const base = `https://raw.githubusercontent.com/nodejs/llhttp/${commit}/`;
   const fetchText = async (path: string): Promise<string> => {
-    const response = await fetch(base + path);
+    const response = await fetch(base + path, { signal: signal() });
     if (!response.ok) throw new Error(`${base}${path}: HTTP ${String(response.status)}`);
     return response.text();
   };
-  const licence = await fetchText('LICENSE');
-  const copyright = licence.split('\n').find((l) => l.startsWith('Copyright'));
-  if (!licence.startsWith('MIT License') || copyright === undefined) throw new Error('llhttp LICENSE is not MIT');
+  const copyright = mitCopyright(await fetchText('LICENSE'));
   const errorNames = parseErrorNames(await fetchText('src/llhttp/constants.ts'));
-  const overrides = parseOverrides(JSON.parse(readFileSync(OVERRIDES_FILE, 'utf8')));
+  const overrides = parseOverrides(JSON.parse(readFileSync(join(REPO_ROOT, OVERRIDES_FILE), 'utf8')));
   const inputs = await Promise.all(
     STEMS.map(async (stem) => ({
       stem,
@@ -453,17 +477,20 @@ if (import.meta.main) {
       },
     })),
   );
-  mkdirSync(OUT_DIR, { recursive: true });
-  const results = importLlhttp(inputs, { errorNames, overrides });
-  for (const [i, { file, skipped, overridden }] of results.entries()) {
+  // Build and validate every file before writing any, so a failure never leaves a mixed import behind.
+  const outputs = importLlhttp(inputs, { errorNames, overrides }).map((result, i) => {
     const path = String(paths[i]);
-    const { added, removed, changed } = diffCases(previous[i], file);
-    writeFileSync(path, `${JSON.stringify(parseVectorFile(file, path), null, 2)}\n`);
+    return { ...result, path, text: `${JSON.stringify(parseVectorFile(result.file, path), null, 2)}\n` };
+  });
+  mkdirSync(OUT_DIR, { recursive: true });
+  for (const [i, { path, text, file, skipped, overridden }] of outputs.entries()) {
+    writeFileSync(path, text);
     console.log(
       `${path} (llhttp ${tag} ${commit}): ${String(file.cases.length)} cases, ${String(overridden.length)} overridden`,
     );
-    for (const [what, names] of Object.entries({ added, removed, changed })) {
-      for (const name of names) console.log(`  ${what} ${name}`);
+    const diff = diffCases(previous[i], file);
+    for (const what of ['added', 'removed', 'changed'] as const) {
+      for (const name of diff[what]) console.log(`  ${what} ${name}`);
     }
     for (const s of skipped) console.log(`  skipped ${s.name}: ${s.reason}`);
   }

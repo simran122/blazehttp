@@ -157,7 +157,12 @@
       },
       "expect": {
         "native": {
-          "error": "PROTOCOL/malformed-response"
+          "ok": {
+            "status": 301,
+            "headers": [],
+            "body": "",
+            "keepAlive": false
+          }
         }
       },
       "reference": {

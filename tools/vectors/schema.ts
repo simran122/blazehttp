@@ -1,9 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ERROR_WIRE } from '../../packages/blazehttp/src/generated/spec.ts';
+import { ENGINE_ERRORS, METHODS } from '../../packages/blazehttp/src/generated/spec.ts';
+import { asArray, asObject, asRecord, asString, fail } from '../json-guards.ts';
 
-/** Vector files live under this directory, registered in its `index.json` (format: docs/notes/vectors.md). */
-export const VECTORS_ROOT = 'tests/vectors';
+/** Repository root, so the tools work from any working directory. */
+export const REPO_ROOT = join(import.meta.dirname, '..', '..');
+/** Vector files live under this repo-relative directory, registered in its `index.json` (docs/notes/vectors.md). */
+export const VECTORS_DIR = 'tests/vectors';
 const INDEX_FILE = 'index.json';
 
 export interface VectorSource {
@@ -51,64 +54,41 @@ export interface VectorFile {
 /** Vector file (relative path) → suites that consume it. */
 export type VectorIndex = Readonly<Record<string, readonly string[]>>;
 
-/** Every error string the engine can produce, as `ErrorCode`'s `Display` prints it. */
-const KNOWN_ERRORS: ReadonlySet<string> = new Set(
-  ERROR_WIRE.flatMap((e) => (e.details === undefined ? [e.code] : e.details.map((d) => `${e.code}/${d}`))),
-);
-
-type Json = Readonly<Record<string, unknown>>;
-
-const fail = (at: string, message: string): never => {
-  throw new Error(`${at}: ${message}`);
-};
-
-export const record = (value: unknown, at: string): Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Json)
-    : fail(at, 'expected an object');
-
-export const object = (value: unknown, at: string, keys: readonly string[], optional: readonly string[] = []): Json => {
-  const json = record(value, at);
-  const unknownKey = Object.keys(json).find((k) => !keys.includes(k) && !optional.includes(k));
-  if (unknownKey !== undefined) fail(at, `unknown key ${unknownKey}`);
-  const missing = keys.find((k) => !(k in json));
-  if (missing !== undefined) fail(at, `missing key ${missing}`);
-  return json;
-};
-
-const array = (value: unknown, at: string): readonly unknown[] =>
-  Array.isArray(value) ? (value as readonly unknown[]) : fail(at, 'expected an array');
-
-const string = (value: unknown, at: string): string =>
-  typeof value === 'string' ? value : fail(at, 'expected a string');
+/** Every error string the engine can produce, as `ErrorCode`'s `Display` prints it (generated, wire codes only). */
+const ENGINE_ERROR_SET: ReadonlySet<string> = new Set(ENGINE_ERRORS);
+const METHOD_SET: ReadonlySet<string> = new Set(METHODS);
+const MIN_STATUS = 100;
+const MAX_STATUS = 599;
 
 const parseSource = (value: unknown, at: string): VectorSource => {
-  const s = object(value, at, ['project', 'url', 'commit', 'licence', 'copyright'], ['tag']);
+  const s = asObject(value, at, ['project', 'url', 'commit', 'licence', 'copyright'], ['tag']);
   return {
-    project: string(s['project'], `${at}.project`),
-    url: string(s['url'], `${at}.url`),
-    ...(s['tag'] === undefined ? {} : { tag: string(s['tag'], `${at}.tag`) }),
-    commit: string(s['commit'], `${at}.commit`),
-    licence: string(s['licence'], `${at}.licence`),
-    copyright: string(s['copyright'], `${at}.copyright`),
+    project: asString(s['project'], `${at}.project`),
+    url: asString(s['url'], `${at}.url`),
+    ...(s['tag'] === undefined ? {} : { tag: asString(s['tag'], `${at}.tag`) }),
+    commit: asString(s['commit'], `${at}.commit`),
+    licence: asString(s['licence'], `${at}.licence`),
+    copyright: asString(s['copyright'], `${at}.copyright`),
   };
 };
 
 const parseOk = (value: unknown, at: string): OkExpect => {
-  const ok = object(value, at, ['status', 'headers', 'body', 'keepAlive']);
+  const ok = asObject(value, at, ['status', 'headers', 'body', 'keepAlive']);
   const status = ok['status'];
-  if (typeof status !== 'number' || !Number.isInteger(status)) fail(`${at}.status`, 'expected an integer');
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < MIN_STATUS || status > MAX_STATUS) {
+    fail(`${at}.status`, `expected an integer in ${String(MIN_STATUS)}..=${String(MAX_STATUS)}`);
+  }
   if (typeof ok['keepAlive'] !== 'boolean') fail(`${at}.keepAlive`, 'expected a boolean');
-  const headers = array(ok['headers'], `${at}.headers`).map((pair, i): readonly [string, string] => {
+  const headers = asArray(ok['headers'], `${at}.headers`).map((pair, i): readonly [string, string] => {
     const where = `${at}.headers[${String(i)}]`;
-    const [name, value, ...rest] = array(pair, where);
+    const [name, value, ...rest] = asArray(pair, where);
     if (rest.length > 0 || value === undefined) fail(where, 'expected [name, value]');
-    return [string(name, where), string(value, where)];
+    return [asString(name, where), asString(value, where)];
   });
   return {
     status: status as number,
     headers,
-    body: string(ok['body'], `${at}.body`),
+    body: asString(ok['body'], `${at}.body`),
     keepAlive: ok['keepAlive'] as boolean,
   };
 };
@@ -116,30 +96,32 @@ const parseOk = (value: unknown, at: string): OkExpect => {
 export const parseNativeExpect = (value: unknown, at: string): NativeExpect => {
   const keys = typeof value === 'object' && value !== null ? Object.keys(value) : [];
   if (keys.length !== 1) fail(at, 'expected exactly one of ok, error');
-  if (keys[0] === 'ok') return { ok: parseOk(object(value, at, ['ok'])['ok'], `${at}.ok`) };
-  const error = string(object(value, at, ['error'])['error'], `${at}.error`);
-  return KNOWN_ERRORS.has(error) ? { error } : fail(`${at}.error`, `${error} is not an engine error`);
+  if (keys[0] === 'ok') return { ok: parseOk(asObject(value, at, ['ok'])['ok'], `${at}.ok`) };
+  const error = asString(asObject(value, at, ['error'])['error'], `${at}.error`);
+  return ENGINE_ERROR_SET.has(error) ? { error } : fail(`${at}.error`, `${error} is not an engine error`);
 };
 
 const parseCase = (value: unknown, at: string): VectorCase => {
-  const c = object(value, at, ['name', 'input', 'inputEncoding', 'request', 'expect'], ['reference']);
+  const c = asObject(value, at, ['name', 'input', 'inputEncoding', 'request', 'expect'], ['reference']);
   if (c['inputEncoding'] !== 'utf8') fail(`${at}.inputEncoding`, 'expected utf8');
-  const request = object(c['request'], `${at}.request`, ['method']);
-  const expectJson = object(c['expect'], `${at}.expect`, ['native'], ['undici']);
+  const request = asObject(c['request'], `${at}.request`, ['method']);
+  const method = asString(request['method'], `${at}.request.method`);
+  if (!METHOD_SET.has(method)) fail(`${at}.request.method`, `${method} is not a generated Method`);
+  const expectJson = asObject(c['expect'], `${at}.expect`, ['native'], ['undici']);
   const reference =
     c['reference'] === undefined
       ? undefined
       : Object.fromEntries(
-          Object.entries(record(c['reference'], `${at}.reference`)).map(([k, v]) => [
+          Object.entries(asRecord(c['reference'], `${at}.reference`)).map(([k, v]) => [
             k,
-            string(v, `${at}.reference.${k}`),
+            asString(v, `${at}.reference.${k}`),
           ]),
         );
   return {
-    name: string(c['name'], `${at}.name`),
-    input: string(c['input'], `${at}.input`),
+    name: asString(c['name'], `${at}.name`),
+    input: asString(c['input'], `${at}.input`),
     inputEncoding: 'utf8',
-    request: { method: string(request['method'], `${at}.request.method`) },
+    request: { method },
     expect: {
       native: parseNativeExpect(expectJson['native'], `${at}.expect.native`),
       ...(expectJson['undici'] === undefined
@@ -152,8 +134,8 @@ const parseCase = (value: unknown, at: string): VectorCase => {
 
 /** Validates parsed JSON as a vector file; `label` prefixes error messages. */
 export function parseVectorFile(data: unknown, label: string): VectorFile {
-  const file = object(data, label, ['source', 'cases']);
-  const cases = array(file['cases'], `${label}.cases`).map((c, i) => parseCase(c, `${label}.cases[${String(i)}]`));
+  const file = asObject(data, label, ['source', 'cases']);
+  const cases = asArray(file['cases'], `${label}.cases`).map((c, i) => parseCase(c, `${label}.cases[${String(i)}]`));
   if (cases.length === 0) fail(label, 'expected at least one case');
   const names = new Set<string>();
   for (const { name } of cases) {
@@ -169,9 +151,9 @@ export function loadVectorFile(path: string): VectorFile {
 
 export function parseIndex(data: unknown, label: string): VectorIndex {
   return Object.fromEntries(
-    Object.entries(record(data, label)).map(([file, suites]) => [
+    Object.entries(asRecord(data, label)).map(([file, suites]) => [
       file,
-      array(suites, `${label}.${file}`).map((s) => string(s, `${label}.${file}`)),
+      asArray(suites, `${label}.${file}`).map((s) => asString(s, `${label}.${file}`)),
     ]),
   );
 }

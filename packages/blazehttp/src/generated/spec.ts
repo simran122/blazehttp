@@ -81,6 +81,75 @@ export function formatErrorCode<C extends HttpErrorCode>(code: C, detail: ErrorD
   return ERROR_FORMAT[code](detail);
 }
 
+/** Display form of every engine (wire) error, one per detail, in `ErrorCode::ALL_SAMPLES` order. */
+export const ENGINE_ERRORS: readonly string[] = [
+  'TIMEOUT/connect',
+  'TIMEOUT/headers',
+  'TIMEOUT/idleBody',
+  'TIMEOUT/idleSend',
+  'TIMEOUT/total',
+  'TIMEOUT/queue',
+  'TIMEOUT/stall',
+  'TIMEOUT/slow-body',
+  'ABORTED/signal',
+  'ABORTED/client-closed',
+  'ABORTED/environment-teardown',
+  'ABORTED/engine-dropped',
+  'NETWORK/dns/notfound',
+  'NETWORK/dns/timeout',
+  'NETWORK/dns/servfail',
+  'NETWORK/refused',
+  'NETWORK/reset',
+  'NETWORK/unreachable',
+  'NETWORK/closed-before-response',
+  'NETWORK/upload-stream-failed',
+  'NETWORK/other',
+  'TLS/handshake',
+  'TLS/certificate/expired',
+  'TLS/certificate/hostname',
+  'TLS/certificate/unknown-ca',
+  'TLS/certificate/other',
+  'TLS/protocol-version',
+  'TLS/other',
+  'PROTOCOL/malformed-response',
+  'PROTOCOL/incomplete-body',
+  'PROTOCOL/truncated',
+  'PROTOCOL/invalid-chunked',
+  'PROTOCOL/smuggling-risk',
+  'PROTOCOL/unexpected-data',
+  'PROTOCOL/decode',
+  'PROTOCOL/other',
+  'TOO_LARGE/request-body',
+  'TOO_LARGE/response-body',
+  'TOO_LARGE/decompressed-ratio',
+  'TOO_LARGE/decompression-window',
+  'TOO_LARGE/headers',
+  'TOO_LARGE/encoding-layers',
+  'TOO_LARGE/url',
+  'TOO_MANY_REDIRECTS',
+  'REDIRECT_REJECTED/downgrade',
+  'REDIRECT_REJECTED/non-http-scheme',
+  'REDIRECT_REJECTED/userinfo',
+  'REDIRECT_REJECTED/missing-location',
+  'REDIRECT_REJECTED/invalid-location',
+  'REDIRECT_REJECTED/body-not-replayable',
+  'REDIRECT_REJECTED/cross-origin-body',
+  'PROXY/connect',
+  'PROXY/auth',
+  'PROXY/tunnel',
+  'QUEUE_FULL/client',
+  'QUEUE_FULL/origin',
+  'QUEUE_FULL/bytes',
+  'QUEUE_FULL/contexts',
+  'QUEUE_FULL/global',
+  'ENGINE/binary-load',
+  'ENGINE/integrity',
+  'ENGINE/panic',
+  'ENGINE/poisoned',
+  'ENGINE/resource-exhausted',
+  'ENGINE/internal',
+];
+
 export const H1_LIMITS = {
   maxHeadBytes: 65536,
   maxStatusLineBytes: 8192,
@@ -88,4 +157,6 @@ export const H1_LIMITS = {
   maxInterimResponses: 10,
 } as const;
 
-export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'QUERY';
+export const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'QUERY'] as const;
+
+export type Method = (typeof METHODS)[number];
