@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["tools/policy-check/{check,npm-deprecated}.ts"],
+      "entry": ["tools/policy-check/{check,npm-deprecated}.ts", "tools/vectors/{check-index,notices,import-llhttp}.ts"],
       "project": ["*.{ts,js}", "tools/**/*.ts"]
     },
     "packages/blazehttp": {

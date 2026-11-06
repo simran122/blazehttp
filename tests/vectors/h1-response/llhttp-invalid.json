@@ -1,0 +1,273 @@
+{
+  "source": {
+    "project": "llhttp",
+    "url": "https://github.com/nodejs/llhttp/blob/45c8699d0ca8431ab366c8706e613b2e2ac62c04/test/response/invalid.md",
+    "tag": "v9.4.3",
+    "commit": "45c8699d0ca8431ab366c8706e613b2e2ac62c04",
+    "licence": "MIT",
+    "copyright": "Copyright © 2018 Fedor Indutny"
+  },
+  "cases": [
+    {
+      "name": "invalid / Incomplete HTTP protocol",
+      "input": "HTP/1.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=2 span[protocol]=\"HT\"\noff=2 error code=8 reason=\"Expected HTTP/, RTSP/ or ICE/\""
+      }
+    },
+    {
+      "name": "invalid / Extra digit in HTTP major version",
+      "input": "HTTP/01.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=1 span[version]=\"0\"\noff=6 error code=9 reason=\"Expected dot\""
+      }
+    },
+    {
+      "name": "invalid / Extra digit in HTTP major version #2",
+      "input": "HTTP/11.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=1 span[version]=\"1\"\noff=6 error code=9 reason=\"Expected dot\""
+      }
+    },
+    {
+      "name": "invalid / Extra digit in HTTP minor version",
+      "input": "HTTP/1.01 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.0\"\noff=8 version complete\noff=8 error code=9 reason=\"Expected space after version\""
+      }
+    },
+    {
+      "name": "invalid / Tab after HTTP version",
+      "input": "HTTP/1.1\t200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=8 error code=9 reason=\"Expected space after version\""
+      }
+    },
+    {
+      "name": "invalid / CR before response and tab after HTTP version",
+      "input": "\rHTTP/1.1\t200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=1 message begin\noff=1 len=4 span[protocol]=\"HTTP\"\noff=5 protocol complete\noff=6 len=3 span[version]=\"1.1\"\noff=9 version complete\noff=9 error code=9 reason=\"Expected space after version\""
+      }
+    },
+    {
+      "name": "invalid / Headers separated by CR",
+      "input": "HTTP/1.1 200 OK\r\nFoo: 1\rBar: 2\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=3 span[header_field]=\"Foo\"\noff=21 header_field complete\noff=22 len=1 span[header_value]=\"1\"\noff=24 error code=3 reason=\"Missing expected LF after header value\""
+      }
+    },
+    {
+      "name": "invalid / Bare CR after response line",
+      "input": "HTTP/1.1 200 OK\rContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=16 error code=2 reason=\"Expected LF after CR\""
+      }
+    },
+    {
+      "name": "invalid / Bare CR followed by CR after response line",
+      "input": "HTTP/1.1 200 OK\r\rContent-Length: 4\r\n\r\nEvil",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=16 error code=2 reason=\"Expected LF after CR\""
+      }
+    },
+    {
+      "name": "invalid / Invalid HTTP version",
+      "input": "HTTP/5.6 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"5.6\"\noff=8 error code=9 reason=\"Invalid HTTP version\""
+      }
+    },
+    {
+      "name": "invalid / Invalid space after start line",
+      "input": "HTTP/1.1 200 OK\r\n Host: foo",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=18 error code=30 reason=\"Unexpected space after start line\""
+      }
+    },
+    {
+      "name": "invalid / Extra space between HTTP version and status code",
+      "input": "HTTP/1.1  200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=9 error code=13 reason=\"Invalid status code\""
+      }
+    },
+    {
+      "name": "invalid / Extra space between status code and reason",
+      "input": "HTTP/1.1 200  OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=3 span[status]=\" OK\"\noff=18 status complete\noff=20 headers complete status=200 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "invalid / One-digit status code",
+      "input": "HTTP/1.1 2 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=10 error code=13 reason=\"Invalid status code\""
+      }
+    },
+    {
+      "name": "invalid / Only LFs present and no body",
+      "input": "HTTP/1.1 200 OK\nContent-Length: 0\n\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=16 error code=25 reason=\"Missing expected CR after response line\""
+      }
+    },
+    {
+      "name": "invalid / Only LFs present",
+      "input": "HTTP/1.1 200 OK\nFoo: abc\nBar: def\n\nBODY\n\\",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=16 error code=25 reason=\"Missing expected CR after response line\""
+      }
+    }
+  ]
+}

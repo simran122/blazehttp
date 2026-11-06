@@ -1,0 +1,380 @@
+{
+  "source": {
+    "project": "llhttp",
+    "url": "https://github.com/nodejs/llhttp/blob/45c8699d0ca8431ab366c8706e613b2e2ac62c04/test/response/connection.md",
+    "tag": "v9.4.3",
+    "commit": "45c8699d0ca8431ab366c8706e613b2e2ac62c04",
+    "licence": "MIT",
+    "copyright": "Copyright © 2018 Fedor Indutny"
+  },
+  "cases": [
+    {
+      "name": "connection / Proxy-Connection",
+      "input": "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: 11\r\nProxy-Connection: close\r\nDate: Thu, 31 Dec 2009 20:55:48 +0000\r\n\r\nhello world",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Content-Type",
+                "text/html; charset=UTF-8"
+              ],
+              [
+                "Content-Length",
+                "11"
+              ],
+              [
+                "Proxy-Connection",
+                "close"
+              ],
+              [
+                "Date",
+                "Thu, 31 Dec 2009 20:55:48 +0000"
+              ]
+            ],
+            "body": "hello world",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=12 span[header_field]=\"Content-Type\"\noff=30 header_field complete\noff=31 len=24 span[header_value]=\"text/html; charset=UTF-8\"\noff=57 header_value complete\noff=57 len=14 span[header_field]=\"Content-Length\"\noff=72 header_field complete\noff=73 len=2 span[header_value]=\"11\"\noff=77 header_value complete\noff=77 len=16 span[header_field]=\"Proxy-Connection\"\noff=94 header_field complete\noff=95 len=5 span[header_value]=\"close\"\noff=102 header_value complete\noff=102 len=4 span[header_field]=\"Date\"\noff=107 header_field complete\noff=108 len=31 span[header_value]=\"Thu, 31 Dec 2009 20:55:48 +0000\"\noff=141 header_value complete\noff=143 headers complete status=200 v=1/1 flags=22 content_length=11\noff=143 len=11 span[body]=\"hello world\"\noff=154 message complete"
+      }
+    },
+    {
+      "name": "connection / HTTP/1.0 with keep-alive and EOF-terminated 200 status",
+      "input": "HTTP/1.0 200 OK\r\nConnection: keep-alive\r\n\r\nHTTP/1.0 200 OK",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Connection",
+                "keep-alive"
+              ]
+            ],
+            "body": "HTTP/1.0 200 OK",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.0\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=10 span[header_field]=\"Connection\"\noff=28 header_field complete\noff=29 len=10 span[header_value]=\"keep-alive\"\noff=41 header_value complete\noff=43 headers complete status=200 v=1/0 flags=1 content_length=0\noff=43 len=15 span[body]=\"HTTP/1.0 200 OK\""
+      }
+    },
+    {
+      "name": "connection / HTTP/1.0 with keep-alive and 204 status",
+      "input": "HTTP/1.0 204 No content\r\nConnection: keep-alive\r\n\r\nHTTP/1.0 200 OK",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 204,
+            "headers": [
+              [
+                "Connection",
+                "keep-alive"
+              ]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.0\"\noff=8 version complete\noff=13 len=10 span[status]=\"No content\"\noff=25 status complete\noff=25 len=10 span[header_field]=\"Connection\"\noff=36 header_field complete\noff=37 len=10 span[header_value]=\"keep-alive\"\noff=49 header_value complete\noff=51 headers complete status=204 v=1/0 flags=1 content_length=0\noff=51 message complete\noff=51 reset\noff=51 message begin\noff=51 len=4 span[protocol]=\"HTTP\"\noff=55 protocol complete\noff=56 len=3 span[version]=\"1.0\"\noff=59 version complete\noff=64 len=2 span[status]=\"OK\""
+      }
+    },
+    {
+      "name": "connection / HTTP/1.1 with EOF-terminated 200 status",
+      "input": "HTTP/1.1 200 OK\r\n\r\nHTTP/1.1 200 OK",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [],
+            "body": "HTTP/1.1 200 OK",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=19 headers complete status=200 v=1/1 flags=0 content_length=0\noff=19 len=15 span[body]=\"HTTP/1.1 200 OK\""
+      }
+    },
+    {
+      "name": "connection / HTTP/1.1 with 204 status",
+      "input": "HTTP/1.1 204 No content\r\n\r\nHTTP/1.1 200 OK",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 204,
+            "headers": [],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=10 span[status]=\"No content\"\noff=25 status complete\noff=27 headers complete status=204 v=1/1 flags=0 content_length=0\noff=27 message complete\noff=27 reset\noff=27 message begin\noff=27 len=4 span[protocol]=\"HTTP\"\noff=31 protocol complete\noff=32 len=3 span[version]=\"1.1\"\noff=35 version complete\noff=40 len=2 span[status]=\"OK\""
+      }
+    },
+    {
+      "name": "connection / HTTP/1.1 with keep-alive disabled and 204 status",
+      "input": "HTTP/1.1 204 No content\r\nConnection: close\r\n\r\nHTTP/1.1 200 OK",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 204,
+            "headers": [
+              [
+                "Connection",
+                "close"
+              ]
+            ],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=10 span[status]=\"No content\"\noff=25 status complete\noff=25 len=10 span[header_field]=\"Connection\"\noff=36 header_field complete\noff=37 len=5 span[header_value]=\"close\"\noff=44 header_value complete\noff=46 headers complete status=204 v=1/1 flags=2 content_length=0\noff=46 message complete\noff=47 error code=5 reason=\"Data after `Connection: close`\""
+      }
+    },
+    {
+      "name": "connection / HTTP/1.1 with keep-alive disabled, content-length",
+      "input": "HTTP/1.1 200 No content\r\nContent-Length: 5\r\nConnection: close\r\n\r\n2ad731e3-4dcd-4f70-b871-0ad284b29ffc",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Content-Length",
+                "5"
+              ],
+              [
+                "Connection",
+                "close"
+              ]
+            ],
+            "body": "2ad73",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=10 span[status]=\"No content\"\noff=25 status complete\noff=25 len=14 span[header_field]=\"Content-Length\"\noff=40 header_field complete\noff=41 len=1 span[header_value]=\"5\"\noff=44 header_value complete\noff=44 len=10 span[header_field]=\"Connection\"\noff=55 header_field complete\noff=56 len=5 span[header_value]=\"close\"\noff=63 header_value complete\noff=65 headers complete status=200 v=1/1 flags=22 content_length=5\noff=65 len=5 span[body]=\"2ad73\"\noff=70 message complete\noff=71 error code=5 reason=\"Data after `Connection: close`\""
+      }
+    },
+    {
+      "name": "connection / HTTP 101 response with Upgrade and Content-Length header",
+      "input": "HTTP/1.1 101 Switching Protocols\r\nConnection: upgrade\r\nUpgrade: h2c\r\nContent-Length: 4\r\n\r\nbodyproto",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=19 span[status]=\"Switching Protocols\"\noff=34 status complete\noff=34 len=10 span[header_field]=\"Connection\"\noff=45 header_field complete\noff=46 len=7 span[header_value]=\"upgrade\"\noff=55 header_value complete\noff=55 len=7 span[header_field]=\"Upgrade\"\noff=63 header_field complete\noff=64 len=3 span[header_value]=\"h2c\"\noff=69 header_value complete\noff=69 len=14 span[header_field]=\"Content-Length\"\noff=84 header_field complete\noff=85 len=1 span[header_value]=\"4\"\noff=88 header_value complete\noff=90 headers complete status=101 v=1/1 flags=34 content_length=4\noff=90 message complete\noff=90 error code=22 reason=\"Pause on CONNECT/Upgrade\""
+      }
+    },
+    {
+      "name": "connection / HTTP 101 response with Upgrade and Transfer-Encoding header",
+      "input": "HTTP/1.1 101 Switching Protocols\r\nConnection: upgrade\r\nUpgrade: h2c\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nbo\r\n2\r\ndy\r\n0\r\n\r\nproto",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=19 span[status]=\"Switching Protocols\"\noff=34 status complete\noff=34 len=10 span[header_field]=\"Connection\"\noff=45 header_field complete\noff=46 len=7 span[header_value]=\"upgrade\"\noff=55 header_value complete\noff=55 len=7 span[header_field]=\"Upgrade\"\noff=63 header_field complete\noff=64 len=3 span[header_value]=\"h2c\"\noff=69 header_value complete\noff=69 len=17 span[header_field]=\"Transfer-Encoding\"\noff=87 header_field complete\noff=88 len=7 span[header_value]=\"chunked\"\noff=97 header_value complete\noff=99 headers complete status=101 v=1/1 flags=21c content_length=0\noff=99 message complete\noff=99 error code=22 reason=\"Pause on CONNECT/Upgrade\""
+      }
+    },
+    {
+      "name": "connection / HTTP 200 response with Upgrade header",
+      "input": "HTTP/1.1 200 OK\r\nConnection: upgrade\r\nUpgrade: h2c\r\n\r\nbody",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Connection",
+                "upgrade"
+              ],
+              [
+                "Upgrade",
+                "h2c"
+              ]
+            ],
+            "body": "body",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=10 span[header_field]=\"Connection\"\noff=28 header_field complete\noff=29 len=7 span[header_value]=\"upgrade\"\noff=38 header_value complete\noff=38 len=7 span[header_field]=\"Upgrade\"\noff=46 header_field complete\noff=47 len=3 span[header_value]=\"h2c\"\noff=52 header_value complete\noff=54 headers complete status=200 v=1/1 flags=14 content_length=0\noff=54 len=4 span[body]=\"body\""
+      }
+    },
+    {
+      "name": "connection / HTTP 200 response with Upgrade header and Content-Length",
+      "input": "HTTP/1.1 200 OK\r\nConnection: upgrade\r\nUpgrade: h2c\r\nContent-Length: 4\r\n\r\nbody",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Connection",
+                "upgrade"
+              ],
+              [
+                "Upgrade",
+                "h2c"
+              ],
+              [
+                "Content-Length",
+                "4"
+              ]
+            ],
+            "body": "body",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=10 span[header_field]=\"Connection\"\noff=28 header_field complete\noff=29 len=7 span[header_value]=\"upgrade\"\noff=38 header_value complete\noff=38 len=7 span[header_field]=\"Upgrade\"\noff=46 header_field complete\noff=47 len=3 span[header_value]=\"h2c\"\noff=52 header_value complete\noff=52 len=14 span[header_field]=\"Content-Length\"\noff=67 header_field complete\noff=68 len=1 span[header_value]=\"4\"\noff=71 header_value complete\noff=73 headers complete status=200 v=1/1 flags=34 content_length=4\noff=73 len=4 span[body]=\"body\"\noff=77 message complete"
+      }
+    },
+    {
+      "name": "connection / HTTP 304 with Content-Length",
+      "input": "HTTP/1.1 304 Not Modified\r\nContent-Length: 10\r\n\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 304,
+            "headers": [
+              [
+                "Content-Length",
+                "10"
+              ]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=12 span[status]=\"Not Modified\"\noff=27 status complete\noff=27 len=14 span[header_field]=\"Content-Length\"\noff=42 header_field complete\noff=43 len=2 span[header_value]=\"10\"\noff=47 header_value complete\noff=49 headers complete status=304 v=1/1 flags=20 content_length=10\noff=49 message complete\noff=51 reset\noff=51 message begin\noff=51 len=4 span[protocol]=\"HTTP\"\noff=55 protocol complete\noff=56 len=3 span[version]=\"1.1\"\noff=59 version complete\noff=64 len=2 span[status]=\"OK\"\noff=68 status complete\noff=68 len=14 span[header_field]=\"Content-Length\"\noff=83 header_field complete\noff=84 len=1 span[header_value]=\"5\"\noff=87 header_value complete\noff=89 headers complete status=200 v=1/1 flags=20 content_length=5\noff=89 len=5 span[body]=\"hello\"\noff=94 message complete"
+      }
+    },
+    {
+      "name": "connection / HTTP 304 with Transfer-Encoding",
+      "input": "HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 304,
+            "headers": [
+              [
+                "Transfer-Encoding",
+                "chunked"
+              ]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=12 span[status]=\"Not Modified\"\noff=27 status complete\noff=27 len=17 span[header_field]=\"Transfer-Encoding\"\noff=45 header_field complete\noff=46 len=7 span[header_value]=\"chunked\"\noff=55 header_value complete\noff=57 headers complete status=304 v=1/1 flags=208 content_length=0\noff=57 message complete\noff=57 reset\noff=57 message begin\noff=57 len=4 span[protocol]=\"HTTP\"\noff=61 protocol complete\noff=62 len=3 span[version]=\"1.1\"\noff=65 version complete\noff=70 len=2 span[status]=\"OK\"\noff=74 status complete\noff=74 len=17 span[header_field]=\"Transfer-Encoding\"\noff=92 header_field complete\noff=93 len=7 span[header_value]=\"chunked\"\noff=102 header_value complete\noff=104 headers complete status=200 v=1/1 flags=208 content_length=0\noff=107 chunk header len=5\noff=107 len=5 span[body]=\"hello\"\noff=114 chunk complete\noff=117 chunk header len=0"
+      }
+    },
+    {
+      "name": "connection / HTTP 100 first, then 400",
+      "input": "HTTP/1.1 100 Continue\r\n\r\n\r\nHTTP/1.1 404 Not Found\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 14\r\nDate: Fri, 15 Sep 2023 19:47:23 GMT\r\nServer: Python/3.10 aiohttp/4.0.0a2.dev0\r\n\r\n404: Not Found",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=8 span[status]=\"Continue\"\noff=23 status complete\noff=25 headers complete status=100 v=1/1 flags=0 content_length=0\noff=25 message complete\noff=27 reset\noff=27 message begin\noff=27 len=4 span[protocol]=\"HTTP\"\noff=31 protocol complete\noff=32 len=3 span[version]=\"1.1\"\noff=35 version complete\noff=40 len=9 span[status]=\"Not Found\"\noff=51 status complete\noff=51 len=12 span[header_field]=\"Content-Type\"\noff=64 header_field complete\noff=65 len=25 span[header_value]=\"text/plain; charset=utf-8\"\noff=92 header_value complete\noff=92 len=14 span[header_field]=\"Content-Length\"\noff=107 header_field complete\noff=108 len=2 span[header_value]=\"14\"\noff=112 header_value complete\noff=112 len=4 span[header_field]=\"Date\"\noff=117 header_field complete\noff=118 len=29 span[header_value]=\"Fri, 15 Sep 2023 19:47:23 GMT\"\noff=149 header_value complete\noff=149 len=6 span[header_field]=\"Server\"\noff=156 header_field complete\noff=157 len=32 span[header_value]=\"Python/3.10 aiohttp/4.0.0a2.dev0\"\noff=191 header_value complete\noff=193 headers complete status=404 v=1/1 flags=20 content_length=14\noff=193 len=14 span[body]=\"404: Not Found\"\noff=207 message complete"
+      }
+    },
+    {
+      "name": "connection / HTTP 103 first, then 200",
+      "input": "HTTP/1.1 103 Early Hints\r\nLink: </styles.css>; rel=preload; as=style\r\n\r\nHTTP/1.1 200 OK\r\nDate: Wed, 13 Sep 2023 11:09:41 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 17\r\n\r\nresponse content",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/incomplete-body"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=11 span[status]=\"Early Hints\"\noff=26 status complete\noff=26 len=4 span[header_field]=\"Link\"\noff=31 header_field complete\noff=32 len=36 span[header_value]=\"</styles.css>; rel=preload; as=style\"\noff=70 header_value complete\noff=72 headers complete status=103 v=1/1 flags=0 content_length=0\noff=72 message complete\noff=72 reset\noff=72 message begin\noff=72 len=4 span[protocol]=\"HTTP\"\noff=76 protocol complete\noff=77 len=3 span[version]=\"1.1\"\noff=80 version complete\noff=85 len=2 span[status]=\"OK\"\noff=89 status complete\noff=89 len=4 span[header_field]=\"Date\"\noff=94 header_field complete\noff=95 len=29 span[header_value]=\"Wed, 13 Sep 2023 11:09:41 GMT\"\noff=126 header_value complete\noff=126 len=10 span[header_field]=\"Connection\"\noff=137 header_field complete\noff=138 len=10 span[header_value]=\"keep-alive\"\noff=150 header_value complete\noff=150 len=10 span[header_field]=\"Keep-Alive\"\noff=161 header_field complete\noff=162 len=9 span[header_value]=\"timeout=5\"\noff=173 header_value complete\noff=173 len=14 span[header_field]=\"Content-Length\"\noff=188 header_field complete\noff=189 len=2 span[header_value]=\"17\"\noff=193 header_value complete\noff=195 headers complete status=200 v=1/1 flags=21 content_length=17\noff=195 len=16 span[body]=\"response content\""
+      }
+    }
+  ]
+}

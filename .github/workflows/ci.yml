@@ -37,6 +37,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm knip
       - run: pnpm specgen --check
+      - run: pnpm vectors:index
+      - run: pnpm vectors:notices --check
       - run: pnpm test
 
   rust:

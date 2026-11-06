@@ -1,0 +1,409 @@
+{
+  "source": {
+    "project": "llhttp",
+    "url": "https://github.com/nodejs/llhttp/blob/45c8699d0ca8431ab366c8706e613b2e2ac62c04/test/response/sample.md",
+    "tag": "v9.4.3",
+    "commit": "45c8699d0ca8431ab366c8706e613b2e2ac62c04",
+    "licence": "MIT",
+    "copyright": "Copyright © 2018 Fedor Indutny"
+  },
+  "cases": [
+    {
+      "name": "sample / Simple response",
+      "input": "HTTP/1.1 200 OK\r\nHeader1: Value1\r\nHeader2:\t Value2\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Header1",
+                "Value1"
+              ],
+              [
+                "Header2",
+                "Value2"
+              ],
+              [
+                "Content-Length",
+                "0"
+              ]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=7 span[header_field]=\"Header1\"\noff=25 header_field complete\noff=26 len=6 span[header_value]=\"Value1\"\noff=34 header_value complete\noff=34 len=7 span[header_field]=\"Header2\"\noff=42 header_field complete\noff=44 len=6 span[header_value]=\"Value2\"\noff=52 header_value complete\noff=52 len=14 span[header_field]=\"Content-Length\"\noff=67 header_field complete\noff=68 len=1 span[header_value]=\"0\"\noff=71 header_value complete\noff=73 headers complete status=200 v=1/1 flags=20 content_length=0\noff=73 message complete"
+      }
+    },
+    {
+      "name": "sample / RTSP response",
+      "input": "RTSP/1.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"RTSP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=19 headers complete status=200 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / ICE response",
+      "input": "ICE/1.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=3 span[protocol]=\"ICE\"\noff=3 protocol complete\noff=4 len=3 span[version]=\"1.1\"\noff=7 version complete\noff=12 len=2 span[status]=\"OK\"\noff=16 status complete\noff=18 headers complete status=200 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / Error on invalid response start",
+      "input": "HTTPER/1.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=4 error code=8 reason=\"Expected HTTP/, RTSP/ or ICE/\""
+      }
+    },
+    {
+      "name": "sample / Empty body should not trigger spurious span callbacks",
+      "input": "HTTP/1.1 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=19 headers complete status=200 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / Google 301",
+      "input": "HTTP/1.1 301 Moved Permanently\r\nLocation: http://www.google.com/\r\nContent-Type: text/html; charset=UTF-8\r\nDate: Sun, 26 Apr 2009 11:11:49 GMT\r\nExpires: Tue, 26 May 2009 11:11:49 GMT\r\nX-$PrototypeBI-Version: 1.6.0.3\r\nCache-Control: public, max-age=2592000\r\nServer: gws\r\nContent-Length:  219  \r\n\r\n<HTML><HEAD><meta http-equiv=content-type content=text/html;charset=utf-8>\n<TITLE>301 Moved</TITLE></HEAD><BODY>\n<H1>301 Moved</H1>\nThe document has moved\n<A HREF=\"http://www.google.com/\">here</A>.\r\n</BODY></HTML>",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/incomplete-body"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=17 span[status]=\"Moved Permanently\"\noff=32 status complete\noff=32 len=8 span[header_field]=\"Location\"\noff=41 header_field complete\noff=42 len=22 span[header_value]=\"http://www.google.com/\"\noff=66 header_value complete\noff=66 len=12 span[header_field]=\"Content-Type\"\noff=79 header_field complete\noff=80 len=24 span[header_value]=\"text/html; charset=UTF-8\"\noff=106 header_value complete\noff=106 len=4 span[header_field]=\"Date\"\noff=111 header_field complete\noff=112 len=29 span[header_value]=\"Sun, 26 Apr 2009 11:11:49 GMT\"\noff=143 header_value complete\noff=143 len=7 span[header_field]=\"Expires\"\noff=151 header_field complete\noff=152 len=29 span[header_value]=\"Tue, 26 May 2009 11:11:49 GMT\"\noff=183 header_value complete\noff=183 len=22 span[header_field]=\"X-$PrototypeBI-Version\"\noff=206 header_field complete\noff=207 len=7 span[header_value]=\"1.6.0.3\"\noff=216 header_value complete\noff=216 len=13 span[header_field]=\"Cache-Control\"\noff=230 header_field complete\noff=231 len=23 span[header_value]=\"public, max-age=2592000\"\noff=256 header_value complete\noff=256 len=6 span[header_field]=\"Server\"\noff=263 header_field complete\noff=264 len=3 span[header_value]=\"gws\"\noff=269 header_value complete\noff=269 len=14 span[header_field]=\"Content-Length\"\noff=284 header_field complete\noff=286 len=5 span[header_value]=\"219  \"\noff=293 header_value complete\noff=295 headers complete status=301 v=1/1 flags=20 content_length=219\noff=295 len=74 span[body]=\"<HTML><HEAD><meta http-equiv=content-type content=text/html;charset=utf-8>\"\noff=369 len=1 span[body]=lf\noff=370 len=37 span[body]=\"<TITLE>301 Moved</TITLE></HEAD><BODY>\"\noff=407 len=1 span[body]=lf\noff=408 len=18 span[body]=\"<H1>301 Moved</H1>\"\noff=426 len=1 span[body]=lf\noff=427 len=22 span[body]=\"The document has moved\"\noff=449 len=1 span[body]=lf\noff=450 len=42 span[body]=\"<A HREF=\"http://www.google.com/\">here</A>.\"\noff=492 len=1 span[body]=cr\noff=493 len=1 span[body]=lf\noff=494 len=14 span[body]=\"</BODY></HTML>\""
+      }
+    },
+    {
+      "name": "sample / No headers and no body",
+      "input": "HTTP/1.1 404 Not Found\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 404,
+            "headers": [],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=9 span[status]=\"Not Found\"\noff=24 status complete\noff=26 headers complete status=404 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / No reason phrase",
+      "input": "HTTP/1.1 301\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=14 status complete\noff=16 headers complete status=301 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / Empty reason phrase after space",
+      "input": "HTTP/1.1 200 \r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=0 span[status]=\"\"\noff=15 status complete\noff=17 headers complete status=200 v=1/1 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / No carriage ret",
+      "input": "HTTP/1.1 200 OK\nContent-Type: text/html; charset=utf-8\nConnection: close\n\nthese headers are from http://news.ycombinator.com/",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=16 error code=25 reason=\"Missing expected CR after response line\""
+      }
+    },
+    {
+      "name": "sample / Underscore in header key",
+      "input": "HTTP/1.1 200 OK\r\nServer: DCLK-AdSvr\r\nContent-Type: text/xml\r\nContent-Length: 0\r\nDCLK_imp: v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Server",
+                "DCLK-AdSvr"
+              ],
+              [
+                "Content-Type",
+                "text/xml"
+              ],
+              [
+                "Content-Length",
+                "0"
+              ],
+              [
+                "DCLK_imp",
+                "v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o"
+              ]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=6 span[header_field]=\"Server\"\noff=24 header_field complete\noff=25 len=10 span[header_value]=\"DCLK-AdSvr\"\noff=37 header_value complete\noff=37 len=12 span[header_field]=\"Content-Type\"\noff=50 header_field complete\noff=51 len=8 span[header_value]=\"text/xml\"\noff=61 header_value complete\noff=61 len=14 span[header_field]=\"Content-Length\"\noff=76 header_field complete\noff=77 len=1 span[header_value]=\"0\"\noff=80 header_value complete\noff=80 len=8 span[header_field]=\"DCLK_imp\"\noff=89 header_field complete\noff=90 len=81 span[header_value]=\"v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o\"\noff=173 header_value complete\noff=175 headers complete status=200 v=1/1 flags=20 content_length=0\noff=175 message complete"
+      }
+    },
+    {
+      "name": "sample / bonjourmadame.fr",
+      "input": "HTTP/1.0 301 Moved Permanently\r\nDate: Thu, 03 Jun 2010 09:56:32 GMT\r\nServer: Apache/2.2.3 (Red Hat)\r\nCache-Control: public\r\nPragma: \r\nLocation: http://www.bonjourmadame.fr/\r\nVary: Accept-Encoding\r\nContent-Length: 0\r\nContent-Type: text/html; charset=UTF-8\r\nConnection: keep-alive\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 301,
+            "headers": [
+              [
+                "Date",
+                "Thu, 03 Jun 2010 09:56:32 GMT"
+              ],
+              [
+                "Server",
+                "Apache/2.2.3 (Red Hat)"
+              ],
+              [
+                "Cache-Control",
+                "public"
+              ],
+              [
+                "Pragma",
+                ""
+              ],
+              [
+                "Location",
+                "http://www.bonjourmadame.fr/"
+              ],
+              [
+                "Vary",
+                "Accept-Encoding"
+              ],
+              [
+                "Content-Length",
+                "0"
+              ],
+              [
+                "Content-Type",
+                "text/html; charset=UTF-8"
+              ],
+              [
+                "Connection",
+                "keep-alive"
+              ]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.0\"\noff=8 version complete\noff=13 len=17 span[status]=\"Moved Permanently\"\noff=32 status complete\noff=32 len=4 span[header_field]=\"Date\"\noff=37 header_field complete\noff=38 len=29 span[header_value]=\"Thu, 03 Jun 2010 09:56:32 GMT\"\noff=69 header_value complete\noff=69 len=6 span[header_field]=\"Server\"\noff=76 header_field complete\noff=77 len=22 span[header_value]=\"Apache/2.2.3 (Red Hat)\"\noff=101 header_value complete\noff=101 len=13 span[header_field]=\"Cache-Control\"\noff=115 header_field complete\noff=116 len=6 span[header_value]=\"public\"\noff=124 header_value complete\noff=124 len=6 span[header_field]=\"Pragma\"\noff=131 header_field complete\noff=134 len=0 span[header_value]=\"\"\noff=134 header_value complete\noff=134 len=8 span[header_field]=\"Location\"\noff=143 header_field complete\noff=144 len=28 span[header_value]=\"http://www.bonjourmadame.fr/\"\noff=174 header_value complete\noff=174 len=4 span[header_field]=\"Vary\"\noff=179 header_field complete\noff=180 len=15 span[header_value]=\"Accept-Encoding\"\noff=197 header_value complete\noff=197 len=14 span[header_field]=\"Content-Length\"\noff=212 header_field complete\noff=213 len=1 span[header_value]=\"0\"\noff=216 header_value complete\noff=216 len=12 span[header_field]=\"Content-Type\"\noff=229 header_field complete\noff=230 len=24 span[header_value]=\"text/html; charset=UTF-8\"\noff=256 header_value complete\noff=256 len=10 span[header_field]=\"Connection\"\noff=267 header_field complete\noff=268 len=10 span[header_value]=\"keep-alive\"\noff=280 header_value complete\noff=282 headers complete status=301 v=1/0 flags=21 content_length=0\noff=282 message complete"
+      }
+    },
+    {
+      "name": "sample / Spaces in header name",
+      "input": "HTTP/1.1 200 OK\r\nServer: Microsoft-IIS/6.0\r\nX-Powered-By: ASP.NET\r\nen-US Content-Type: text/xml\r\nContent-Type: text/xml\r\nContent-Length: 16\r\nDate: Fri, 23 Jul 2010 18:45:38 GMT\r\nConnection: keep-alive\r\n\r\n<xml>hello</xml>",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=6 span[header_field]=\"Server\"\noff=24 header_field complete\noff=25 len=17 span[header_value]=\"Microsoft-IIS/6.0\"\noff=44 header_value complete\noff=44 len=12 span[header_field]=\"X-Powered-By\"\noff=57 header_field complete\noff=58 len=7 span[header_value]=\"ASP.NET\"\noff=67 header_value complete\noff=72 error code=10 reason=\"Invalid header token\""
+      }
+    },
+    {
+      "name": "sample / Non ASCII in status line",
+      "input": "HTTP/1.1 500 Oriëntatieprobleem\r\nDate: Fri, 5 Nov 2010 23:07:12 GMT+2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 500,
+            "headers": [
+              [
+                "Date",
+                "Fri, 5 Nov 2010 23:07:12 GMT+2"
+              ],
+              [
+                "Content-Length",
+                "0"
+              ],
+              [
+                "Connection",
+                "close"
+              ]
+            ],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=19 span[status]=\"Oriëntatieprobleem\"\noff=34 status complete\noff=34 len=4 span[header_field]=\"Date\"\noff=39 header_field complete\noff=40 len=30 span[header_value]=\"Fri, 5 Nov 2010 23:07:12 GMT+2\"\noff=72 header_value complete\noff=72 len=14 span[header_field]=\"Content-Length\"\noff=87 header_field complete\noff=88 len=1 span[header_value]=\"0\"\noff=91 header_value complete\noff=91 len=10 span[header_field]=\"Connection\"\noff=102 header_field complete\noff=103 len=5 span[header_value]=\"close\"\noff=110 header_value complete\noff=112 headers complete status=500 v=1/1 flags=22 content_length=0\noff=112 message complete"
+      }
+    },
+    {
+      "name": "sample / HTTP version 0.9",
+      "input": "HTTP/0.9 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"0.9\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=19 headers complete status=200 v=0/9 flags=0 content_length=0"
+      }
+    },
+    {
+      "name": "sample / No Content-Length, no Transfer-Encoding",
+      "input": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello world",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              [
+                "Content-Type",
+                "text/plain"
+              ]
+            ],
+            "body": "hello world",
+            "keepAlive": false
+          }
+        }
+      },
+      "reference": {
+        "llhttp": "off=0 message begin\noff=0 len=4 span[protocol]=\"HTTP\"\noff=4 protocol complete\noff=5 len=3 span[version]=\"1.1\"\noff=8 version complete\noff=13 len=2 span[status]=\"OK\"\noff=17 status complete\noff=17 len=12 span[header_field]=\"Content-Type\"\noff=30 header_field complete\noff=31 len=10 span[header_value]=\"text/plain\"\noff=43 header_value complete\noff=45 headers complete status=200 v=1/1 flags=0 content_length=0\noff=45 len=11 span[body]=\"hello world\""
+      }
+    },
+    {
+      "name": "sample / Response starting with CRLF",
+      "input": "\r\nHTTP/1.1 200 OK\r\nHeader1: Value1\r\nHeader2:\t Value2\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "reference": {
+        "llhttp": "off=2 message begin\noff=2 len=4 span[protocol]=\"HTTP\"\noff=6 protocol complete\noff=7 len=3 span[version]=\"1.1\"\noff=10 version complete\noff=15 len=2 span[status]=\"OK\"\noff=19 status complete\noff=19 len=7 span[header_field]=\"Header1\"\noff=27 header_field complete\noff=28 len=6 span[header_value]=\"Value1\"\noff=36 header_value complete\noff=36 len=7 span[header_field]=\"Header2\"\noff=44 header_field complete\noff=46 len=6 span[header_value]=\"Value2\"\noff=54 header_value complete\noff=54 len=14 span[header_field]=\"Content-Length\"\noff=69 header_field complete\noff=70 len=1 span[header_value]=\"0\"\noff=73 header_value complete\noff=75 headers complete status=200 v=1/1 flags=20 content_length=0\noff=75 message complete"
+      }
+    }
+  ]
+}

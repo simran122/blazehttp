@@ -6,3 +6,4 @@ docs
 .claude
 coverage
 packages/blazehttp/src/generated/
+tests/vectors/**/llhttp-*.json
