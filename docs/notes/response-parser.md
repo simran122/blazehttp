@@ -198,20 +198,23 @@ This section supersedes the Task 4 brief's Step 5 hints ("`memchr` for CR", "`co
 `memchr`, and the tables are `static [bool; 256]` built by a `const fn`.
 
 ### 6.1 Files (Task 4 scope)
-- `crates/engine-core/src/h1/mod.rs` (`pub mod parser; pub(crate) mod grammar;` and re-exports).
+- `crates/engine-core/src/h1/mod.rs` (`pub mod parser; pub(crate) mod grammar;` and re-exports of the public types).
 - `crates/engine-core/src/h1/grammar.rs`: the `TCHAR` and `FIELD_CONTENT` tables and the scan primitives (§6.2).
   Task 5 reuses it.
-- `crates/engine-core/src/h1/parser.rs`: the types and `ResponseParser`.
+- `crates/engine-core/src/h1/parser/mod.rs`: the public types and `ResponseParser` (the resumable scan, §6.3), and
+  `crates/engine-core/src/h1/parser/facts.rs`: what the fields mean — the framing and `Connection` facts and the final
+  framing and keep-alive (§6.5). One responsibility per file (design §13.1 "Code structure").
 - `crates/engine-core/examples/h1_parse_bench.rs` and `[dev-dependencies] httparse = "=1.10.1"` (benchmark only;
   `httparse` is not on policy-check's HTTP-engine list, and dev-dependencies never ship) — spec in §8.1.
 - `tests/fixtures/h1-heads/{1k,1k-h20,synthetic-h20}.http`: raw head bytes shared by the bench, the unit tests and
   Task 9's `bench-server` (§8.3).
 - Vectors: `tests/vectors/h1-response/blazehttp-rules.json` and `{go,httparse,hyper,curl}-selected.json` (§9.5),
-  registered in `tests/vectors/index.json`; `THIRD_PARTY_NOTICES` regenerated; overrides for the two imported 304
-  cases in `tools/vectors/overrides/llhttp.json` (§9.4).
-- Vector format: `inputEncoding: "latin1"` (each code point U+0000–U+00FF is one byte; expected header values are
-  compared as latin1) in `tools/vectors/schema.ts`, `crates/engine-core/tests/support/vectors.rs` and
-  `docs/notes/vectors.md`, so single obs-text bytes (`\x80`, `\xa0`) can be written.
+  registered in `tests/vectors/index.json`; `THIRD_PARTY_NOTICES` regenerated; the 204/304 reuse rule in the llhttp
+  importer's derivation, which flips the two imported 304 cases (§9.4).
+- Vector format: `inputEncoding: "latin1"` (each code point U+0000–U+00FF is one byte; expected header names, values
+  and the body are decoded the same way) in `tools/vectors/schema.ts`, `crates/engine-core/tests/support/vectors.rs`
+  and `docs/notes/vectors.md`, so single obs-text bytes (`\x80`, `\xa0`) can be written; and the optional
+  provenance field `derivedFrom: "<file>:<test> @ <tag>"` for cases re-derived from an upstream test (§9.5).
 - `crates/engine-core/tests/h1_response.rs`; fuzz crate `crates/engine-core/fuzz` (outside the workspace, never
   shipped) with `httparse` as its dependency for the differential oracle (§9.7).
 - No runtime dependency is added to `engine-core`.
@@ -220,10 +223,12 @@ This section supersedes the Task 4 brief's Step 5 hints ("`memchr` for CR", "`co
 - `TCHAR[b]` ⇔ `b` is RFC 9110 §5.6.2 `tchar` (`!#$%&'*+-.^_`|~`, DIGIT, ALPHA).
 - `FIELD_CONTENT[b]` ⇔ `b == 0x09 || (0x20..=0x7E).contains(&b) || b >= 0x80` (RFC 9110 §5.5 `field-vchar` plus SP
   and HTAB; RFC 9112 §4 `reason-phrase` uses the same class). CR, LF, NUL, other CTLs and DEL are excluded.
-- `fn class(table: &[bool; 256], b: u8) -> bool`: the only runtime indexing, `table[usize::from(b)]`, carrying
-  `#[expect(clippy::indexing_slicing, reason = "u8 index < 256")]`; the `const fn` table builder (`t[i] = …`; `get_mut`
-  is not const-stable on 1.99.1) carries the same `expect`. Policy-check forbids `allow`/`expect` only for
-  `deprecated`, `dead_code` and `unused*` (`tools/policy-check/rules.ts`, `FORBIDDEN_LINTS`), so both pass.
+- `fn class(table: &[bool; 256], b: u8) -> bool`: `table.get(usize::from(b)).copied().unwrap_or(false)` — a `u8`
+  index into 256 entries never misses, so no runtime indexing and no lint exception. The tables are built from
+  inclusive byte ranges by a `const fn` (`table[b as usize] = true`; `get_mut` is not const on 1.99.1 and const fns
+  cannot call function pointers), which carries the only exception:
+  `#[expect(clippy::indexing_slicing, reason = "…")]`. Policy-check forbids `allow`/`expect` only for `deprecated`,
+  `dead_code` and `unused*` (`tools/policy-check/rules.ts`, `FORBIDDEN_LINTS`), so it passes.
 - `fn token_len(s: &[u8]) -> usize`: length of the leading `TCHAR` run (`s.iter().position(|&b| !class(&TCHAR, b))
   .unwrap_or(s.len())`).
 - `fn value_len(s: &[u8]) -> usize`: length of the leading `FIELD_CONTENT` run. `let (words, tail) =
@@ -248,17 +253,22 @@ pub struct ResponseParser {
     line_start: usize,               // start of the current line
     colon: usize,                    // the current field line's ':' (meaningful in phase Value)
     // per message, reset after every interim head:
-    status: u16, version: HttpVersion, headers_start: usize, fields: usize, framing: FramingFact,
+    line: StatusLine { status: u16, version: HttpVersion }, headers_start: usize, fields: usize,
     // per exchange, reset only by `new`/`reset`:
-    connection: ConnectionOption,    // `Close` is sticky across interim heads; `KeepAlive` is reset per head
+    facts: Facts { framing_fact: FramingFact,         // reset after every interim head
+                   connection: ConnectionOption },     // `Close` is sticky across interim heads; `KeepAlive` is reset
     interim_count: usize, interim_bytes: usize,
 }
 ```
 
+As built, `FramingFact`, `ConnectionOption` and `Facts` live in `parser/facts.rs` (§6.1); the scan holds a `Facts`
+and calls `field`, `after_interim` and `conclude` on it.
+
 One bool remains (`clippy::struct_excessive_bools`, denied through `pedantic`, fires on the first draft's five).
 `saw_te` is gone: a non-`chunked` TE fails immediately, so "TE seen" ≡ `framing == Chunked`.
 
-Invariants: `line_start ≤ colon ≤ pos ≤ window.len()` within a call; `interim_bytes ≤ max_head_bytes`.
+Invariants within a call: `line_start ≤ pos ≤ window.len()`; **in phase `Value` only**, also `line_start ≤ colon <
+pos` (`colon` is stale in every other phase); `interim_bytes ≤ max_head_bytes`.
 
 `parse(buf)` is `let r = self.step(buf); if r.is_err() { self.phase = Phase::Failed; } r` — the single exit point.
 `step(buf)`:
@@ -268,7 +278,8 @@ Invariants: `line_start ≤ colon ≤ pos ≤ window.len()` within a call; `inte
    `window = buf.get(..buf.len().min(budget))`; `window.get(pos..)` is `None` → `Err(Engine(Internal))` (contract:
    `buf` shorter than the prefix already examined, `pos`).
 3. Loop on `phase`, with `rest = window.get(pos..)`:
-   - `StatusPrefix` (`line_start == 0`): `n = rest_of_line.len().min(12)`; each of the first `n` bytes must match the
+   - `StatusPrefix` (`line_start == pos == 0`; `rest_of_line` = `window.get(line_start..)`, i.e. the whole window):
+     `n = rest_of_line.len().min(12)`; each of the first `n` bytes must match the
      prefix grammar at its position (0–6 `HTTP/1.`, 7 `0`|`1`, 8 SP, 9–11 DIGIT), else `Malformed` — a non-HTTP
      reply (a TLS record `\x16\x03…`, HTML, HTTP/0.9) fails at its first wrong byte, never waiting for an LF. This
      re-checks ≤ 12 bytes per call (O(1)). Fewer than 12 bytes → **more**. Otherwise: version from byte 7; status
@@ -277,7 +288,7 @@ Invariants: `line_start ≤ colon ≤ pos ≤ window.len()` within a call; `inte
    - `StatusReason`: the line must end with CRLF within `limit = line_start + max_status_line_bytes` (8,192, CRLF
      included); bytes at or after `limit` are never examined. At `pos == 12`: `[b' ', ..]` → `pos = 13`;
      `[b'\r', ..]` → empty reason, go to the CRLF check; `[]` → **more**; anything else → `Malformed`. Then
-     `e = pos + value_len(window[pos..limit.min(len)])`; `match window.get(e..limit.min(len))`: `[b'\r', b'\n', ..]` →
+     `e = pos + value_len(window.get(pos..limit.min(len))?)`; `match window.get(e..limit.min(len))`: `[b'\r', b'\n', ..]` →
      `headers_start = pos = line_start = e + 2`, `phase = LineStart`; `[] | [b'\r']` → if `window.len() >= limit`
      → `TooLarge(Headers)` (the line cannot end within 8 KiB), else `pos = e`, **more**; anything else (bare LF, CR
      not followed by LF, CTL, DEL) → `Malformed`.
@@ -321,12 +332,12 @@ When a field line completes (§6.3 `Value`, CRLF seen), with `name = window[line
 `eq_ignore_ascii_case` (field names are case-insensitive, RFC 9110 §5.1); only the three framing names trim:
 `value = raw.trim_ascii()` — after validation the only ASCII whitespace left is SP/HTAB, so this is exactly OWS
 trimming (RFC 9110 §5.5); non-ASCII bytes (`\x85`, `\xa0`) are never trimmed.
-- 14 `content-length`: `framing != None` → `SmugglingRisk`; `value` must be `1*DIGIT` folded with
+- 14 `content-length`: `framing_fact != None` → `SmugglingRisk`; `value` must be `1*DIGIT` folded with
   `checked_mul(10)`/`checked_add`, else (empty, sign, inner space, comma list, `_`, `0x`, NBSP, overflow) →
-  `Malformed`; in a 1xx head a value other than 0 → `SmugglingRisk` (RFC 9110 §8.6, RFC 9112 §6.1); `framing =
+  `Malformed`; in a 1xx head a value other than 0 → `SmugglingRisk` (RFC 9110 §8.6, RFC 9112 §6.1); `framing_fact =
   Length(n)`.
-- 17 `transfer-encoding`: `framing != None`, `version == Http10` or a 1xx status → `SmugglingRisk`; `value` must be
-  `chunked` (ASCII case-insensitive) else `SmugglingRisk`; `framing = Chunked`.
+- 17 `transfer-encoding`: `framing_fact != None`, `version == Http10` or a 1xx status → `SmugglingRisk`; `value` must
+  be `chunked` (ASCII case-insensitive) else `SmugglingRisk`; `framing_fact = Chunked`.
 - 10 `connection`: for each `value.split(|&b| b == b',')` element, `trim_ascii`, then `close` → `connection =
   Close`; `keep-alive` → `connection = KeepAlive` unless it is `Close`; empty and other elements are ignored.
 - anything else (including `Keep-Alive`, `Proxy-Connection`, `Upgrade`, `Trailer`): ignored.
@@ -335,11 +346,11 @@ The field count and these checks run in every head, 1xx included; in a 1xx head 
 discarded and only a `Close` survives (RFC 9112 §9.6: the connection closes after the exchange).
 
 Final head:
-- framing: `head_request || status == 204 || status == 304` → `Empty`; else `Chunked` → `Chunked`; `Length(n)` →
-  `ContentLength(n)` (also `0`); `None` → `CloseDelimited`.
+- `framing` (output `Framing`): `head_request || status == 204 || status == 304` → `Empty`; else `framing_fact`
+  `Chunked` → `Chunked`; `Length(n)` → `ContentLength(n)` (also `0`); `None` → `CloseDelimited`.
 - keep-alive: `Http11 → connection != Close`; `Http10 → connection == KeepAlive`; then `false` if
-  `CloseDelimited`; then `false` if `status ∈ {204, 304} && !head_request && (framing == Chunked || framing ==
-  Length(n > 0))` — such a response is accepted without a body, but a server that announces a body it does not send
+  `CloseDelimited`; then `false` if `status ∈ {204, 304} && !head_request && (framing_fact == Chunked ||
+  framing_fact == Length(n > 0))` — such a response is accepted without a body, but a server that announces a body it does not send
   may still send one, so the connection is not reused (design §5.2 Bodies, **[author's call]**).
 
 ### 6.6 Interface (kept, with clarifications)
@@ -348,7 +359,9 @@ Final head:
 - **`Keep-Alive` is not extracted in P0.** The only consumer, the pool's idle timeout (§5.1), arrives in P1a. The
   brief's sentence listing `Keep-Alive` should read "`Content-Length`, `Transfer-Encoding` and `Connection`".
 - Contract violations — `parse` after `Complete` or after an error without `reset`; a `buf` shorter than the prefix
-  already examined (`pos`) — return `Err(Engine(Internal))`; no code path panics (§6.7).
+  already examined (`pos`) — return `Err(Engine(Internal))`; no code path panics (§6.7). During `StatusPrefix`, `pos`
+  stays 0 until all 12 prefix bytes are present, so a shorter buffer there is harmless: the prefix is re-validated
+  from byte 0 on every call.
 - **EOF is not a parser input.** The caller (the connection, and the test helper) tracks the bytes received for the
   exchange: EOF before the final head is `Network(ClosedBeforeResponse)` **only when zero bytes of this exchange's
   response arrived, interim heads included**, otherwise `Protocol(MalformedResponse)`. The parser exposes nothing new
@@ -367,12 +380,21 @@ Final head:
   form anyway.
 - Lookahead uses slice patterns (`[b'\r', b'\n', ..]`); the version and digits use `split_first_chunk`/slice
   patterns, never indexing; the only `split_at` form allowed is `split_at_checked`.
-- Arithmetic: offsets advance with `checked_add` mapped to `Engine(Internal)` (all are bounded by the 64 KiB window,
-  so these never fire); `budget` uses `checked_sub`; SWAR uses `wrapping_*`; digit values use
-  `wrapping_sub(b'0')` after the DIGIT check; `Content-Length` uses `checked_mul`/`checked_add`.
+- Arithmetic (as built; every form is explicit because `clippy::arithmetic_side_effects` is denied):
+  - offsets and counters (`pos`, `line_start`, `colon + 1`, `e + 2`, `fields`, `interim_count`, `interim_bytes`):
+    `checked_add(..).ok_or(Engine(Internal))` — all are bounded by the 64 KiB window and the limits, so these never
+    fire, and an impossible overflow becomes a typed error rather than a wrap;
+  - `budget`: `checked_sub` (same mapping);
+  - SWAR word arithmetic and the scanned-length counter in `value_len`: `wrapping_*` (the counter is ≤ `s.len()` ≤
+    `isize::MAX`, so it cannot wrap; the mask arithmetic is meant to wrap);
+  - status code: each digit is `u16::from(d.wrapping_sub(b'0'))` after the DIGIT check, combined with
+    `wrapping_mul`/`wrapping_add` — bounded by 999, so it cannot wrap;
+  - const table builder: `wrapping_add` on loop counters bounded by the loop condition;
+  - `Content-Length`: `checked_mul`/`checked_add` (overflow is a `Malformed` value).
 - Enforcement in `grammar.rs` and `parser.rs`: `#![deny(clippy::indexing_slicing, clippy::arithmetic_side_effects,
-  clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable)]`, with the two `#[expect]`s of §6.2
-  as the only exceptions. The fuzz target runs with debug assertions on.
+  clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable)]` (also in `parser/facts.rs`), with
+  one exception: the `#[expect(clippy::indexing_slicing)]` on the const table builder (§6.2). The fuzz target runs with
+  debug assertions and overflow checks on.
 
 ## 7. Error mapping (decided)
 
@@ -476,6 +498,13 @@ single pass, not from NEON — which is what G adopts.
 **x64: deferred** until the owner's x64 VM exists (Task 4 is not blocked: the decision holds on both arm64 builds
 measured, and G has no arch-specific code). When the VM exists, run the committed benchmark there (same recipe, `--cpus=1`
 container) and record the result here and in `docs/perf/journal.md`.
+
+**Committed benchmark results (Task 4, dev measurements; `docs/perf/journal.md`).** Linux arm64 container, same setup
+as above, 3 runs of the binary, median per-run ratio ours/httparse + facts: `1k.http` 0.830–0.841× (43–45 ns),
+`1k-h20.http` 0.963–0.976× (229–231 ns), `synthetic-h20.http` 0.929–0.939×; 1-byte feeds (a)–(d) 0.03–0.21 ms
+(httparse (a) 68–70 ms). The P0 budget (§8.4) holds. The fused byte-wise status prefix did not regress against the
+prototype's `memchr` status line (43–45 ns vs 46.6 ns on the 3-header head). macOS: 0.64–0.66× with the default
+`apple-m1` target CPU, 0.88× / 0.97× with `-C target-cpu=generic`.
 
 ### 8.3 Proposed `/1k-h20` layout (for Task 9)
 
@@ -587,7 +616,7 @@ Status line:
   `100 Continue` / `199 X` head, then `200` with `Content-Length: 2` and `ok`) → 200.
 - `HTTP/1.1 200  OK` (reason starts with SP) → accepted. `HTTP/1.1 101` with no `Upgrade` → malformed.
 - `HTTP/1.1 150 X` then `200` → status 200 (every 1xx except 101 is interim).
-- `garbage-no-lf` `\x16\x03\x03\x00\x02\x02\x28` (a TLS alert record, no LF; latin1) → malformed at the first byte,
+- `garbage-no-lf` `\x16\x03\x03\x00\x02\x02\x28` (a TLS alert record, no LF; `utf8`: every byte is < 0x80) → malformed at the first byte,
   without waiting for more input (unit test: `parse` returns the error on the first call).
 
 Framing (each with its accepting neighbour):
@@ -603,17 +632,20 @@ Framing (each with its accepting neighbour):
   `content-length: 5` → smuggling-risk.
 - TE accepted as chunked, asserted with request `HEAD` (framing `Empty`, TE grammar still checked; the `GET` twins
   move to the P1a chunked file): `te-trailing-htab` `Transfer-Encoding: chunked\t` (llhttp #876) and
-  `te-leading-htab` `Transfer-Encoding:\tchunked` → ok, status 200, TE echoed, keepAlive true, `expect.undici:
-  "PROTOCOL/smuggling-risk"` (D1, P4); `te-uppercase` `CHUNKED` → ok. `te-vt` (`chunked\x0b`) → malformed.
+  `te-leading-htab` `Transfer-Encoding:\tchunked` → ok, status 200, TE echoed, keepAlive true; `te-trailing-htab`
+  carries `expect.undici: "PROTOCOL/smuggling-risk"` (D1, P4; `te-leading-htab` waits for the P4 check in §11);
+  `te-uppercase` `CHUNKED` → ok. `te-vt` (`chunked\x0b`) → malformed.
 - 1xx heads (fields per head, bytes cumulative; facts reset; framing headers forbidden):
   `cl-on-150` `HTTP/1.1 150 X\r\nContent-Length: 39\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nevil` →
   smuggling-risk; `te-and-cl-in-103`, `cl-dup-in-100` → smuggling-risk (now at the first framing field, by the 1xx
-  rule); `cl0-in-103-then-cl-in-200` (`Content-Length: 0` in a 103, then `200` with `Content-Length: 2`, `ok`) → 200,
-  body `ok`; `fields-100-in-103-and-100-in-200` → accepted.
+  rule; `cl-dup-in-100` is `HTTP/1.1 100 Continue\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\n` and fails at
+  its first field); `cl0-in-103-then-cl-in-200` (`Content-Length: 0` in a 103, then `200` with `Content-Length: 2`,
+  `ok`) → 200, body `ok`; `fields-100-in-103-and-100-in-200` (a 103 with 100 `x-fill-NNNN: a` fields, then a 200 with
+  99 of them plus `Content-Length: 0`) → accepted.
 - 204/304 (design §5.2 Bodies, [author's call]): `te-on-304` → accepted, no body, keepAlive **false**;
-  `304-te-no-reuse` and `204-cl-5-no-reuse` (`Content-Length: 5`, no body) → keepAlive false; `304-cl-0` →
-  keepAlive true; `head-cl-123` (request `HEAD`, `Content-Length: 123`) → keepAlive true; `cl-and-te-on-304` →
-  smuggling-risk.
+  `204-cl-5-no-reuse` (`Content-Length: 5`, no body) → keepAlive false; `304-cl-0` → keepAlive true; `head-cl-123`
+  (request `HEAD`, `HTTP/1.1 304 Not Modified\r\nContent-Length: 123\r\n\r\n`) → keepAlive true (S1's HEAD
+  exclusion); `cl-and-te-on-304` → smuggling-risk. (`304-te-no-reuse` duplicated `te-on-304` and was dropped.)
 - HEAD with `Transfer-Encoding: chunked` → no body, keep-alive true.
 
 Connection:
@@ -626,8 +658,9 @@ Connection:
 
 EOF (design §5.2, [author's call]; the helper applies the §6.6 rule):
 - `eof-empty` `""` → `NETWORK/closed-before-response`; `eof-after-interim` `HTTP/1.1 100 Continue\r\n\r\n` and
-  `interim-then-eof` `HTTP/1.1 103 Early Hints\r\n\r\n` → `PROTOCOL/malformed-response`; `eof-lone-cr` `"\r"` →
-  `PROTOCOL/malformed-response`.
+  `interim-then-eof` `HTTP/1.1 103 Early Hints\r\n\r\n` → `PROTOCOL/malformed-response`; `eof-after-h` `H` and
+  `eof-mid-status` `HTTP/1.1 200 OK\r` + EOF → `PROTOCOL/malformed-response`. (`eof-lone-cr` was replaced: `\r`
+  fails the status prefix at byte 0 and never reached EOF.)
 
 Limits (exact boundaries, all bytes counted including CRLF), built by one deterministic rule so they can be
 regenerated: filler names `x-fill-NNNN` (4 digits), values of `a`, each line 1,000 bytes except one last field sized
@@ -670,8 +703,8 @@ negative and `0x` lengths, differing duplicate lengths (`cl-dup-differ`, Klein 2
 ### 9.3 From upstream suites (behaviour only; per-source files)
 
 Cases re-derived from an upstream test (one behaviour each, often with that test's bytes) live in a file per source
-project, so licence and provenance are recorded once (§9.5); each case also carries `reference: { "<project>":
-"<file>:<test> @ <tag>" }`. Only cases not already in §9.1, §9.2 or the imported files.
+project, so licence and provenance are recorded once (§9.5); each case also carries `derivedFrom: "<file>:<test> @
+<tag>"` (`reference` stays for what reference implementations did with an input). Only cases not already in §9.1, §9.2 or the imported files.
 
 `go-selected.json` (go1.27.3):
 - `eof-mid-fields` `HTTP/1.1 301 Moved Permanently\r\nFoo: bar` + EOF and `eof-after-version` `HTTP/1.1` + EOF
@@ -707,9 +740,14 @@ project, so licence and provenance are recorded once (§9.5); each case also car
   `chunked, identity` [test1495] → smuggling-risk.
 - `obs-fold-htab-continuation` a non-first field followed by a line starting with HTAB [test1274] → malformed.
 
-### 9.4 Overrides of imported cases
+### 9.4 Imported cases changed by the 204/304 rule
 `connection / HTTP 304 with Content-Length` and `connection / HTTP 304 with Transfer-Encoding` flip to keepAlive
-**false** (design §5.2 Bodies, 204/304 rule) through `tools/vectors/overrides/llhttp.json`, citing the rule.
+**false** (design §5.2 Bodies, 204/304 rule). **As built** this is not an override: the rule is ours, not a llhttp
+divergence, so it lives in the importer's derivation (`finalOutcome` in `tools/vectors/import-llhttp.ts`: a 204/304
+answering a non-`HEAD` request with `Transfer-Encoding` or `Content-Length` > 0 → keepAlive false). The cases keep
+their span check, and any future imported 204/304 case gets the rule. The importer now also stops for an override when
+an interim head (other than `101`) carries `Content-Length`, `Transfer-Encoding` or `Connection` (§5.2 Interim heads;
+none does in llhttp v9.4.3).
 
 ### 9.5 Per-source vector files created by Task 4
 
@@ -724,7 +762,11 @@ Each file is registered in `tests/vectors/index.json` for `engine-core:h1_respon
 regenerates `THIRD_PARTY_NOTICES`. Tags are the latest published releases on 2026-11-06; P1b's full port (design §15)
 extends the same files after `--refresh`-style re-resolution of the latest release.
 
-**Counts.** First completion: 46 new vectors (§9.2: 20; §9.3: 26 = go 13, hyper 1, httparse 8, curl 4). Review
+**Counts as built (Task 4):** `blazehttp-rules.json` 136 (every §9.1 rule with its accepting neighbours, the §9.2
+classes and the limit boundaries), `go-selected.json` 13, `hyper-selected.json` 1, `httparse-selected.json` 8,
+`curl-selected.json` 4: **162** new vectors, plus the two imported 304 cases flipped (§9.4).
+
+**Counts planned in the note.** First completion: 46 new vectors (§9.2: 20; §9.3: 26 = go 13, hyper 1, httparse 8, curl 4). Review
 round 1 adds **21** vectors to §9.1 (`garbage-no-lf`; 3 status boundaries; `cl-dup-case`; 2 two-field TE;
 `te-name-mixed-case`; `te-leading-htab`; `cl-on-150`; `cl0-in-103-then-cl-in-200`;
 `fields-100-in-103-and-100-in-200`; 4 for 204/304; `connection-name-upper`; 4 EOF) and 2 overrides (§9.4): **67**
@@ -732,7 +774,8 @@ new vectors in total, beyond the first draft's §9.1 rule groups.
 
 ### 9.6 Unit tests (not vectors)
 - Contract violations return `Engine(Internal)`: `parse` after `Complete`; `parse` after an error (the `Failed`
-  phase); a `buf` shorter than `pos` (feed 10 bytes that return `Partial`, then 5).
+  phase); a `buf` shorter than `pos`: feed `HTTP/1.1 200 OK\r\nFoo` (20 bytes → phase `Name`, `pos == 20`), then only
+  its first 15 bytes. (A shorter buffer during `StatusPrefix` is re-validated, not an error: §6.6.)
 - `value_len` equals the table-based `position` for every byte value at every lane and in the tail, and for every
   adjacent pair (256 × 256) at lanes 0/1, 6/7 and 7/tail.
 - `reset` after `Complete`; a 64 KiB head fed 1 byte at a time completes; every sub-state boundary (a split after
@@ -816,11 +859,19 @@ undici `DispatchHook` re-check, **enforced in P4**; "table" means listed as a di
 | D11 | 1xx heads totalling > 64 KiB, each < 64 KiB | `TOO_LARGE/headers` | accepted | hook tracks cumulative head bytes |
 | D12 | two TE fields | smuggling-risk | last field decides | hook rejects > 1 TE before the body |
 | D13 | `Proxy-Connection: close` | keepAlive true (ignored) | honoured | table |
-| D14 | 1xx (not 100/102/103) with CL/TE | smuggling-risk (S16) | no body read | table |
+| D14 | any 1xx except 101 with TE or CL ≠ 0 | smuggling-risk (S16) | no body read (undici never reads a 1xx body) | table |
 | D15 | trailing OWS / obs-text values | byte-exact, ASCII OWS only | — | verify parity through the JS surface (design §9.3, `obs-text-value-preserved`) |
 
-Vectors with an undici expectation now: `te-trailing-htab`, `te-leading-htab` (`expect.undici:
-"PROTOCOL/smuggling-risk"`). P4 adds `interim-11` and `interim-flood-timer` on undici.
+Vectors with an undici expectation now: `te-trailing-htab` only (`expect.undici: "PROTOCOL/smuggling-risk"`). P4
+adds `interim-11` and `interim-flood-timer` on undici.
+
+**To verify in P4** (not defects; decide before asserting an undici expectation):
+- (a) whether llhttp strips leading OWS from a `Transfer-Encoding` value, so `te-leading-htab` (`:\tchunked`) is
+  chunked and accepted on undici; `expect.undici` is added to it only once verified;
+- (b) whether a `DispatchHook` sees 1xx heads and can stop undici's `headersTimeout` refresh; if not, D6/D11 need
+  connector/socket-level byte accounting and blazehttp's own deadline timer;
+- (c) llhttp fails duplicate `Content-Length` and `Content-Length` + `Transfer-Encoding` before headers complete, so
+  hook parity there comes only from the `HPE_*` mapping (design §9.2), not from the hook.
 
 ## 12. Hand-off to Task 6 (connection)
 
