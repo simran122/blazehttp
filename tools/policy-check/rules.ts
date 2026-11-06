@@ -87,20 +87,26 @@ const noInstallScripts: Rule = (path, content) => {
 };
 
 const DEPENDENCY_HEADER = /^\[(?:target\.[^\]]+\.)?(?:dev-|build-)?dependencies(?:\.([\w-]+))?\]/;
+const DEPENDENCY_KEY = /^\s*([\w-]+)(?:\.[\w-]+)*\s*=/;
+const PACKAGE_RENAME = /\bpackage\s*=\s*"([\w-]+)"/;
+
+const engineMessage = (crate: string | undefined): string | undefined =>
+  crate !== undefined && HTTP_ENGINE_CRATES.has(crate) ? `HTTP engine crate ${crate}` : undefined;
+
 const noHttpEngineDep: Rule = (path, content) => {
   if (!ENGINE_CRATE_MANIFEST.test(path)) return [];
-  let inDependencies = false;
+  let inDependencies = false; // inside a `[dependencies]`-style table
+  let inDependencyTable = false; // inside a `[dependencies.<name>]` table
   return scanLines(path, content, 'no-http-engine-dep', (line) => {
     const header = DEPENDENCY_HEADER.exec(line.trim());
-    if (header !== null) {
-      inDependencies = header[1] === undefined;
-      return header[1] !== undefined && HTTP_ENGINE_CRATES.has(header[1])
-        ? `HTTP engine crate ${header[1]}`
-        : undefined;
+    if (header !== null || line.trim().startsWith('[')) {
+      inDependencies = header !== null && header[1] === undefined;
+      inDependencyTable = header?.[1] !== undefined;
+      return engineMessage(header?.[1]);
     }
-    if (line.trim().startsWith('[')) inDependencies = false;
-    const name = inDependencies ? /^\s*([\w-]+)\s*=/.exec(line)?.[1] : undefined;
-    return name !== undefined && HTTP_ENGINE_CRATES.has(name) ? `HTTP engine crate ${name}` : undefined;
+    if (inDependencyTable) return engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
+    if (!inDependencies) return undefined;
+    return engineMessage(DEPENDENCY_KEY.exec(line)?.[1]) ?? engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
   });
 };
 

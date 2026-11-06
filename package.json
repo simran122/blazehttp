@@ -14,8 +14,7 @@
     "knip": "knip",
     "format": "prettier --check .",
     "policy": "node tools/policy-check/check.ts",
-    "npm-deprecated": "node tools/policy-check/npm-deprecated.ts",
-    "specgen": "echo 'specgen is added in a later P0 task' && exit 1"
+    "npm-deprecated": "node tools/policy-check/npm-deprecated.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

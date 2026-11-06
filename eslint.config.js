@@ -1,8 +1,9 @@
 import eslint from '@eslint/js';
+import { defineConfig } from 'eslint/config';
 import sonarjs from 'eslint-plugin-sonarjs';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   { ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/target/**', 'spike/**'] },
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,

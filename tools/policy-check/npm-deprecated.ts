@@ -27,7 +27,11 @@ const problemsFor = async (name: string, version: string): Promise<string[]> => 
   const deprecated = await npmView(`${name}@${version}`, 'deprecated');
   if (deprecated !== '') problems.push(`${name}@${version} is deprecated: ${deprecated}`);
   const times = JSON.parse(await npmView(name, 'time')) as Record<string, string>;
-  const latest = Math.max(...Object.values(times).map((t) => Date.parse(t)));
+  const latest = Math.max(
+    ...Object.entries(times)
+      .filter(([key]) => key !== 'created' && key !== 'modified')
+      .map(([, time]) => Date.parse(time)),
+  );
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - MAX_AGE_MONTHS);
   if (latest < cutoff.getTime() && !(name in reviewed))
