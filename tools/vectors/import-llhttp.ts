@@ -264,6 +264,9 @@ interface Message {
 }
 
 const OWS = /^[ \t]+|[ \t]+$/g;
+/** Fields whose presence in an interim head changes the native outcome (§5.2 Interim heads); an override decides. */
+const INTERIM_DECIDED_FIELDS: ReadonlySet<string> = new Set(['content-length', 'transfer-encoding', 'connection']);
+const SWITCHING_PROTOCOLS = 101;
 
 /** The response the client delivers once the server closes the connection after `input`. */
 const finalOutcome = (msg: Message, method: string, fail: (why: string) => never): Outcome => {
@@ -279,19 +282,21 @@ const finalOutcome = (msg: Message, method: string, fail: (why: string) => never
   const tokens = values('connection').flatMap((v) => v.split(',').map((t) => t.trim().toLowerCase()));
   const persistent = !tokens.includes('close') && (msg.version === '1.1' || tokens.includes('keep-alive'));
   const noBody = method === 'HEAD' || status === 204 || status === 304;
+  // §5.2 Bodies: a 204/304 (not HEAD) announcing a body is accepted without one, but its connection is not reused.
+  const unsentBodyStatus = method !== 'HEAD' && (status === 204 || status === 304);
   const ok = (bodyText: string, keepAlive: boolean): Outcome => ({
     native: { ok: { status, headers, body: bodyText, keepAlive } },
   });
   if (te.length > 0) {
     if (te.join() !== 'chunked' || cl.length > 0 || msg.version !== '1.1') fail(`Transfer-Encoding "${te.join(', ')}"`);
-    if (noBody) return ok('', persistent);
+    if (noBody) return ok('', persistent && !unsentBodyStatus);
     // removal: P1a (#7)
     return { skip: 'chunked body: chunked decoding and transfer-encoding.md arrive in P1a (#7)' };
   }
   if (cl.length > 0) {
     const [length = ''] = cl;
     if (cl.length > 1 || !/^\d+$/.test(length) || BigInt(length) > U64_MAX) fail(`Content-Length "${cl.join(', ')}"`);
-    if (noBody) return ok('', persistent);
+    if (noBody) return ok('', persistent && !(unsentBodyStatus && BigInt(length) > 0n));
     return Buffer.byteLength(body) < Number(length)
       ? { native: { error: 'PROTOCOL/incomplete-body' } }
       : ok(body, persistent);
@@ -332,6 +337,11 @@ const outcomeOf = (
     } else if (event.kind === 'complete') {
       const m = current();
       if (Number(m.status) >= 200) return finalOutcome(m, method, fail);
+      // §5.2 Interim heads: framing fields are rejected and `Connection: close` is sticky; not modelled here.
+      // A `101` is not interim for us: llhttp's upgrade pause that follows maps to an error.
+      if (m.status !== SWITCHING_PROTOCOLS && m.headers.some(([n]) => INTERIM_DECIDED_FIELDS.has(n.toLowerCase()))) {
+        fail('framing or Connection in a 1xx head');
+      }
       nextBegin = event.off;
       msg = undefined;
     } else if (event.kind === 'error') {

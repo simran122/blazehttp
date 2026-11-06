@@ -1,4 +1,5 @@
 //! Test-vector loader for engine-core integration tests. Format and semantics: `docs/notes/vectors.md`.
+//! The informational fields `reference` and `derivedFrom` are validated by `tools/vectors/schema.ts` and not read here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -20,11 +21,12 @@ pub struct Case {
 }
 
 /// The native engine's expected result; `Error` holds `ErrorCode`'s display form, e.g. `PROTOCOL/malformed-response`.
+/// Header names, values and the body are bytes, decoded with the case's `inputEncoding`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expect {
     Ok {
         status: u16,
-        headers: Vec<(String, String)>,
+        headers: Vec<(Vec<u8>, Vec<u8>)>,
         body: Vec<u8>,
         keep_alive: bool,
     },
@@ -77,26 +79,42 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> T {
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+/// `utf8`: the string's UTF-8 bytes; `latin1`: one byte per code point U+0000–U+00FF.
+fn bytes(text: String, encoding: &str, case: &str) -> Vec<u8> {
+    match encoding {
+        "utf8" => text.into_bytes(),
+        "latin1" => text
+            .chars()
+            .map(|c| {
+                u8::try_from(u32::from(c))
+                    .unwrap_or_else(|_| panic!("{case}: {c:?} is not a latin1 byte"))
+            })
+            .collect(),
+        other => panic!("{case}: unsupported inputEncoding {other}"),
+    }
+}
+
 fn decode(raw: RawCase) -> Case {
-    assert_eq!(
-        raw.input_encoding, "utf8",
-        "{}: unsupported inputEncoding",
-        raw.name
-    );
+    let encoding = raw.input_encoding.as_str();
+    let name = raw.name.as_str();
     let expect = match raw.expect.native {
         RawNative::Ok(ok) => Expect::Ok {
             status: ok.status,
-            headers: ok.headers,
-            body: ok.body.into_bytes(),
+            headers: ok
+                .headers
+                .into_iter()
+                .map(|(n, v)| (bytes(n, encoding, name), bytes(v, encoding, name)))
+                .collect(),
+            body: bytes(ok.body, encoding, name),
             keep_alive: ok.keep_alive,
         },
         RawNative::Error(error) => Expect::Error(error),
     };
     Case {
-        name: raw.name,
-        input: raw.input.into_bytes(),
+        input: bytes(raw.input, encoding, name),
         method: raw.request.method,
         expect,
+        name: raw.name,
     }
 }
 

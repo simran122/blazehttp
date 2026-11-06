@@ -290,7 +290,36 @@ describe('importLlhttp', () => {
         'off=57 headers complete status=304 v=1/1 flags=208 content_length=0',
         'off=57 message complete',
       ]),
-    ).toEqual({ ok: { status: 304, headers: [['Transfer-Encoding', 'chunked']], body: '', keepAlive: true } });
+    ).toEqual({ ok: { status: 304, headers: [['Transfer-Encoding', 'chunked']], body: '', keepAlive: false } });
+    expect(
+      bodyless('304 Not Modified', 'Content-Length: 10\n', [
+        'off=0 len=4 span[protocol]="HTTP"',
+        'off=27 len=14 span[header_field]="Content-Length"',
+        'off=43 len=2 span[header_value]="10"',
+        'off=47 header_value complete',
+        'off=49 headers complete status=304 v=1/1 flags=20 content_length=10',
+        'off=49 message complete',
+      ]),
+    ).toEqual({ ok: { status: 304, headers: [['Content-Length', '10']], body: '', keepAlive: false } });
+    expect(short.file.cases[0]?.expect.native).toMatchObject({ ok: { keepAlive: true } });
+  });
+
+  it('refuses an interim head with framing or Connection fields', () => {
+    const interim = mdCase(
+      'Interim CL',
+      RESPONSE,
+      'HTTP/1.1 103 Early Hints\nContent-Length: 0\n\nHTTP/1.1 200 OK\n\n',
+      [
+        'off=0 message begin',
+        'off=0 len=4 span[protocol]="HTTP"',
+        'off=26 len=14 span[header_field]="Content-Length"',
+        'off=42 len=1 span[header_value]="0"',
+        'off=45 header_value complete',
+        'off=47 headers complete status=103 v=1/1 flags=20 content_length=0',
+        'off=47 message complete',
+      ].join('\n'),
+    );
+    expect(() => runOne(interim)).toThrow(/Interim CL: cannot model framing or Connection in a 1xx head/);
   });
 
   it.each([
