@@ -46,6 +46,35 @@ These are the inputs and conditions most likely to hurt users that no single tas
 4. **The native binary is missing, built for another libc, tampered with, or the platform is unsupported.** Loading must return a typed result and must not crash. → Task 13 `tampered_binary_returns_integrity`, `missing_package_returns_binary_load`, `unsupported_platform`. Task 15 Alpine job `glibc_binary_on_musl_returns_binary_load`.
 5. **Process lifetime.** A Node process with no pending requests must exit on its own, and one with pending requests must stay alive until they settle. → Task 12 `process_exits_when_idle`, `process_stays_alive_while_pending`.
 
+## Process rules added by the owner during execution (2026-11-06)
+
+These apply to every task from Task 4 on and override anything above that conflicts.
+
+- **Research gate before engine code.** Tasks 4, 5, 6, 12 and 13, and every engine component in later phases, start with a research step before any code is written:
+  1. A research agent writes `docs/notes/<component>.md`, covering:
+     - 2–3 reference implementations at their **latest published release**: what makes them fast, and what we should not copy;
+     - their bug trackers, CVEs and advisories;
+     - the fastest cross-language techniques, each with its expected gain and how to measure it;
+     - official docs at the locked versions (doc.rust-lang.org first, §6.3);
+     - an **online search** of engineering blogs, security research (request smuggling and desync), benchmarks, talks and papers, and upstream issue threads.
+
+     Every source is linked with its access date. Each idea is marked **verified** (checked against docs, source code or a measurement) or **unverified**; unverified ideas go only to `docs/perf/ideas.md`. The note compares at least two design options (time and space complexity, allocations, risks) and states the decision and how it will be measured.
+  2. A reviewer checks the note, and gaps are fixed in the note.
+  3. The implementer builds what the note decided, and the code reviewers check that the code follows it.
+- **Review setup.**
+  - The first review runs two reviewers in parallel:
+    - the `code-review` agent, which follows `~/.claude/rules/code-review.md` and returns the coverage table;
+    - the built-in `/code-review` at high effort on the task PR.
+  - Tasks 4, 6, 12 and 13 also get a `security-audit` pass.
+  - All findings, minor ones included, are merged into **one** fix round, followed by a verification pass only.
+  - Implementers check their own diff against the same checklist before reporting.
+- **Agents** run on Opus at high effort.
+- **Upstream test vectors** come from the latest published, non-prerelease release **source** tag. The exact commit is recorded, and `--refresh` re-imports at the start of each phase.
+- **Owner decisions applied to the design:**
+  - the HTTP `QUERY` method is wire id 7, and is safe and idempotent (§5.1, §9.3, §21);
+  - a status line with no reason phrase is accepted (§5.2);
+  - `Content-Length` is `1*DIGIT` after OWS trimming (§5.2).
+
 ---
 
 ## Repository layout after P0
@@ -277,7 +306,7 @@ git push -u origin p0/bootstrap && gh pr create --base milestone/p0 --fill
 - [ ] **Step 2: Write the failing tests**
   - `import-llhttp.test.ts` covers a three-case inline markdown fixture:
     - `converts http/log block pairs into cases`
-    - `maps llhttp errors to native expectations`: `HPE_HEADER_OVERFLOW` → `TOO_LARGE/headers`. Any other `HPE_*` → `PROTOCOL/malformed-response`, except `HPE_UNEXPECTED_CONTENT_LENGTH`, `HPE_INVALID_TRANSFER_ENCODING` and duplicate-CL cases → `PROTOCOL/smuggling-risk`.
+    - `maps llhttp errors to native expectations`: any `HPE_*` → `PROTOCOL/malformed-response`, except `HPE_UNEXPECTED_CONTENT_LENGTH` and `HPE_INVALID_TRANSFER_ENCODING` → `PROTOCOL/smuggling-risk`. (As built: the `HPE_HEADER_OVERFLOW` mapping was removed because llhttp never emits it, and llhttp reports duplicate CL as `HPE_UNEXPECTED_CONTENT_LENGTH`.)
     - `applies overrides with a cited rule`: an override entry without `rule: "§5.2 …"` throws.
   - `notices.test.ts`: `one notice block per distinct (project, licence, copyright)`.
   - `check-index.test.ts`: `reports unreferenced and missing files`.
@@ -328,9 +357,9 @@ impl ResponseParser {
 - Framing conflicts → `Protocol(SmugglingRisk)`: CL together with TE, duplicate CL (even when equal), more than one TE field, TE on HTTP/1.0, or a TE value other than exactly `chunked`.
 - Every other grammar or count violation → `Protocol(MalformedResponse)`, including more than 100 fields and more than 10 interim responses.
 
-- [ ] **Step 1: Research survey (speed programme §7).** Study picohttpparser, httparse, llhttp, hyper `proto/h1`, h11, Go `net/http` and Bun's client. For each, record in `docs/perf/ideas.md` what makes it fast and the bugs its tracker shows. Write `docs/notes/response-parser.md`: what we take, what we do differently, and links to exact files. Cite doc.rust-lang.org/std for any `std` API used.
+- [ ] **Step 1: Research gate (see "Process rules"), the speed programme survey (§7).** The research agent and the note review complete before Step 2. Study picohttpparser, httparse, llhttp, hyper `proto/h1`, h11, Go `net/http` and Bun's client. For each, record in `docs/perf/ideas.md` what makes it fast and the bugs its tracker shows. Write `docs/notes/response-parser.md`: what we take, what we do differently, and links to exact files. Cite doc.rust-lang.org/std for any `std` API used.
 - [ ] **Step 2: Write `blazehttp-rules.json`.** Add one rejecting case and one accepting neighbour for **every** §5.2 head rule:
-  - The status line: `HTTP/1.0` and `HTTP/1.1` only, exactly one SP, 3 digits in 100–599, no CTL in the reason, `101` rejected, HTTP/0.9 rejected.
+  - The status line: `HTTP/1.0` and `HTTP/1.1` only, exactly one SP, 3 digits in 100–599, then CRLF (empty reason, accepted) or SP and a reason without CTL, `101` rejected, HTTP/0.9 rejected.
   - Bare LF and bare CR anywhere in the head.
   - Token names, whitespace before the colon, obs-fold.
   - CTL in values (HTAB allowed, DEL rejected).
@@ -384,6 +413,7 @@ pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &Hea
 
 `write_request` clears `out` and writes the request line, the template, the validated per-request headers, `content-length` (only when there is a body, or the method is POST, PUT or PATCH), the blank line and the body, all into one buffer for one write. It reuses `out`'s capacity, so steady state does not allocate. Re-validation failures return `Engine(Internal)`: the user-facing `INVALID_CONFIG` comes from the JS layer in P2, and a failure here means that contract was bypassed (§12).
 
+- [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/request-writer.md`, and it is reviewed before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
   - `get_uses_template_once_and_single_buffer`: assert the exact bytes `GET /data HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n`.
   - `post_sets_content_length_from_body`
@@ -450,6 +480,7 @@ pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -
   - EOF mid-body → `Protocol(IncompleteBody)`.
 - Timeouts arrive in P1a.
 
+- [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/shard-and-connection.md`, and it is reviewed before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
   - `get_round_trip_returns_status_head_body`
   - `keep_alive_reuses_one_connection`: 100 sequential requests with `max_connections = 1`; the server counts exactly 1 accept.
@@ -685,6 +716,7 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
 - The env cleanup hook drops the TSFN clones and never calls `abort()` (§11.3). Verify each napi-rs 3 API on Context7 before use, and confirm none is deprecated.
 - Every export uses `#[napi(catch_unwind)]`. Add `const _: () = assert!(cfg!(panic = "unwind"));`.
 
+- [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/completion-path.md`, and it is reviewed before any code in this task.
 - [ ] **Step 1: Write the failing tests** (Vitest, with a `node:http` loopback server in the test):
   - `round_trip_single_request`
   - `batch_of_1000_requests_each_key_completes_once`
@@ -739,6 +771,7 @@ export class NativeSession {
 - `NativeSession` encodes requests into a reused `Uint32Array` and arena. It writes header and target strings with `arena.write`-equivalent `Buffer.prototype.write(str, off, 'latin1')` and asserts the returned length. It flushes **once per `setImmediate`** (§4 step 3), or early at 4,096 records or a full arena.
 - The wake callback loops `takeCompleted` while `more` is set. Errors decode through `WireDecoder` (a `Record<code, DetailParser>` lookup built from `ERROR_WIRE`). The head becomes a string with `buf.toString('latin1', s, e)`, and the body is copied with `.slice()`.
 
+- [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/native-loader-and-session.md`, and it is reviewed before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
   - `detectTarget maps all 8 targets and returns undefined for freebsd/ia32`
   - `unsupported_platform`
