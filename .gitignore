@@ -1,1 +1,7 @@
 .superpowers/
+node_modules/
+target/
+coverage/
+dist/
+*.node
+.DS_Store

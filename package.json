@@ -1,0 +1,32 @@
+{
+  "name": "blazehttp-monorepo",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.28.2",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --coverage",
+    "knip": "knip",
+    "format": "prettier --check .",
+    "policy": "node tools/policy-check/check.ts",
+    "npm-deprecated": "node tools/policy-check/npm-deprecated.ts",
+    "specgen": "echo 'specgen is added in a later P0 task' && exit 1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
+    "eslint": "10.14.0",
+    "eslint-plugin-sonarjs": "4.2.2",
+    "knip": "6.44.1",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}
