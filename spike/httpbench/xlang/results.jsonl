@@ -1,0 +1,27 @@
+{"name":"C libcurl multi","rps":101079,"p50":"0.42","p99":"2.66"}
+{"name":"C++ Boost.Beast","rps":129678,"p50":"0.37","p99":"0.78"}
+{"name":"Zig std.http.Client","rps":114789,"p50":"0.23","p99":"1.73"}
+{"name":"Bun fetch","rps":117064,"p50":"0.30","p99":"1.01"}
+{"name":"Deno fetch","rps":27590,"p50":"1.14","p99":"18.21"}
+{"name":"Rust reqwest","rps":97661,"p50":"0.45","p99":"1.67"}
+{"name":"Go net/http","rps":20606,"p50":"2.01","p99":"13.77"}
+{"name":"Node undici Pool.request","rps":34092,"p50":"0.76","p99":"28.81","cpuMsPer1k":"28.9","mainBusy":98,"peakMb":164}
+{"name":"blazehttp (Node+Rust, batched, 1 thread)","rps":57786,"p50":"0.48","p99":"2.22","cpuMsPer1k":"17.6","mainBusy":37,"peakMb":91}
+{"name":"C libcurl multi","rps":113408,"p50":"0.42","p99":"1.11"}
+{"name":"C++ Boost.Beast","rps":127776,"p50":"0.37","p99":"0.84"}
+{"name":"Zig std.http.Client","rps":137944,"p50":"0.22","p99":"1.65"}
+{"name":"Bun fetch","rps":110737,"p50":"0.30","p99":"1.52"}
+{"name":"Deno fetch","rps":33521,"p50":"1.22","p99":"6.19"}
+{"name":"Rust reqwest","rps":98298,"p50":"0.45","p99":"1.38"}
+{"name":"Go net/http","rps":29392,"p50":"1.71","p99":"3.77"}
+{"name":"Node undici Pool.request","rps":35989,"p50":"0.74","p99":"22.81","cpuMsPer1k":"27.3","mainBusy":93,"peakMb":163}
+{"name":"blazehttp (Node+Rust, batched, 1 thread)","rps":69359,"p50":"0.45","p99":"1.39","cpuMsPer1k":"14.9","mainBusy":52,"peakMb":93}
+{"name":"C libcurl multi","rps":111949,"p50":"0.42","p99":"1.25"}
+{"name":"C++ Boost.Beast","rps":87028,"p50":"0.37","p99":"3.56"}
+{"name":"Zig std.http.Client","rps":100817,"p50":"0.27","p99":"2.97"}
+{"name":"Bun fetch","rps":113884,"p50":"0.28","p99":"1.50"}
+{"name":"Deno fetch","rps":33344,"p50":"1.13","p99":"11.40"}
+{"name":"Rust reqwest","rps":113215,"p50":"0.42","p99":"1.03"}
+{"name":"Go net/http","rps":31057,"p50":"1.65","p99":"3.33"}
+{"name":"Node undici Pool.request","rps":41770,"p50":"0.67","p99":"25.13","cpuMsPer1k":"23.7","mainBusy":98,"peakMb":160}
+{"name":"blazehttp (Node+Rust, batched, 1 thread)","rps":62923,"p50":"0.45","p99":"5.42","cpuMsPer1k":"15.8","mainBusy":43,"peakMb":92}
