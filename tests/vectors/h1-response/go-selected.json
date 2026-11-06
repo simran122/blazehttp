@@ -1,0 +1,211 @@
+{
+  "source": {
+    "project": "go",
+    "url": "https://github.com/golang/go/tree/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/src/net/http",
+    "tag": "go1.27.3",
+    "commit": "2aae1000ea1d4b28923b96db28acf4e3b99d6aff",
+    "licence": "BSD-3-Clause",
+    "copyright": "Copyright 2009 The Go Authors."
+  },
+  "cases": [
+    {
+      "name": "eof-mid-fields",
+      "input": "HTTP/1.1 301 Moved Permanently\r\nFoo: bar",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "eof-after-version",
+      "input": "HTTP/1.1",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "status-20X",
+      "input": "HTTP/1.1 20X Unknown\r\nFoo: bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "status-abcd",
+      "input": "HTTP/1.1 abcd Unknown\r\nFoo: bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "status-c8",
+      "input": "HTTP/1.1 c8 OK\r\nFoo: bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "status-0x12d",
+      "input": "HTTP/1.1 0x12d Moved Permanently\r\nFoo: bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "status-han-digits",
+      "input": "HTTP/1.1 \u4e8c\u767e/\u4e24\u767e OK\r\nFoo: bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "status-no-code",
+      "input": "HTTP/1.1  Unknown\r\nFoo: bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "cl-dup-in-204",
+      "input": "HTTP/1.1 204 OK\r\nContent-Length: 7\r\nContent-Length: 8\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/smuggling-risk"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "cl-dup-equal-in-304",
+      "input": "HTTP/1.1 304 OK\r\nContent-Length: 961\r\nContent-Length: 961\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/smuggling-risk"
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:TestReadResponseErrors @ go1.27.3"
+    },
+    {
+      "name": "cl-i64-max-plus-1",
+      "input": "HTTP/1.1 200 OK\r\nContent-Length: 9223372036854775808\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/incomplete-body"
+        }
+      },
+      "derivedFrom": "src/net/http/transfer_test.go:TestParseContentLength @ go1.27.3"
+    },
+    {
+      "name": "trailer-field-ignored",
+      "input": "HTTP/1.0 200 OK\r\nTrailer: Content-MD5, Content-Sources\r\nContent-Length: 10\r\nConnection: close\r\n\r\nBody here\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["Trailer", "Content-MD5, Content-Sources"],
+              ["Content-Length", "10"],
+              ["Connection", "close"]
+            ],
+            "body": "Body here\n",
+            "keepAlive": false
+          }
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:respTests (Trailer header but no TransferEncoding) @ go1.27.3"
+    },
+    {
+      "name": "connection-keep-alive-close-11",
+      "input": "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive, close\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["Content-Length", "0"],
+              ["Connection", "keep-alive, close"]
+            ],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "derivedFrom": "src/net/http/response_test.go:respTests (Issue 8840) @ go1.27.3"
+    }
+  ]
+}

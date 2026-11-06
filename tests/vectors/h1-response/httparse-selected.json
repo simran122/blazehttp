@@ -1,0 +1,134 @@
+{
+  "source": {
+    "project": "httparse",
+    "url": "https://github.com/seanmonstar/httparse/blob/9f29e79f9832dbd0ae5220acb17c1866745bdecd/src/lib.rs",
+    "tag": "v1.10.1",
+    "commit": "9f29e79f9832dbd0ae5220acb17c1866745bdecd",
+    "licence": "MIT",
+    "copyright": "Copyright (c) 2015-2025 Sean McArthur"
+  },
+  "cases": [
+    {
+      "name": "reason-trailing-htab",
+      "input": "HTTP/1.1 200 OK\t\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_response_reason_with_space_and_tab @ v1.10.1"
+    },
+    {
+      "name": "reason-nul",
+      "input": "HTTP/1.1 200 \u0000\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_response_reason_with_nul_byte @ v1.10.1"
+    },
+    {
+      "name": "status-bare-cr-separator",
+      "input": "HTTP/1.1 200\rOK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_forbid_response_with_weird_whitespace_delimiters @ v1.10.1"
+    },
+    {
+      "name": "status-two-codes",
+      "input": "HTTP/1.1 99 200 OK\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_response_with_spaces_in_code @ v1.10.1"
+    },
+    {
+      "name": "obs-fold-whitespace-only-line",
+      "input": "HTTP/1.1 200 OK\r\nLine-Folded-Header: \r\n   \r\n hello there\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_forbid_response_with_obsolete_line_folding_at_start @ v1.10.1"
+    },
+    {
+      "name": "obs-fold-in-empty-field",
+      "input": "HTTP/1.1 200 OK\r\nLine-Folded-Header:   \r\n \r\n \r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_forbid_response_with_obsolete_line_folding_in_empty_header @ v1.10.1"
+    },
+    {
+      "name": "bare-cr-in-name",
+      "input": "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Cred\rentials: hello\r\nBread: baguette\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_header_with_cr_in_header_name @ v1.10.1"
+    },
+    {
+      "name": "no-ows-after-colon",
+      "input": "HTTP/1.1 200 OK\r\nfoo:bar\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [["foo", "bar"]],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      },
+      "derivedFrom": "src/lib.rs:test_no_space_after_colon @ v1.10.1"
+    }
+  ]
+}

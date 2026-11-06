@@ -35,16 +35,21 @@ Validated by `tools/vectors/schema.ts` (`loadVectorFile`, strict: unknown keys a
 |---|---|
 | `source` | Where the cases come from; `THIRD_PARTY_NOTICES` is generated from it. `tag` (optional) is the upstream release tag, `commit` the exact commit it points to, and `url` uses that commit. Own vectors use project `blazehttp`, licence `MIT OR Apache-2.0`, no `tag` (no notice). |
 | `name` | Unique within the file. Imported cases are `<upstream file stem> / <upstream heading>`. |
-| `input` | **Every byte the server sends; then the server closes the connection (EOF).** `inputEncoding` is `utf8` (the only encoding so far): the bytes are the UTF-8 encoding of the string. |
+| `input` | **Every byte the server sends; then the server closes the connection (EOF).** An empty input means the server closed before sending anything. |
+| `inputEncoding` | How the case's byte strings — `input`, expected header names and values, and the body — become bytes. `utf8`: the UTF-8 encoding of the string. `latin1`: each code point U+0000–U+00FF is one byte (so a single obs-text byte such as `\x80` or `\xa0` can be written); used only when a byte ≥ 0x80 occurs, otherwise `utf8` (the TS loader rejects a `latin1` case without such a byte and any code point above U+00FF). |
 | `request.method` | Method of the request this response answers; `HEAD` means no body (§5.2 Bodies). One of the generated `METHODS` (checked by both loaders). |
 | `expect.native` | `{ "ok": … }` or `{ "error": "CODE/detail" }`. |
 | `expect.native.error` | An error the engine can produce (a wire code), in its display form, exactly as `ErrorCode`'s `Display` (Rust) and `formatErrorCode` (TS) print it. TS checks against the generated `ENGINE_ERRORS` and Rust against `ErrorCode::ALL_SAMPLES`; specgen emits both from the same wire codes, so both loaders accept the same set (non-wire codes such as `HTTP_STATUS` or `PARSE/json` are rejected). |
 | `expect.native.ok.status` | Status of the final (non-1xx) response, 100–599 (checked by the TS loader); interim 1xx heads are skipped. |
 | `expect.native.ok.headers` | The final response's fields in wire order: name exactly as sent, value without surrounding OWS (RFC 9110 §5.5). |
 | `expect.native.ok.body` | The body bytes (UTF-8 string): empty for HEAD/204/304; `Content-Length` bytes; or everything up to EOF when close-delimited. |
-| `expect.native.ok.keepAlive` | Whether the response's own head and framing allow reusing the connection: false when close-delimited, with `Connection: close`, or on HTTP/1.0 without `Connection: keep-alive`. Bytes left after the response end (pipelined data) are **not** represented here: §5.1 closes such a connection at the connection layer, which its own tests cover. |
+| `expect.native.ok.keepAlive` | Whether the response's own heads and framing allow reusing the connection: false when close-delimited, with `Connection: close` in the final head **or in any interim head of the exchange** (sticky, RFC 9112 §9.6), on HTTP/1.0 without `Connection: keep-alive` in the final head, or for a 204/304 carrying `Transfer-Encoding` or `Content-Length` > 0 unless the request was `HEAD` (accepted without a body, not reused; design §5.2 Bodies). Bytes left after the response end (pipelined data) are **not** represented here: §5.1 closes such a connection at the connection layer, which its own tests cover. |
 | `expect.undici` | Optional in P0 and required from P4 (`removal: P4 (#5)`), when the undici transport runs the same vectors. |
-| `reference` | Informational: what reference implementations did, keyed by project. |
+| `reference` | Informational: what reference implementations did with the input, keyed by project. |
+| `derivedFrom` | Informational provenance of a case re-derived from an upstream test: `"<file>:<test> @ <tag>"`, e.g. `"src/lib.rs:test_no_space_after_colon @ v1.10.1"`. |
+
+The Rust loader reads `name`, `input`, `inputEncoding`, `request.method` and `expect.native` and decodes every byte
+string with the case's encoding; the informational fields are validated by the TS loader only.
 
 `tests/vectors/index.json` maps every vector file to the suites that consume it, e.g.
 `{ "h1-response/llhttp-sample.json": ["engine-core:h1_response"] }`. `pnpm vectors:index`
@@ -83,7 +88,11 @@ recorded; refresh at the start of every phase with `--refresh`.**
   working directory.
 
 P0 imports `test/response/{sample,content-length,connection,invalid}.md`; `transfer-encoding.md` comes with chunked
-decoding in P1a (`removal: P1a (#7)` in the importer). The importer refuses to run when an override is unused or when
+decoding in P1a (`removal: P1a (#7)` in the importer).
+
+TODO(#7): map `HPE_INVALID_CONTENT_LENGTH` by reason string before importing `transfer-encoding.md` (llhttp reports a
+`Content-Length` after `Transfer-Encoding` with it; natively that is `PROTOCOL/smuggling-risk`, design §9.2 and
+`docs/notes/response-parser.md` §11 D10). The importer refuses to run when an override is unused or when
 a case needs a decision it cannot make (see below).
 
 ### How llhttp's harness reads the markdown (reproduced exactly)
@@ -133,14 +142,21 @@ case is `GET`. Then, walking llhttp's log:
   `HPE_INVALID_TRANSFER_ENCODING` map to `PROTOCOL/smuggling-risk`; every other `HPE_*` maps to
   `PROTOCOL/malformed-response` (§5.2 last bullet, §8). The map is a lookup table (`ERROR_BY_LLHTTP`).
 - **1xx heads** are skipped as interim responses; `101` is not interim for us, and llhttp then stops with
-  `HPE_PAUSED_UPGRADE`, which maps to `PROTOCOL/malformed-response` (§5.2: `101` rejected).
+  `HPE_PAUSED_UPGRADE`, which maps to `PROTOCOL/malformed-response` (§5.2: `101` rejected). An interim head
+  carrying `Content-Length`, `Transfer-Encoding` or `Connection` stops the import until an override decides it: natively
+  a 1xx with `Transfer-Encoding` or a `Content-Length` other than `0` is `PROTOCOL/smuggling-risk`, and a
+  `Connection: close` in it makes the final response `keepAlive: false` (§5.2 Interim heads); no P0 case has one.
 - **Final response** (status ≥ 200): `ok` with status, headers, body and keep-alive as defined in the format table:
-  - HEAD, 204 and 304 have no body regardless of headers;
+  - HEAD, 204 and 304 have no body regardless of headers; a 204/304 answering a non-`HEAD` request with
+    `Transfer-Encoding` or `Content-Length` > 0 is `keepAlive: false` (§5.2 Bodies);
   - `Transfer-Encoding: chunked` with a body → skipped until P1a (no chunked decoding yet; #7);
   - one `Content-Length` of `1*DIGIT` within `u64` after OWS trimming (§5.2, RFC 9110 §5.5) → that many bytes; if
     EOF comes first →
     `PROTOCOL/incomplete-body`;
   - neither → close-delimited: the rest of the input, `keepAlive: false`.
+- **EOF** before a final head: `NETWORK/closed-before-response` only when the input is empty; once any byte of the
+  exchange's response arrived — interim heads included — `PROTOCOL/malformed-response` (§5.2 EOF before the final
+  head). The test helper applies the same rule.
 - Events after the final response completes (llhttp parsing pipelined data, or its "Data after `Connection: close`"
   error) do not change the delivered response (§5.1, see `keepAlive`).
 - Anything else — a protocol other than `HTTP`, a version other than 1.0/1.1, a status above 599, bytes before a
@@ -193,7 +209,9 @@ Accepted with a derived expectation, and the decisions behind them:
   `Connection: upgrade` and `Upgrade` on a 200 are ignored (no upgrade was requested).
 - `connection / … 204 status` (three strict cases; the fourth, lenient one is skipped), `HTTP 304 with Content-Length`, `HTTP 304 with Transfer-Encoding`,
   `HTTP/1.1 with keep-alive disabled, content-length`: the first response is delivered without body bytes beyond its
-  framing; the trailing data is a connection-level matter (§5.1).
+  framing; the trailing data is a connection-level matter (§5.1). The two 304 cases announce a body (`Content-Length:
+  10`, `Transfer-Encoding: chunked`) to a `GET`, so they are `keepAlive: false` (§5.2 Bodies, derived by the
+  importer).
 
 None of the accepted inputs contains a bare LF, obs-fold or whitespace before a colon: llhttp's strict mode rejects
 those itself, and they map to `PROTOCOL/malformed-response`.
@@ -224,3 +242,25 @@ The strict twin of every lenient case is imported, so the inputs are still cover
 | `h1-response/llhttp-connection.json` | 15 | 1 | 3 |
 | `h1-response/llhttp-invalid.json` | 16 | 1 | 3 |
 | **Total** | **51** | **6** | **10** |
+
+## Own and per-source vector files (Task 4)
+
+Written by hand from design §5.2 (`docs/notes/response-parser.md` §9), not imported:
+
+| File | Source | Cases | Content |
+|---|---|---|---|
+| `h1-response/blazehttp-rules.json` | blazehttp (`MIT OR Apache-2.0`, no notice) | 136 | one rejecting case and its accepting neighbour for every §5.2 head rule, the security-research classes (note §9.2) and the limit boundaries |
+| `h1-response/go-selected.json` | Go `go1.27.3` (BSD-3-Clause) | 13 | re-derived from `response_test.go` / `transfer_test.go` |
+| `h1-response/hyper-selected.json` | hyper `v1.12.0` (MIT) | 1 | re-derived from `src/proto/h1/role.rs` |
+| `h1-response/httparse-selected.json` | httparse `v1.10.1` (MIT of MIT OR Apache-2.0) | 8 | re-derived from `src/lib.rs` `mod tests` |
+| `h1-response/curl-selected.json` | curl `curl-8_23_0` (curl) | 4 | re-derived from `tests/data` (CRLF where curl's file uses LF) |
+
+Each per-source case names its upstream test in `derivedFrom`; the source block records the latest published release
+tag, its commit and the verbatim copyright line of the licence file at that commit (`THIRD_PARTY_NOTICES`).
+
+**Limit vectors** are built by one deterministic rule so they can be regenerated: every byte counts, CRLF included;
+filler fields are `x-fill-NNNN: a…a` (4-digit index), each line 1,000 bytes except one last field sized to hit the
+total exactly (or, for the field-count cases, `x-fill-NNNN: a`); status-line cases use `HTTP/1.1 200 ` and a reason of
+`r` bytes. Boundaries: status line 8,192 / 8,193 bytes; 100 / 101 fields; head 65,536 / 65,537 bytes; a 32,768-byte
+`103` head plus a final head totalling 65,536 / 65,537; a final status line that fits 8 KiB but not the budget left
+after a 65,436-byte interim head; 10 / 11 interim heads.

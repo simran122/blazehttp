@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use engine_core::generated::spec::{ErrorCode, Method};
+use engine_core::generated::spec::{ErrorCode, Method, NetworkDetail};
 use support::vectors::{Expect, load_suite, load_suite_in};
 
 const SUITE: &str = "engine-core:h1_response";
@@ -20,12 +20,25 @@ fn h1_response_suite_loads_with_requests_the_engine_knows() {
         .map(Method::as_str)
         .collect();
     for (file, case) in &cases {
-        assert!(!case.input.is_empty(), "{file}/{}: empty input", case.name);
         assert!(
             methods.contains(case.method.as_str()),
             "{file}/{}: unknown method {}",
             case.name,
             case.method
+        );
+    }
+}
+
+#[test]
+fn only_an_empty_input_closes_before_the_response() {
+    let closed = ErrorCode::Network(NetworkDetail::ClosedBeforeResponse).to_string();
+    for (file, case) in load_suite(SUITE) {
+        let expects_closed = matches!(&case.expect, Expect::Error(e) if *e == closed);
+        assert_eq!(
+            case.input.is_empty(),
+            expects_closed,
+            "{file}/{}: an exchange is closed before the response exactly when no byte arrives",
+            case.name
         );
     }
 }

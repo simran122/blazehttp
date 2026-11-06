@@ -1,4 +1,9 @@
 {
+  "h1-response/blazehttp-rules.json": ["engine-core:h1_response"],
+  "h1-response/curl-selected.json": ["engine-core:h1_response"],
+  "h1-response/go-selected.json": ["engine-core:h1_response"],
+  "h1-response/httparse-selected.json": ["engine-core:h1_response"],
+  "h1-response/hyper-selected.json": ["engine-core:h1_response"],
   "h1-response/llhttp-connection.json": ["engine-core:h1_response"],
   "h1-response/llhttp-content-length.json": ["engine-core:h1_response"],
   "h1-response/llhttp-invalid.json": ["engine-core:h1_response"],

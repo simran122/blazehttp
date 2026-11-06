@@ -1,0 +1,76 @@
+{
+  "source": {
+    "project": "curl",
+    "url": "https://github.com/curl/curl/tree/3163ec065643ba20709f190111f42c3e1fe95273/tests/data",
+    "tag": "curl-8_23_0",
+    "commit": "3163ec065643ba20709f190111f42c3e1fe95273",
+    "licence": "curl",
+    "copyright": "Copyright (c) 1996 - 2026, Daniel Stenberg, <daniel@haxx.se>, and many contributors, see the THANKS file."
+  },
+  "cases": [
+    {
+      "name": "reason-digits-only",
+      "input": "HTTP/1.1 405 405\r\nContent-Length: 6\r\nConnection: close\r\n\r\n-foo-\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 405,
+            "headers": [
+              ["Content-Length", "6"],
+              ["Connection", "close"]
+            ],
+            "body": "-foo-\n",
+            "keepAlive": false
+          }
+        }
+      },
+      "derivedFrom": "tests/data/test1466 @ curl-8_23_0"
+    },
+    {
+      "name": "te-identity-chunked",
+      "input": "HTTP/1.1 200 funky chunky!\r\nServer: fakeit/0.9 fakeitbad/1.0\r\nTransfer-Encoding: identity, chunked\r\nConnection: mooo\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/smuggling-risk"
+        }
+      },
+      "derivedFrom": "tests/data/test1493 @ curl-8_23_0"
+    },
+    {
+      "name": "te-chunked-identity",
+      "input": "HTTP/1.1 200 funky chunky!\r\nServer: fakeit/0.9 fakeitbad/1.0\r\nTransfer-Encoding: chunked, identity\r\nContent-Length: 19\r\n\r\nstuff server sends\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/smuggling-risk"
+        }
+      },
+      "derivedFrom": "tests/data/test1495 @ curl-8_23_0"
+    },
+    {
+      "name": "obs-fold-htab-continuation",
+      "input": "HTTP/1.1 200 OK\r\nDate: Tue, 09 Nov 2010 14:49:00 GMT\r\nTabs: tab-instead/\t\r\n\tonly\r\nContent-Length: 6\r\n\r\n-foo-\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      },
+      "derivedFrom": "tests/data/test1274 @ curl-8_23_0"
+    }
+  ]
+}
