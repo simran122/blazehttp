@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["tools/policy-check/{check,npm-deprecated}.ts"],
+      "project": ["*.{ts,js}", "tools/**/*.ts"]
+    }
+  }
+}
