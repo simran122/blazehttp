@@ -45,3 +45,26 @@ Record every measured idea. Keep only measured wins.
 - **Numbers:** only `buf[pos..lf]` kept a panic call (`slice_index_fail`) on both targets; all other forms none.
 - **Kept / dropped:** `get` for stored offsets, `as_chunks` for SWAR (kept); no runtime numbers.
 - **Commit:** none.
+
+### 2026-11-06: `ResponseParser` (Task 4) vs httparse 1.10.1 (committed bench, dev numbers)
+
+- **Idea:** the built design G (fused span scan, byte-wise status prefix, no `memchr`) against httparse 1.10.1 +
+  the same fact extraction, on the shared fixtures `tests/fixtures/h1-heads/*.http`.
+- **Hypothesis:** P0 budget (`docs/notes/response-parser.md` §8.4): median ratio ≤ 0.95× on `1k.http`, ≤ 1.05× on
+  `1k-h20.http`; every 1-byte feed ≤ 1 ms; the byte-wise status line does not regress against the prototype's
+  `memchr` status line.
+- **Method:** `cargo run --release -p engine-core --example h1_parse_bench` (fat LTO, `codegen-units = 1`); per
+  fixture 64 same-length variants cycled, 100 ms warm-up per parser, 7 runs × 4 interleaved blocks × 50,000 parses,
+  median of per-run ratios; the binary was run 3 times per host. Linux arm64: Docker Desktop on the owner's M2,
+  `rust:1-bookworm` (rustc 1.99.1), `--cpus=1` (`cpu.max = 100000 100000`), kernel 6.11.11-linuxkit, generic
+  `aarch64` target CPU, no other container running. macOS: same M2, default target CPU (`apple-m1`), plus one run
+  with `-C target-cpu=generic`. Host load average 4.7–5.5 (outside the nightly window): dev numbers, no gate claim.
+- **Numbers (Linux arm64, 3 runs; ours / httparse ns, median ratio):** `1k.http` 45.0 / 52.0 (0.841), 44.1 / 52.4
+  (0.840), 43.1 / 51.8 (0.830); `1k-h20.http` 228.9 / 235.5 (0.963), 231.3 / 236.2 (0.976), 229.7 / 237.3 (0.966);
+  `synthetic-h20.http` 0.939 / 0.935 / 0.929. 1-byte feeds: (a) 60 KB value 0.18–0.21 ms (httparse 68–70 ms),
+  (b) 99 × 600 B 0.20–0.21 ms, (c) 60 KB name 0.19–0.20 ms, (d) 8 KiB status line 0.03–0.08 ms.
+  **macOS `apple-m1`:** ratios 0.64–0.65 / 0.65–0.66 / 0.55–0.56 (httparse is slowed by this target CPU, as found in
+  the research); **macOS generic:** 0.875 / 0.966 / 0.955. Feeds on macOS: 0.17–0.21 ms; httparse (a) 67–69 ms.
+- **Kept / dropped:** kept. Budget met on the Linux reference container (0.83–0.84× and 0.96–0.98×, feeds ≤ 0.21 ms).
+  The byte-wise status prefix did not regress: 3-header head 43–45 ns vs the prototype's 46.6 ns with `memchr`.
+- **Commit:** Task 4 PR (`p0/parser`).
