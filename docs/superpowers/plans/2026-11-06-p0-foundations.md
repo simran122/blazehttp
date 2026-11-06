@@ -70,6 +70,7 @@ These apply to every task from Task 4 on and override anything above that confli
   - Implementers check their own diff against the same checklist before reporting.
 - **Agents** run on Opus at high effort.
 - **Upstream test vectors** come from the latest published, non-prerelease release **source** tag. The exact commit is recorded, and `--refresh` re-imports at the start of each phase.
+- **Code structure:** every task follows design §13.1, "production-grade code structure", the owner rule: organise by component; one responsibility per file, split past about 500 lines; narrow public APIs; unit tests with their code; matching component names across tests, fuzz, bench, vectors and notes; fixed top level; one-way dependencies. Reviewers check it as part of the maintainability category.
 - **Owner decisions applied to the design:**
   - the HTTP `QUERY` method is wire id 7, and is safe and idempotent (§5.1, §9.3, §21);
   - a status line with no reason phrase is accepted (§5.2);
