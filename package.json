@@ -8,7 +8,7 @@
     "node": ">=22.19"
   },
   "scripts": {
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --coverage",
     "knip": "knip",

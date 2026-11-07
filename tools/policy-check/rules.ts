@@ -4,7 +4,8 @@ export type RuleId =
   | 'removal-note'
   | 'rust-commented-code'
   | 'no-install-scripts'
-  | 'no-http-engine-dep';
+  | 'no-http-engine-dep'
+  | 'eslint-disable-reason';
 
 export type Violation = { file: string; line: number; rule: RuleId; message: string };
 export type Context = { packageVersion: string };
@@ -93,22 +94,47 @@ const PACKAGE_RENAME = /\bpackage\s*=\s*"([\w-]+)"/;
 const engineMessage = (crate: string | undefined): string | undefined =>
   crate !== undefined && HTTP_ENGINE_CRATES.has(crate) ? `HTTP engine crate ${crate}` : undefined;
 
+/** The Cargo table a line sits in: a `[dependencies]`-style list, a `[dependencies.<name>]` table, or another table. */
+type CargoTable = 'dependency-list' | 'dependency-table' | 'other';
+
+const tableOf = (header: RegExpExecArray | null): CargoTable => {
+  if (header === null) return 'other';
+  return header[1] === undefined ? 'dependency-list' : 'dependency-table';
+};
+
+/** Engine crate named by a line inside a table: by key in a dependency list, or by a `package = "…"` rename. */
+const dependencyLineMessage = (table: CargoTable, line: string): string | undefined => {
+  if (table === 'other') return undefined;
+  const renamed = engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
+  return table === 'dependency-table' ? renamed : (engineMessage(DEPENDENCY_KEY.exec(line)?.[1]) ?? renamed);
+};
+
 const noHttpEngineDep: Rule = (path, content) => {
   if (!ENGINE_CRATE_MANIFEST.test(path)) return [];
-  let inDependencies = false; // inside a `[dependencies]`-style table
-  let inDependencyTable = false; // inside a `[dependencies.<name>]` table
+  let table: CargoTable = 'other';
   return scanLines(path, content, 'no-http-engine-dep', (line) => {
-    const header = DEPENDENCY_HEADER.exec(line.trim());
-    if (header !== null || line.trim().startsWith('[')) {
-      inDependencies = header !== null && header[1] === undefined;
-      inDependencyTable = header?.[1] !== undefined;
-      return engineMessage(header?.[1]);
-    }
-    if (inDependencyTable) return engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
-    if (!inDependencies) return undefined;
-    return engineMessage(DEPENDENCY_KEY.exec(line)?.[1]) ?? engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('[')) return dependencyLineMessage(table, line);
+    const header = DEPENDENCY_HEADER.exec(trimmed);
+    table = tableOf(header);
+    return engineMessage(header?.[1]);
   });
 };
+
+const SCRIPT_FILE = /\.(ts|mts|js|mjs)$/;
+/** Any ESLint disable or enable directive, in a line or block comment. */
+const ESLINT_DIRECTIVE = /(?:\/\/|\/\*)\s*eslint-(?:disable|enable)/;
+/** The one accepted form (design §13.1 rule 9): next line only, named rules, and a reason after `--`. */
+const ESLINT_NEXT_LINE = /\/\/\s*eslint-disable-next-line\s+[@a-z][\w@/-]*(?:\s*,\s*[@a-z][\w@/-]*)*\s+--\s+\S/;
+
+const eslintDisableReason: Rule = (path, content) =>
+  SCRIPT_FILE.test(path)
+    ? scanLines(path, content, 'eslint-disable-reason', (line) =>
+        ESLINT_DIRECTIVE.test(line) && !ESLINT_NEXT_LINE.test(line)
+          ? 'only eslint-disable-next-line <rule> -- <reason> is allowed (design §13.1 rule 9)'
+          : undefined,
+      )
+    : [];
 
 const RULES: Record<RuleId, Rule> = {
   'rust-allow-forbidden': rustAllowForbidden,
@@ -117,6 +143,7 @@ const RULES: Record<RuleId, Rule> = {
   'rust-commented-code': rustCommentedCode,
   'no-install-scripts': noInstallScripts,
   'no-http-engine-dep': noHttpEngineDep,
+  'eslint-disable-reason': eslintDisableReason,
 };
 
 export const checkFile = (path: string, content: string, ctx: Context): Violation[] =>

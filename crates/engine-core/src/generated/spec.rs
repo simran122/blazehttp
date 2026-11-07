@@ -505,6 +505,7 @@ impl EngineDetail {
         }
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
     Get,

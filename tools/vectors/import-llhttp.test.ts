@@ -88,6 +88,232 @@ const runOne = (md: string, overrides?: ReadonlyMap<string, LlhttpOverride>) => 
 };
 const withRtsp = new Map([['fixture / RTSP', RTSP_OVERRIDE]]);
 
+const UPGRADE = mdCase(
+  '101',
+  RESPONSE,
+  'HTTP/1.1 101 Switching Protocols\n\nproto',
+  [
+    'off=0 message begin',
+    'off=0 len=4 span[protocol]="HTTP"',
+    'off=36 headers complete status=101 v=1/1 flags=0 content_length=0',
+    'off=36 message complete',
+    'off=36 error code=8 reason="Pause on CONNECT/Upgrade"',
+  ].join('\n'),
+);
+const CHUNKED = mdCase(
+  'Chunked',
+  RESPONSE,
+  'HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n\n0\n\n',
+  [
+    'off=0 message begin',
+    'off=0 len=4 span[protocol]="HTTP"',
+    'off=17 len=17 span[header_field]="Transfer-Encoding"',
+    'off=36 len=7 span[header_value]="chunked"',
+    'off=45 header_value complete',
+    'off=47 headers complete status=200 v=1/1 flags=208 content_length=0',
+  ].join('\n'),
+);
+const HEAD_KEEP_ALIVE = mdCase(
+  'Head',
+  '{"type": "response", "skipBody": true}',
+  'HTTP/1.0 200 OK\nContent-Length: 9\nConnection: keep-alive\n\n',
+  [
+    'off=0 message begin',
+    'off=0 len=4 span[protocol]="HTTP"',
+    'off=17 len=14 span[header_field]="Content-Length"',
+    'off=33 len=1 span[header_value]="9"',
+    'off=36 header_value complete',
+    'off=36 len=10 span[header_field]="Connection"',
+    'off=48 len=10 span[header_value]="keep-alive"',
+    'off=60 header_value complete',
+    'off=62 headers complete status=200 v=1/0 flags=21 content_length=9',
+    'off=62 message complete',
+    'off=62 error code=8 reason="trailing data is ignored"',
+  ].join('\n'),
+);
+const INTERIM_THEN_EOF = mdCase(
+  'Interim',
+  RESPONSE,
+  'HTTP/1.1 100 Continue\n\nHTTP/1.1 200 OK\nConnection: close\n\nbody',
+  [
+    'off=0 message begin',
+    'off=0 len=4 span[protocol]="HTTP"',
+    'off=25 headers complete status=100 v=1/1 flags=0 content_length=0',
+    'off=25 message complete',
+    'off=25 message begin',
+    'off=25 len=4 span[protocol]="HTTP"',
+    'off=42 len=10 span[header_field]="Connection"',
+    'off=54 len=5 span[header_value]="close"',
+    'off=61 header_value complete',
+    'off=63 headers complete status=200 v=1/1 flags=2 content_length=0',
+    'off=63 len=4 span[body]="body"',
+  ].join('\n'),
+);
+/** A 204 announcing `Content-Length: 0 ` (trailing OWS). */
+const NO_CONTENT_EMPTY_LENGTH = mdCase(
+  'Short',
+  RESPONSE,
+  'HTTP/1.1 204 No Content\nContent-Length: 0 \n\n',
+  [
+    'off=0 message begin',
+    'off=0 len=4 span[protocol]="HTTP"',
+    'off=25 len=14 span[header_field]="Content-Length"',
+    'off=41 len=2 span[header_value]="0 "',
+    'off=45 header_value complete',
+    'off=47 headers complete status=204 v=1/1 flags=20 content_length=0',
+    'off=47 message complete',
+  ].join('\n'),
+);
+const CUT_BODY = mdCase(
+  'Cut',
+  RESPONSE,
+  'HTTP/1.1 200 OK\nContent-Length: 9\n\nab',
+  [
+    'off=0 message begin',
+    'off=0 len=4 span[protocol]="HTTP"',
+    'off=17 len=14 span[header_field]="Content-Length"',
+    'off=33 len=1 span[header_value]="9"',
+    'off=36 header_value complete',
+    'off=38 headers complete status=200 v=1/1 flags=20 content_length=9',
+    'off=38 len=2 span[body]="ab"',
+  ].join('\n'),
+);
+
+/** Native expectation of the single case in `md`. */
+const nativeOf = (md: string): unknown => runOne(md).file.cases[0]?.expect.native;
+
+/** A 204 or 304 head (`status` with reason) with `headerLines`, logged as `logLines` after `message begin`. */
+const bodyless = (status: string, headerLines: string, logLines: string[]): unknown =>
+  nativeOf(
+    mdCase(status, RESPONSE, `HTTP/1.1 ${status}\n${headerLines}\n`, ['off=0 message begin', ...logLines].join('\n')),
+  );
+
+/** A one-field interim head (`status`), the way llhttp logs it, followed by a final head or llhttp's upgrade pause. */
+const interimWithField = (status: string, name: string, value: string, after: string[]): string => {
+  const statusLine = `HTTP/1.1 ${status}\r\n`;
+  const nameOff = statusLine.length;
+  const valueOff = nameOff + name.length + 2;
+  const end = valueOff + value.length + 2;
+  const code = status.slice(0, 3);
+  return mdCase(
+    `${code} ${name}`,
+    RESPONSE,
+    `HTTP/1.1 ${status}\n${name}: ${value}\n\n`,
+    [
+      'off=0 message begin',
+      'off=0 len=4 span[protocol]="HTTP"',
+      `off=${String(nameOff)} len=${String(name.length)} span[header_field]="${name}"`,
+      `off=${String(valueOff)} len=${String(value.length)} span[header_value]="${value}"`,
+      `off=${String(end - 2)} header_value complete`,
+      `off=${String(end)} headers complete status=${code} v=1/1 flags=0 content_length=0`,
+      `off=${String(end)} message complete`,
+      ...after.map((line) => line.replace('END', String(end))),
+    ].join('\n'),
+  );
+};
+
+const INTERIM_FRAMING_FIELDS = [
+  ['Content-Length', '0'],
+  ['Transfer-Encoding', 'chunked'],
+  ['Connection', 'close'],
+];
+
+/** Final responses whose connection must not be kept alive: label, HTTP version, header fields. */
+const NOT_KEPT_ALIVE = [
+  ['HTTP/1.0 without keep-alive', '1.0', [['Content-Length', '2']]],
+  [
+    'a close token in a list',
+    '1.1',
+    [
+      ['Connection', 'close, keep-alive'],
+      ['Content-Length', '2'],
+    ],
+  ],
+] as const;
+
+/** A `200 OK` with body `ok`, `fields` and HTTP `version`, logged the way llhttp logs it. */
+const closeCase = (version: string, fields: readonly (readonly [string, string])[]): string => {
+  const lines = fields.map(([n, v]) => `${n}: ${v}\r\n`);
+  const log = ['off=0 message begin', 'off=0 len=4 span[protocol]="HTTP"'];
+  let off = 17;
+  for (const [i, [name, value]] of fields.entries()) {
+    log.push(`off=${String(off)} len=${String(name.length)} span[header_field]="${name}"`);
+    log.push(`off=${String(off + name.length + 2)} len=${String(value.length)} span[header_value]="${value}"`);
+    off += String(lines[i]).length;
+    log.push(`off=${String(off)} header_value complete`);
+  }
+  const head = off + 2;
+  log.push(`off=${String(head)} headers complete status=200 v=${version.replace('.', '/')} flags=20`);
+  log.push(`off=${String(head)} len=2 span[body]="ok"`, `off=${String(head + 2)} message complete`);
+  const http = `HTTP/${version} 200 OK\n${fields.map(([n, v]) => `${n}: ${v}\n`).join('')}\nok`;
+  return mdCase('Close', RESPONSE, http, log.join('\n'));
+};
+
+/** Inputs whose llhttp log the importer cannot model: the reason named in the error, the http block, the log. */
+const UNMODELLED: [string, string, string][] = [
+  ['bytes before the status line', '\\r\\nHTTP/1.1 200 OK\n\n', 'off=2 message begin'],
+  ['no final response head', 'HTTP/1.1 200 OK', 'off=0 message begin'],
+  ['an unknown log event "constructor"', 'HTTP/1.1 200 OK\n\n', 'off=0 message begin\noff=0 constructor'],
+  ['an unknown log event "on_url complete"', 'HTTP/1.1 200 OK\n\n', 'off=0 message begin\noff=0 on_url complete'],
+  [
+    'version 0.9',
+    'HTTP/0.9 200 OK\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=19 headers complete status=200 v=0/9 flags=0',
+  ],
+  [
+    'status 600',
+    'HTTP/1.1 600 X\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=18 headers complete status=600 v=1/1 flags=0',
+  ],
+  [
+    'Content-Length "x"',
+    'HTTP/1.1 200 OK\nContent-Length: x\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=14 span[header_field]="Content-Length"\noff=33 len=1 span[header_value]="x"\noff=36 header_value complete\noff=38 headers complete status=200 v=1/1 flags=0',
+  ],
+  [
+    'Transfer-Encoding "gzip"',
+    'HTTP/1.1 200 OK\nTransfer-Encoding: gzip\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=4 span[header_value]="gzip"\noff=42 header_value complete\noff=44 headers complete status=200 v=1/1 flags=200',
+  ],
+  [
+    'line break in a header value',
+    'HTTP/1.1 200 OK\nA: b\n c\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=1 span[header_field]="A"\noff=20 len=1 span[header_value]="b"\noff=21 len=1 span[header_value]=cr\noff=29 header_value complete\noff=31 headers complete status=200 v=1/1 flags=0',
+  ],
+  [
+    'an unknown llhttp error code',
+    'HTTP/1.1 200 OK\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=0 error code=99 reason="?"',
+  ],
+  ['an unparsed log line', 'HTTP/1.1 200 OK\n\n', 'something else'],
+  ['a log event outside a message', 'HTTP/1.1 200 OK\n\n', 'off=0 len=4 span[protocol]="HTTP"'],
+  [
+    'input that ends after an interim response',
+    'HTTP/1.1 100 Continue\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=25 headers complete status=100 v=1/1 flags=0\noff=25 message complete',
+  ],
+  [
+    'Content-Length "1, 2"',
+    'HTTP/1.1 304 X\nContent-Length: 1\nContent-Length: 2\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=16 len=14 span[header_field]="Content-Length"\noff=32 len=1 span[header_value]="1"\noff=35 header_value complete\noff=35 len=14 span[header_field]="Content-Length"\noff=51 len=1 span[header_value]="2"\noff=54 header_value complete\noff=56 headers complete status=304 v=1/1 flags=20',
+  ],
+  [
+    'Content-Length "18446744073709551616"',
+    'HTTP/1.1 200 OK\nContent-Length: 18446744073709551616\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=14 span[header_field]="Content-Length"\noff=33 len=20 span[header_value]="18446744073709551616"\noff=55 header_value complete\noff=57 headers complete status=200 v=1/1 flags=20',
+  ],
+  [
+    'Transfer-Encoding "chunked"',
+    'HTTP/1.1 200 OK\nTransfer-Encoding: chunked\nContent-Length: 1\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=7 span[header_value]="chunked"\noff=45 header_value complete\noff=45 len=14 span[header_field]="Content-Length"\noff=61 len=1 span[header_value]="1"\noff=64 header_value complete\noff=66 headers complete status=200 v=1/1 flags=228',
+  ],
+  [
+    'Transfer-Encoding "chunked"',
+    'HTTP/1.0 200 OK\nTransfer-Encoding: chunked\n\n',
+    'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=7 span[header_value]="chunked"\noff=45 header_value complete\noff=47 headers complete status=200 v=1/0 flags=208',
+  ],
+];
+
 describe('importLlhttp', () => {
   it('converts http/log block pairs into cases', () => {
     const [result] = run(FIXTURE, withRtsp);
@@ -118,23 +344,39 @@ describe('importLlhttp', () => {
   });
 
   it('maps an llhttp error after an interim response', () => {
-    const upgrade = runOne(
-      mdCase(
-        '101',
-        RESPONSE,
-        'HTTP/1.1 101 Switching Protocols\n\nproto',
-        [
-          'off=0 message begin',
-          'off=0 len=4 span[protocol]="HTTP"',
-          'off=36 headers complete status=101 v=1/1 flags=0 content_length=0',
-          'off=36 message complete',
-          'off=36 error code=8 reason="Pause on CONNECT/Upgrade"',
-        ].join('\n'),
-      ),
-    );
+    const upgrade = runOne(UPGRADE);
     expect(upgrade.file.cases[0]?.expect.native).toEqual(MALFORMED);
   });
 
+  it('reads CRLF markdown like LF markdown', () => {
+    const lf = run(FIXTURE, withRtsp);
+    expect(run(FIXTURE.replaceAll('\n', '\r\n'), withRtsp)).toEqual(lf);
+  });
+
+  it('checks every log span against the normalised input', () => {
+    const shifted = SIMPLE.replace('off=33 len=1', 'off=34 len=1');
+    expect(() => run(mdFile(shifted))).toThrow(/span at off=34/);
+  });
+
+  it('ignores spans it does not model, prototype names included', () => {
+    const extraSpans = ['constructor', '__proto__', 'toString'].map((name) => `off=0 len=4 span[${name}]="HTTP"`);
+    const withExtra = SIMPLE.replace('off=0 len=4 span[protocol]="HTTP"', (line) => [line, ...extraSpans].join('\n'));
+    expect(nativeOf(withExtra)).toEqual(nativeOf(SIMPLE));
+  });
+
+  it('skips lenient modes and chunked bodies', () => {
+    const lenient = runOne(mdCase('Lenient', LENIENT, 'HTTP/1.1 200 OK\n\n', 'off=0 x'));
+    expect(lenient.skipped.map((s) => s.name)).toEqual(['fixture / Lenient']);
+    expect(lenient.skipped[0]?.reason).toContain('response-lenient-all');
+    const inlineJs = runOne(mdCase('Inline', RESPONSE, 'HTTP/1.1 200 OK\nA: ${1 + 1}\n\n', 'off=0 x'));
+    expect(inlineJs.skipped[0]?.reason).toMatch(/never evaluates/);
+    const chunked = runOne(CHUNKED);
+    expect(chunked.skipped[0]?.reason).toMatch(/chunked/);
+    expect(chunked.file.cases).toEqual([]);
+  });
+});
+
+describe('importLlhttp overrides', () => {
   it('applies overrides with a cited rule', () => {
     const [result] = run(FIXTURE, withRtsp);
     expect(result?.file.cases[2]?.expect.native).toEqual(MALFORMED);
@@ -153,11 +395,6 @@ describe('importLlhttp', () => {
     expect(decided.overridden).toEqual([name]);
   });
 
-  it('reads CRLF markdown like LF markdown', () => {
-    const lf = run(FIXTURE, withRtsp);
-    expect(run(FIXTURE.replaceAll('\n', '\r\n'), withRtsp)).toEqual(lf);
-  });
-
   it('refuses a case it cannot model without an override', () => {
     expect(() => run(FIXTURE)).toThrow(/fixture \/ RTSP.*protocol RTSP/);
   });
@@ -166,114 +403,29 @@ describe('importLlhttp', () => {
     const stale = new Map([...withRtsp, ['fixture / Gone', RTSP_OVERRIDE]]);
     expect(() => run(FIXTURE, stale)).toThrow(/unused override.*Gone/);
   });
+});
 
-  it('checks every log span against the normalised input', () => {
-    const shifted = SIMPLE.replace('off=33 len=1', 'off=34 len=1');
-    expect(() => run(mdFile(shifted))).toThrow(/span at off=34/);
-  });
-
-  it('skips lenient modes and chunked bodies', () => {
-    const lenient = runOne(mdCase('Lenient', LENIENT, 'HTTP/1.1 200 OK\n\n', 'off=0 x'));
-    expect(lenient.skipped.map((s) => s.name)).toEqual(['fixture / Lenient']);
-    expect(lenient.skipped[0]?.reason).toContain('response-lenient-all');
-    const inlineJs = runOne(mdCase('Inline', RESPONSE, 'HTTP/1.1 200 OK\nA: ${1 + 1}\n\n', 'off=0 x'));
-    expect(inlineJs.skipped[0]?.reason).toMatch(/never evaluates/);
-    const chunked = runOne(
-      mdCase(
-        'Chunked',
-        RESPONSE,
-        'HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n\n0\n\n',
-        [
-          'off=0 message begin',
-          'off=0 len=4 span[protocol]="HTTP"',
-          'off=17 len=17 span[header_field]="Transfer-Encoding"',
-          'off=36 len=7 span[header_value]="chunked"',
-          'off=45 header_value complete',
-          'off=47 headers complete status=200 v=1/1 flags=208 content_length=0',
-        ].join('\n'),
-      ),
-    );
-    expect(chunked.skipped[0]?.reason).toMatch(/chunked/);
-    expect(chunked.file.cases).toEqual([]);
-  });
-
-  it('derives framing and keep-alive from the final response', () => {
-    const head = runOne(
-      mdCase(
-        'Head',
-        '{"type": "response", "skipBody": true}',
-        'HTTP/1.0 200 OK\nContent-Length: 9\nConnection: keep-alive\n\n',
-        [
-          'off=0 message begin',
-          'off=0 len=4 span[protocol]="HTTP"',
-          'off=17 len=14 span[header_field]="Content-Length"',
-          'off=33 len=1 span[header_value]="9"',
-          'off=36 header_value complete',
-          'off=36 len=10 span[header_field]="Connection"',
-          'off=48 len=10 span[header_value]="keep-alive"',
-          'off=60 header_value complete',
-          'off=62 headers complete status=200 v=1/0 flags=21 content_length=9',
-          'off=62 message complete',
-          'off=62 error code=8 reason="trailing data is ignored"',
-        ].join('\n'),
-      ),
-    );
-    expect(head.file.cases[0]).toMatchObject({
+describe('importLlhttp framing and keep-alive', () => {
+  it('delivers a HEAD response without its body and keeps an HTTP/1.0 keep-alive connection', () => {
+    expect(runOne(HEAD_KEEP_ALIVE).file.cases[0]).toMatchObject({
       request: { method: 'HEAD' },
       expect: { native: { ok: { status: 200, body: '', keepAlive: true } } },
     });
+  });
 
-    const interimThenEof = runOne(
-      mdCase(
-        'Interim',
-        RESPONSE,
-        'HTTP/1.1 100 Continue\n\nHTTP/1.1 200 OK\nConnection: close\n\nbody',
-        [
-          'off=0 message begin',
-          'off=0 len=4 span[protocol]="HTTP"',
-          'off=25 headers complete status=100 v=1/1 flags=0 content_length=0',
-          'off=25 message complete',
-          'off=25 message begin',
-          'off=25 len=4 span[protocol]="HTTP"',
-          'off=42 len=10 span[header_field]="Connection"',
-          'off=54 len=5 span[header_value]="close"',
-          'off=61 header_value complete',
-          'off=63 headers complete status=200 v=1/1 flags=2 content_length=0',
-          'off=63 len=4 span[body]="body"',
-        ].join('\n'),
-      ),
-    );
-    expect(interimThenEof.file.cases[0]?.expect.native).toEqual({
+  it('delivers the final response after an interim one when EOF ends the body', () => {
+    expect(nativeOf(INTERIM_THEN_EOF)).toEqual({
       ok: { status: 200, headers: [['Connection', 'close']], body: 'body', keepAlive: false },
     });
+  });
 
-    const short = runOne(
-      mdCase(
-        'Short',
-        RESPONSE,
-        'HTTP/1.1 204 No Content\nContent-Length: 0 \n\n',
-        [
-          'off=0 message begin',
-          'off=0 len=4 span[protocol]="HTTP"',
-          'off=25 len=14 span[header_field]="Content-Length"',
-          'off=41 len=2 span[header_value]="0 "',
-          'off=45 header_value complete',
-          'off=47 headers complete status=204 v=1/1 flags=20 content_length=0',
-          'off=47 message complete',
-        ].join('\n'),
-      ),
-    );
-    expect(short.file.cases[0]?.expect.native).toMatchObject({ ok: { headers: [['Content-Length', '0']] } });
+  it('keeps a 204 connection that announces Content-Length 0', () => {
+    expect(nativeOf(NO_CONTENT_EMPTY_LENGTH)).toMatchObject({
+      ok: { headers: [['Content-Length', '0']], keepAlive: true },
+    });
+  });
 
-    const bodyless = (status: string, headerLines: string, logLines: string[]) =>
-      runOne(
-        mdCase(
-          status,
-          RESPONSE,
-          `HTTP/1.1 ${status}\n${headerLines}\n`,
-          ['off=0 message begin', ...logLines].join('\n'),
-        ),
-      ).file.cases[0]?.expect.native;
+  it('keeps a 204 connection that announces no body', () => {
     expect(
       bodyless('204 No Content', '', [
         'off=0 len=4 span[protocol]="HTTP"',
@@ -281,6 +433,9 @@ describe('importLlhttp', () => {
         'off=27 message complete',
       ]),
     ).toEqual({ ok: { status: 204, headers: [], body: '', keepAlive: true } });
+  });
+
+  it('keeps no 204/304 connection that announced a body', () => {
     expect(
       bodyless('304 Not Modified', 'Transfer-Encoding: chunked\n', [
         'off=0 len=4 span[protocol]="HTTP"',
@@ -301,38 +456,21 @@ describe('importLlhttp', () => {
         'off=49 message complete',
       ]),
     ).toEqual({ ok: { status: 304, headers: [['Content-Length', '10']], body: '', keepAlive: false } });
-    expect(short.file.cases[0]?.expect.native).toMatchObject({ ok: { keepAlive: true } });
   });
 
-  /** A one-field interim head (`status`), the way llhttp logs it, followed by a final head or llhttp's upgrade pause. */
-  const interimWithField = (status: string, name: string, value: string, after: string[]): string => {
-    const statusLine = `HTTP/1.1 ${status}\r\n`;
-    const nameOff = statusLine.length;
-    const valueOff = nameOff + name.length + 2;
-    const end = valueOff + value.length + 2;
-    const code = status.slice(0, 3);
-    return mdCase(
-      `${code} ${name}`,
-      RESPONSE,
-      `HTTP/1.1 ${status}\n${name}: ${value}\n\n`,
-      [
-        'off=0 message begin',
-        'off=0 len=4 span[protocol]="HTTP"',
-        `off=${String(nameOff)} len=${String(name.length)} span[header_field]="${name}"`,
-        `off=${String(valueOff)} len=${String(value.length)} span[header_value]="${value}"`,
-        `off=${String(end - 2)} header_value complete`,
-        `off=${String(end)} headers complete status=${code} v=1/1 flags=0 content_length=0`,
-        `off=${String(end)} message complete`,
-        ...after.map((line) => line.replace('END', String(end))),
-      ].join('\n'),
-    );
-  };
+  it('expects incomplete-body when EOF cuts a Content-Length body', () => {
+    expect(nativeOf(CUT_BODY)).toEqual({ error: 'PROTOCOL/incomplete-body' });
+  });
 
-  it.each([
-    ['Content-Length', '0'],
-    ['Transfer-Encoding', 'chunked'],
-    ['Connection', 'close'],
-  ])('refuses an interim head with %s (§5.2 Interim heads)', (name, value) => {
+  it.each(NOT_KEPT_ALIVE)('keeps no connection alive for %s', (_, version, fields) => {
+    expect(nativeOf(closeCase(version, fields))).toEqual({
+      ok: { status: 200, headers: fields, body: 'ok', keepAlive: false },
+    });
+  });
+});
+
+describe('importLlhttp interim heads', () => {
+  it.each(INTERIM_FRAMING_FIELDS)('refuses an interim head with %s (§5.2 Interim heads)', (name, value) => {
     expect(() => runOne(interimWithField('103 Early Hints', name, value, []))).toThrow(
       /cannot model framing or Connection in a 1xx head/,
     );
@@ -346,117 +484,10 @@ describe('importLlhttp', () => {
     );
     expect(upgrade.file.cases[0]?.expect.native).toEqual(MALFORMED);
   });
+});
 
-  it.each([
-    ['HTTP/1.0 without keep-alive', '1.0', [['Content-Length', '2']]],
-    [
-      'a close token in a list',
-      '1.1',
-      [
-        ['Connection', 'close, keep-alive'],
-        ['Content-Length', '2'],
-      ],
-    ],
-  ] as const)('keeps no connection alive for %s', (_, version, fields) => {
-    const lines = fields.map(([n, v]) => `${n}: ${v}\r\n`);
-    const log = ['off=0 message begin', 'off=0 len=4 span[protocol]="HTTP"'];
-    let off = 17;
-    for (const [i, [name, value]] of fields.entries()) {
-      log.push(`off=${String(off)} len=${String(name.length)} span[header_field]="${name}"`);
-      log.push(`off=${String(off + name.length + 2)} len=${String(value.length)} span[header_value]="${value}"`);
-      off += String(lines[i]).length;
-      log.push(`off=${String(off)} header_value complete`);
-    }
-    const head = off + 2;
-    log.push(`off=${String(head)} headers complete status=200 v=${version.replace('.', '/')} flags=20`);
-    log.push(`off=${String(head)} len=2 span[body]="ok"`, `off=${String(head + 2)} message complete`);
-    const http = `HTTP/${version} 200 OK\n${fields.map(([n, v]) => `${n}: ${v}\n`).join('')}\nok`;
-    expect(runOne(mdCase('Close', RESPONSE, http, log.join('\n'))).file.cases[0]?.expect.native).toEqual({
-      ok: { status: 200, headers: fields, body: 'ok', keepAlive: false },
-    });
-  });
-
-  it('expects incomplete-body when EOF cuts a Content-Length body', () => {
-    const cut = runOne(
-      mdCase(
-        'Cut',
-        RESPONSE,
-        'HTTP/1.1 200 OK\nContent-Length: 9\n\nab',
-        [
-          'off=0 message begin',
-          'off=0 len=4 span[protocol]="HTTP"',
-          'off=17 len=14 span[header_field]="Content-Length"',
-          'off=33 len=1 span[header_value]="9"',
-          'off=36 header_value complete',
-          'off=38 headers complete status=200 v=1/1 flags=20 content_length=9',
-          'off=38 len=2 span[body]="ab"',
-        ].join('\n'),
-      ),
-    );
-    expect(cut.file.cases[0]?.expect.native).toEqual({ error: 'PROTOCOL/incomplete-body' });
-  });
-
-  it.each([
-    ['bytes before the status line', '\\r\\nHTTP/1.1 200 OK\n\n', 'off=2 message begin'],
-    ['no final response head', 'HTTP/1.1 200 OK', 'off=0 message begin'],
-    [
-      'version 0.9',
-      'HTTP/0.9 200 OK\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=19 headers complete status=200 v=0/9 flags=0',
-    ],
-    [
-      'status 600',
-      'HTTP/1.1 600 X\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=18 headers complete status=600 v=1/1 flags=0',
-    ],
-    [
-      'Content-Length "x"',
-      'HTTP/1.1 200 OK\nContent-Length: x\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=14 span[header_field]="Content-Length"\noff=33 len=1 span[header_value]="x"\noff=36 header_value complete\noff=38 headers complete status=200 v=1/1 flags=0',
-    ],
-    [
-      'Transfer-Encoding "gzip"',
-      'HTTP/1.1 200 OK\nTransfer-Encoding: gzip\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=4 span[header_value]="gzip"\noff=42 header_value complete\noff=44 headers complete status=200 v=1/1 flags=200',
-    ],
-    [
-      'line break in a header value',
-      'HTTP/1.1 200 OK\nA: b\n c\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=1 span[header_field]="A"\noff=20 len=1 span[header_value]="b"\noff=21 len=1 span[header_value]=cr\noff=29 header_value complete\noff=31 headers complete status=200 v=1/1 flags=0',
-    ],
-    [
-      'an unknown llhttp error code',
-      'HTTP/1.1 200 OK\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=0 error code=99 reason="?"',
-    ],
-    ['an unparsed log line', 'HTTP/1.1 200 OK\n\n', 'something else'],
-    ['a log event outside a message', 'HTTP/1.1 200 OK\n\n', 'off=0 len=4 span[protocol]="HTTP"'],
-    [
-      'input that ends after an interim response',
-      'HTTP/1.1 100 Continue\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=25 headers complete status=100 v=1/1 flags=0\noff=25 message complete',
-    ],
-    [
-      'Content-Length "1, 2"',
-      'HTTP/1.1 304 X\nContent-Length: 1\nContent-Length: 2\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=16 len=14 span[header_field]="Content-Length"\noff=32 len=1 span[header_value]="1"\noff=35 header_value complete\noff=35 len=14 span[header_field]="Content-Length"\noff=51 len=1 span[header_value]="2"\noff=54 header_value complete\noff=56 headers complete status=304 v=1/1 flags=20',
-    ],
-    [
-      'Content-Length "18446744073709551616"',
-      'HTTP/1.1 200 OK\nContent-Length: 18446744073709551616\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=14 span[header_field]="Content-Length"\noff=33 len=20 span[header_value]="18446744073709551616"\noff=55 header_value complete\noff=57 headers complete status=200 v=1/1 flags=20',
-    ],
-    [
-      'Transfer-Encoding "chunked"',
-      'HTTP/1.1 200 OK\nTransfer-Encoding: chunked\nContent-Length: 1\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=7 span[header_value]="chunked"\noff=45 header_value complete\noff=45 len=14 span[header_field]="Content-Length"\noff=61 len=1 span[header_value]="1"\noff=64 header_value complete\noff=66 headers complete status=200 v=1/1 flags=228',
-    ],
-    [
-      'Transfer-Encoding "chunked"',
-      'HTTP/1.0 200 OK\nTransfer-Encoding: chunked\n\n',
-      'off=0 message begin\noff=0 len=4 span[protocol]="HTTP"\noff=17 len=17 span[header_field]="Transfer-Encoding"\noff=36 len=7 span[header_value]="chunked"\noff=45 header_value complete\noff=47 headers complete status=200 v=1/0 flags=208',
-    ],
-  ])('refuses to model %s', (reason, http, log) => {
+describe('importLlhttp refusals', () => {
+  it.each(UNMODELLED)('refuses to model %s', (reason, http, log) => {
     expect(() => run(mdFile(mdCase('Odd', RESPONSE, http, log)))).toThrow(new RegExp(`fixture / Odd: .*${reason}`));
   });
 

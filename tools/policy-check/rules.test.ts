@@ -60,3 +60,26 @@ test('dependency table headers and inline tables are matched', () => {
   ]);
   expect(v('crates/node-binding/Cargo.toml', '[package]\nhyper = "1"')).toEqual([]);
 });
+test('dependency table state follows every header', () => {
+  const engine = (toml: string) => v('crates/engine-core/Cargo.toml', toml);
+  expect(engine('[dependencies]\ntokio = "1"\n[features]\nhyper = []')).toEqual([]);
+  expect(engine('[dependencies.x]\nversion = "1"\n[dependencies]\nhyper = "1"')).toEqual(['no-http-engine-dep']);
+});
+test('eslint disables are next-line only, with named rules and a reason', () => {
+  expect(v('a.ts', '// eslint-disable-next-line complexity -- generated table')).toEqual([]);
+  expect(
+    v('a.js', '  // eslint-disable-next-line @typescript-eslint/max-params, complexity -- callback shape'),
+  ).toEqual([]);
+  for (const bad of [
+    '/* eslint-disable */',
+    '/* eslint-disable complexity */',
+    '/* eslint-enable */',
+    '// eslint-disable complexity -- whole file',
+    '// eslint-disable-line complexity -- same line',
+    '// eslint-disable-next-line complexity',
+    '// eslint-disable-next-line -- no rule',
+    '/* eslint-disable-next-line complexity -- block form */',
+  ])
+    expect(v('a.ts', `x\n${bad}`), bad).toEqual(['eslint-disable-reason']);
+  expect(v('a.toml', '# eslint-disable')).toEqual([]);
+});

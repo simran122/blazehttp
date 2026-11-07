@@ -415,7 +415,7 @@ First of {completion, failure, abort, deadline, close, teardown, poison} wins (o
 | **Chain of responsibility** | `InterceptorChain`; undici `DispatchHook` chain run by one fused handler with **phased hooks** (request direction in spec order, response direction in reverse spec order, §9.2) — `onRequest` / `onHeaders` return `Continue \| Replace(response) \| Reject(error) \| Redispatch(request)` (the raw-header re-check is the first `onHeaders` hook; redirects use `Redispatch`), `onChunk` returns `Continue(chunks[]) \| Pause(until) \| Reject(error)` (decompression may emit several chunks; rate limiting pauses), `onComplete` returns `Continue \| Reject(error)` (end-of-body flush, truncation checks); phase timeouts come from the `TimerHeap` service, not a hook | Ordered handlers that pass on, transform, pause, short-circuit or re-dispatch |
 | **Visitor** | `BodyEncoder<R>` over body element classes, with a shared `MultipartSerializer` | Per-transport encoding, compile-time exhaustive |
 
-`PreparedRequest` is a value object. Guardrails: composition over inheritance — only `Error` is extended (`HttpError`, `TransportError`); interfaces at every seam; **TypeScript:** lookup maps, not `switch`; **Rust:** exhaustive `enum` + `match` (static dispatch), no `Box<dyn …>` on the hot path; functions where no state/polymorphism is needed. Names: TS `AgentRegistry` (undici agents) vs the Rust profile registry; one name `SubmissionBatchBuilder` everywhere.
+`PreparedRequest` is a value object. The OOP and pattern guardrails are the hard rules in §13.2. Names: TS `AgentRegistry` (undici agents) vs the Rust profile registry; one name `SubmissionBatchBuilder` everywhere.
 
 ### 13.1 Code structure (owner rule: production-grade layout)
 Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming Language* ch. 7 (modules) and ch. 11.3 (test organisation), Rust API Guidelines; mirrors mature engines (hyper `proto/h1`, undici `lib/dispatcher`).
@@ -439,6 +439,55 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
 6. **Generated code is isolated** in `generated/` directories, never edited by hand, and checked for drift in CI.
 7. **One-way dependencies.** `engine-simd` ← `engine-core` ← {`node-binding`, `engine-bench`}; `bench-server` is standalone. The core never depends on Node, napi or benchmark code. In TypeScript: `client/` → `transports/` → `native/`, with no cycles. CI enforces it: `cargo tree` crate directions, and a lint for import cycles and cross-feature internal imports.
 8. **The same rules apply in TypeScript:** `packages/blazehttp/src/<feature>/` (`client/`, `transports/<name>/`, `native/`, `errors/`, `generated/`), each with an `index.ts` entry.
+9. **One function, one job** (owner rule). Each function does exactly one thing and its name says what; if the honest name needs "and", split it. Functions stay short, and CI enforces the limits:
+   - **Rust** (`clippy.toml` at the repo root, read by both workspaces): `too_many_lines` with `too-many-lines-threshold = 60` (the lint is in `clippy::pedantic`, already denied); `too_many_arguments` with `too-many-arguments-threshold = 4` (Rust counts `self`). Clippy counts only lines with code: blank and comment-only lines are skipped, and closures count toward their enclosing function.
+   - **TypeScript/JS** (`eslint.config.js`, all `.ts` and `.js` files, tests included): `max-lines-per-function` 60 with `skipBlankLines`, `skipComments` and `IIFEs` (nested callbacks and IIFEs count toward the outer function, the same as clippy), `complexity` ≤ 10, `max-depth` ≤ 4, and `@typescript-eslint/max-params` ≤ 4 (the typescript-eslint extension of `max-params`, which ignores a `this: void` parameter). Pass an object when there are more parameters.
+   - **Tests get no higher limit.** Table-driven tests keep their tables and fixtures in module-level constants and helpers, never inside a test body. `describe` blocks group by topic and stay within the limit. Large golden outputs live in fixture files (`toMatchFileSnapshot`), not inline snapshots.
+   - **Exceptions** to any rule-9 lint are allowed only in one of two forms, and a reviewer must approve each one:
+     - Rust: `#[expect(<lint>, reason = "…")]`. CI denies `allow_attributes` and `allow_attributes_without_reason` in both workspaces. Unlike `allow`, `expect` fails once the exception is no longer needed.
+     - TypeScript/JS: `// eslint-disable-next-line <rule> -- <reason>`. The `eslint-disable-reason` policy check rejects every other directive form (file or block `eslint-disable`, `-line`, or no `-- reason`). ESLint runs with `reportUnusedDisableDirectives: 'error'` and `--max-warnings 0`.
+     - A hot-path exception needs a criterion/parser-bench measurement (§7; `crates/engine-core/examples/h1_parse_bench.rs`) showing that splitting the function costs more than 2 %, recorded in `docs/perf/journal.md`.
+   - Reviewers also check single responsibility by hand: no linter can tell whether a name is honest.
+
+   *Research (2026-11-07).*
+   - **Lint sources.** Clippy lint docs for the locked 1.99 toolchain (`cargo clippy --explain too_many_lines`; https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_lines) give the default of 100 lines and the config key, and the lint source (`clippy_lints/src/functions/too_many_lines.rs`) shows how lines are counted.
+   - **No `cognitive_complexity`.** Clippy keeps it in `restriction` because "the true Cognitive Complexity of a method is not something we can calculate" (rust-clippy#3793), and its docs recommend `too_many_lines` and `excessive_nesting` instead. We also skip `excessive_nesting`: it counts module and `impl` blocks, so its numbers do not match ESLint `max-depth`, and nesting in Rust is left to review.
+   - **ESLint rules.** ESLint docs: https://eslint.org/docs/latest/rules/max-lines-per-function (default 50, with the skip options off by default), https://eslint.org/docs/latest/rules/complexity (classic McCabe, default 20; optional chaining, default parameters and logical assignment add paths), https://eslint.org/docs/latest/rules/max-depth (default 4) and https://eslint.org/docs/latest/rules/max-params (default 3). typescript-eslint docs: https://typescript-eslint.io/rules/max-params.
+   - **Thresholds.** Complexity 10 is McCabe's original ceiling (NIST SP 500-235). 60 lines is stricter than clippy's 100 and slightly looser than ESLint's 50, which counts blank and comment lines.
+   - **Mature projects** (checked on their default branches, 2026-11-07). None of them enforces a function-size limit; they rely on review alone. This rule is deliberately stricter and is measured by machine.
+     - hyper's `Cargo.toml` turns on `clippy::pedantic` but allows `too_many_lines` ("reconsider someday?") and `cognitive_complexity` ("is this ever useful?").
+     - tokio has no `clippy.toml` and no clippy lint table.
+     - rust-clippy's own `clippy.toml` sets no thresholds.
+     - typescript-eslint's `eslint.config.mjs` uses none of these rules.
+
+### 13.2 OOP and design-pattern hard rules (owner rule)
+Every rule here is mandatory. Every review checks them under maintainability, and a violation is an **Important** finding.
+
+1. **Encapsulation.** Each public surface is the minimum needed: `pub(crate)` by default.
+   - A type with invariants keeps its fields private and changes state only through methods.
+   - Passive data and value types with no invariants may expose their fields: `pub` in Rust (Rust API Guidelines C-STRUCT-PRIVATE: public fields are fine for passive data), `readonly` in TypeScript. Examples: `ResponseHead`, the generated `H1Limits`, `PreparedRequest`.
+2. **Abstraction through interfaces.** Every seam is a Rust trait or a TS interface, and code depends on the trait, not on the concrete type (dependency inversion).
+   - A **seam** is a boundary where the implementation varies per runtime or transport, or where tests substitute a fake.
+   - Current seams:
+     - Rust: `CompletionSink` (implemented by `node-binding` and `engine-bench`), `Execute` (commands) and `Exchange` (middleware).
+     - TypeScript: `Transport`, `PlatformKit` (with its clock, stream adapter and XSRF provider), interceptors and `DispatchHook`s, `ResponseDecoder`, `BodyEncoder`, `RetryPolicy`/`BackoffStrategy`, `ParamsSerializer` and the `ProxyRules` matcher.
+   - Internal helpers inside a component are not seams.
+3. **Polymorphism.**
+   - Hot paths use static dispatch: generics, or enums with an exhaustive `match`. No `Box<dyn …>` on a hot path.
+   - TypeScript uses interfaces and lookup maps, never `switch`. A handler lookup map that this rule requires is not a GoF pattern use, so it is not named under rule 6.
+4. **Composition over inheritance.** No class inheritance, except `extends Error` (`HttpError`, `TransportError`) in TypeScript. Rust composes structs.
+5. **SOLID.**
+   - **Single responsibility** per function (§13.1 rule 9) and per file or module (§13.1 rules 1–2).
+   - **Open/closed** applies to the genuinely open seams: new TS transports and `PlatformKit`s, interceptors and `DispatchHook`s, `ResponseDecoder`s and `BodyEncoder`s are added without editing the core.
+     - The Rust closed sets (`FramingDecoder`, `EngineCommand`, and the middleware order from `spec.json`) deliberately trade open/closed for static dispatch.
+     - When a variant is added there, the compiler's exhaustiveness check finds every place that must change.
+   - **Liskov substitution:** every trait or interface implementation honours the documented contract, and tests check it.
+   - **Interface segregation:** traits and interfaces are small and focused.
+   - **Dependency inversion:** see rule 2.
+6. **Design patterns (GoF)** are used only where they have a real responsibility, exactly as listed in the §13 table.
+   - Every use names its pattern in the module doc comment.
+   - No pattern is added for its own sake.
+   - A new pattern use needs a line in the §13 table.
 
 ## 14. Tech decisions
 | Decision | Choice | Rejected | Why |
@@ -557,7 +606,7 @@ G0, G1, G1-JS, G1-low, G2–G8 met; conformance green on native + undici (browse
 File names inside crates/packages, internal helper names, Rust module boundaries, defaults marked "default" (tuned by benchmark), README layout.
 
 ## 21. Owner decisions (recorded)
-Name blazehttp · MIT OR Apache-2.0 · public repo on the owner's GitHub, owner's npm account and npm org `blazehttp` · Claude Code builds, owner approves each phase · no release on a fallback; keep optimising · native engine at every load · HTTP engine written from scratch (no HTTP engine reused; infrastructure crates only — tokio, rustls, decoders, `url`/`idna`, utilities, napi-rs) · own HTTP/1.1 in 1.0, own HTTP/2 in 1.1 · headline goal: beat the fastest HTTP client engines in every language (Rust, C, C++, Zig, Go) · learn from proven code, reuse test cases, always search for speed · no deprecated libraries, functions or APIs anywhere (§14.1) · no stale or unused code; deleted when no longer needed (§14.2). · HTTP `QUERY` method supported (wire id 7), treated as safe and idempotent (2026-11-06) · status line without a reason phrase (`HTTP/1.1 301` + CRLF) accepted as an empty reason (2026-11-06)
+Name blazehttp · MIT OR Apache-2.0 · public repo on the owner's GitHub, owner's npm account and npm org `blazehttp` · Claude Code builds, owner approves each phase · no release on a fallback; keep optimising · native engine at every load · HTTP engine written from scratch (no HTTP engine reused; infrastructure crates only — tokio, rustls, decoders, `url`/`idna`, utilities, napi-rs) · own HTTP/1.1 in 1.0, own HTTP/2 in 1.1 · headline goal: beat the fastest HTTP client engines in every language (Rust, C, C++, Zig, Go) · learn from proven code, reuse test cases, always search for speed · no deprecated libraries, functions or APIs anywhere (§14.1) · no stale or unused code; deleted when no longer needed (§14.2). · HTTP `QUERY` method supported (wire id 7), treated as safe and idempotent (2026-11-06) · status line without a reason phrase (`HTTP/1.1 301` + CRLF) accepted as an empty reason (2026-11-06) · one function, one job: at most 60 lines, enforced by clippy and ESLint, exceptions only through a reviewed `#[expect]`/`eslint-disable-next-line` with a reason (§13.1 rule 9, 2026-11-07) · OOP and design-pattern hard rules; a violation is an Important review finding (§13.2, 2026-11-07)
 **Author's-call protocol tightenings** (2026-11-06, from the response-parser research review; marked [author's call] where they appear; the owner may revert any): leading SP/HTAB field lines rejected · `chunked` case-insensitive after OWS trim · limits count CRLF, fields per head, bytes cumulative · CL/TE rules in 1xx heads, 1xx with TE or CL ≠ 0 → smuggling-risk, `Connection: close` in a 1xx sticky · 204/304 announcing a body not reused · EOF-before-head mapping · chunk lines CRLF only, chunk extensions validated · headers deadline not extended by 1xx · re-send only before any response byte incl. 1xx · `Content-Length` never sizes allocations · latin1 JS header decoding · undici hook rules (P4) · same target CPU in benchmarks · HTTP Garden study-only · CONNECT replies outside `ResponseParser`.
 **Git workflow for this repo (owner decision, overrides the global one-step-at-a-time rule here only):** Claude commits, pushes feature branches and opens pull requests on its own so CI runs; small pull requests merge into a **milestone branch** once CI is green and the agent review gate passes; **the owner approves one milestone pull request into `main` every 1–2 weeks** (with a summary and the review report) **and every release**. Commit messages follow the owner's rules (imperative mood, describe the change, never mention Claude/AI/agents). `main` is protected (required CI checks, no direct pushes, no force-pushes).
 **Benchmark hosts (owner decision):** owner's Mac with Docker Desktop at 8 CPUs as the arm64 reference, used in a **fixed nightly window** during which the owner keeps other containers stopped (the speed programme and gate runs batch into it); an x64 cloud VM from P0 that **Claude may start and stop itself within an owner-set monthly budget cap**.
