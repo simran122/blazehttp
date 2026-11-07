@@ -58,3 +58,24 @@ re-run in the Linux reference container (nightly window) and on the x64 VM first
 | Benchmark parser with a varied-head ring, not only one repeated head | repeated head lets the predictor memorise exits | Task 4 bench / P1a criterion / G0 report | Dev: same scalar code 186 ns repeated vs 436–585 ns varied; proposed rule |
 | SWAR `[A-Za-z0-9-]` name fast path, `table8` names | fewer branches than per-byte table | same | Dev: slower than the table in the chain (321 / — vs 186 ns); drop |
 | Avoid `pcmpestri`/`pcmpistri` | 8 µops, 12–17-cycle latency (uops.info) vs `pshufb` 1 µop | — | Verified (uops.info); no SSE4.2 string ops in `engine-simd` |
+
+## Shard and connection tasks (P0 survey, 2026-11-07; detail in `docs/notes/shard-and-connection.md`)
+
+Dev measurements on the owner's M2 (macOS loopback, loaded host, in-process 4-thread server, client = one
+`LocalRuntime` thread, closed loop, thread CPU clock, thread-local counting allocator), scratch crate `connbench`. Not
+yet in `journal.md`: re-measure in the G0 harness on Linux (Tasks 7/8, nightly window).
+
+| Idea | Hypothesis | How to measure | Status |
+|---|---|---|---|
+| Exchange inside the connection task; requests as FIFO entries (design A) | no channel hop or oneshot per request: fewer wakes and 0 allocations vs hyper | G0 c = 50/500: CPU µs per request, allocations per request, wake counters | Dev: 0.000 vs hyper 10.0 allocations per request; CPU median 12.1 vs raw loop 13.7 vs hyper 17.7 µs (±20–30% noise); **adopted for P0** |
+| Checkout idle check with `try_read` (syscall only when the reactor flagged the socket) | free on a clean connection | micro + G0 | Dev: 5.1 ns per check (no syscall); **adopted** |
+| Forced `recv(MSG_PEEK)` per reuse (h2o, Bun) to close the post-reactor-turn window | +1 syscall per request | micro + G0 reference cell, Linux | Dev: 2,130 ns per check on macOS; Linux unmeasured; **owner decision** (note §12 item 1) |
+| "Receiver baton": a parked connection awaits the command channel itself; the command loop runs only while every connection is busy | removes one local wake + task poll per request at low load | G0 c = 1, G1-low | Unverified; dev c = 1 shows the hop (25.1 vs raw 16.6 µs); P1a if the c = 1 cell misses |
+| Direct hand-off to a LIFO idle-connection stack (per-slot mailbox + waker) instead of `Notify` | avoids the `Notify` waiter mutex; exact LIFO | G0 + profile of `notify_last` | Unverified; P1a if `Notify` shows in profiles |
+| Release the read buffer when a connection parks, take it at checkout (fasthttp per-request reader pool) | RSS proportional to busy, not idle, connections (c = 500, 128 MiB cell) | G2 memory cells | Unverified; costs a pool round trip per request at low load |
+| Hand-off threshold below ¼ of the buffer (e.g. 4 KiB) | saves a memcpy of 4–16 KiB per response | G0 with 4/8/16 KiB bodies + RSS | Unverified (≈ 1.6 µs per 16 KiB copy, unmeasured); trades memory amplification (up to 16×) |
+| Uninitialised read-buffer growth (`read_buf` into spare capacity) instead of zero-extending | no memset when a buffer is created or grows | G0 1 MB cell | Unverified; `try_read_buf` loses tokio's short-read readiness clear, so only for growth, never the steady state |
+| `Builder::event_interval` below 61 on shard threads | fresher idle readiness under load (smaller desync window), more `epoll_wait` calls | G0 c = 500 + syscall count | Unverified |
+| `Builder::max_io_events_per_busy_tick` (new in tokio 1.54.0) | caps I/O events processed per busy tick; may smooth latency at c = 500 | G0 c = 500 p99 | Unverified |
+| `notify_last` (LIFO) vs `notify_one` (FIFO) for idle wakes | LIFO keeps fewer connections hot (cache, server idle timers) | G0 low load + connection count | Unverified; LIFO adopted by reasoning (Go, hyper-util) |
+| `TCP_QUICKACK` after reads (Linux) | lower latency when the server waits for an ACK | G1-low netem 1 ms | Unverified |
