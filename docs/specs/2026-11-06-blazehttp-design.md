@@ -457,6 +457,26 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
      - rust-clippy's own `clippy.toml` sets no thresholds.
      - typescript-eslint's `eslint.config.mjs` uses none of these rules.
 
+### 13.2 OOP and design-pattern hard rules (owner rule)
+Every rule here is mandatory. Every review checks them under maintainability, and a violation is an **Important** finding.
+
+1. **Encapsulation.** Types keep their fields private, and state changes only through methods. Each public surface is the minimum needed: `pub(crate)` by default.
+2. **Abstraction through interfaces.** Every seam between components is a Rust trait or a TS interface (for example `CompletionSink`, `Transport`, `BodyEncoder`). Code depends on the trait, not on the concrete type (dependency inversion).
+3. **Polymorphism.**
+   - Hot paths use static dispatch: generics, or enums with an exhaustive `match`. No `Box<dyn …>` on a hot path.
+   - TypeScript uses interfaces and lookup maps, never `switch`.
+4. **Composition over inheritance.** No class inheritance, except `extends Error` (`HttpError`, `TransportError`) in TypeScript. Rust composes structs.
+5. **SOLID.**
+   - **Single responsibility** per function (§13.1 rule 9) and per file or module (§13.1 rules 1–2).
+   - **Open/closed:** new transports, middleware and decoders are added without editing the core.
+   - **Liskov substitution:** every trait or interface implementation honours the documented contract, and tests check it.
+   - **Interface segregation:** traits and interfaces are small and focused.
+   - **Dependency inversion:** see rule 2.
+6. **Design patterns (GoF)** are used only where they have a real responsibility, exactly as listed in the §13 table.
+   - Every use names its pattern in the module doc comment.
+   - No pattern is added for its own sake.
+   - A new pattern use needs a line in the §13 table.
+
 ## 14. Tech decisions
 | Decision | Choice | Rejected | Why |
 |---|---|---|---|
