@@ -2,6 +2,7 @@
 //! `docs/notes/bench-server.md`). Every response is pre-built at start-up; a request costs one scan for the blank
 //! line, a 5-entry lookup and one write, so the server never becomes the bottleneck.
 
+mod accept;
 mod cells;
 mod connection;
 mod manifest;
@@ -12,3 +13,4 @@ mod tls;
 pub use cells::{Cell, cells};
 pub use manifest::cells_json;
 pub use server::{Bound, ServerConfig, TlsBound, serve};
+pub use tls::benchmark_crypto_provider;

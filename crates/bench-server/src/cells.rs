@@ -1,16 +1,17 @@
 //! The benchmark cells: every response pre-built once, at start-up (design note §8).
+//!
+//! **Singleton** (design §13): `CATALOG` is a process-wide `LazyLock`, so the cells are built once per process and
+//! every connection task shares the same immutable bytes.
 
-use std::io::Write;
 use std::sync::LazyLock;
-
-use flate2::Compression;
-use flate2::write::GzEncoder;
 
 /// Heads shared with the parser tests and benchmark, so the parser is measured on the bytes the server sends.
 const HEAD_1K: &[u8] = include_bytes!("../../../tests/fixtures/h1-heads/1k.http");
 const HEAD_1K_H20: &[u8] = include_bytes!("../../../tests/fixtures/h1-heads/1k-h20.http");
 /// The 847-byte JSON payload of every 1 KiB cell.
 const PAYLOAD: &[u8] = include_bytes!("../../../tests/fixtures/bodies/1k.json");
+/// `PAYLOAD` gzipped once and committed, so the served bytes never depend on a compressor version.
+const PAYLOAD_GZIP: &[u8] = include_bytes!("../../../tests/fixtures/bodies/1k.json.gz");
 
 const DATE: &str = "Fri, 06 Nov 2026 12:00:00 GMT";
 const JSON: &str = "application/json";
@@ -18,18 +19,34 @@ const CHUNK_BYTES: usize = 256;
 const ONE_MIB: usize = 1 << 20;
 
 /// One benchmark cell: a request path and its complete pre-built response.
+///
+/// A passive value type, so its fields are public (design §13.2 rule 1 carve-out, Rust API Guidelines
+/// C-STRUCT-PRIVATE): it holds no invariant beyond what [`cells`] builds.
 #[derive(Debug)]
 pub struct Cell {
     pub path: &'static str,
     /// Status line, head and framed body, exactly as written to the socket.
     pub response: Vec<u8>,
+    /// Bytes of `response` up to and including the blank line: the answer to a `HEAD` request.
+    pub head_len: usize,
     /// FNV-1a 64 of the decoded body (no chunked framing, no gzip): the bytes a client's application receives.
     pub body_fnv: u64,
+}
+
+/// Why a request is answered with an error and the connection closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Refusal {
+    /// 400: a request head this fixture does not accept.
+    BadRequest,
+    /// 431: a request head larger than the read buffer.
+    HeadTooLarge,
 }
 
 struct Catalog {
     cells: Vec<Cell>,
     not_found: Vec<u8>,
+    bad_request: Vec<u8>,
+    head_too_large: Vec<u8>,
 }
 
 static CATALOG: LazyLock<Catalog> = LazyLock::new(Catalog::build);
@@ -45,19 +62,32 @@ pub(crate) fn prebuild() {
     LazyLock::force(&CATALOG);
 }
 
-/// The pre-built response for a request target; unknown targets get a pre-built 404.
-pub(crate) fn response_for(target: &[u8]) -> &'static [u8] {
-    let cell = CATALOG
+/// The pre-built response for a request target (only its head for `HEAD`); unknown targets get a pre-built 404.
+pub(crate) fn response_for(target: &[u8], head_only: bool) -> &'static [u8] {
+    match CATALOG
         .cells
         .iter()
-        .find(|cell| cell.path.as_bytes() == target);
-    cell.map_or(&CATALOG.not_found, |cell| &cell.response)
+        .find(|cell| cell.path.as_bytes() == target)
+    {
+        Some(cell) if head_only => &cell.response[..cell.head_len],
+        Some(cell) => &cell.response,
+        None => &CATALOG.not_found,
+    }
+}
+
+/// The pre-built error response (with `connection: close`) for a refused request.
+pub(crate) fn refusal(kind: Refusal) -> &'static [u8] {
+    match kind {
+        Refusal::BadRequest => &CATALOG.bad_request,
+        Refusal::HeadTooLarge => &CATALOG.head_too_large,
+    }
 }
 
 impl Catalog {
     fn build() -> Self {
-        let gzipped = gzip(PAYLOAD);
-        let gzip_len = gzipped.len().to_string();
+        let gzip_len = PAYLOAD_GZIP.len().to_string();
+        let big = repeat_to(PAYLOAD, ONE_MIB);
+        let big_len = big.len().to_string();
         let gzip_head = head(
             "200 OK",
             &[
@@ -75,8 +105,6 @@ impl Catalog {
                 ("date", DATE),
             ],
         );
-        let big = repeat_to(PAYLOAD, ONE_MIB);
-        let big_len = big.len().to_string();
         let big_head = head(
             "200 OK",
             &[
@@ -86,22 +114,28 @@ impl Catalog {
             ],
         );
         let cells = vec![
-            Cell::new("/1k", &[HEAD_1K, PAYLOAD], PAYLOAD),
-            Cell::new("/1k-h20", &[HEAD_1K_H20, PAYLOAD], PAYLOAD),
-            Cell::new("/1k-gzip", &[&gzip_head, &gzipped], PAYLOAD),
-            Cell::new("/1k-chunked", &[&chunked_head, &chunked(PAYLOAD)], PAYLOAD),
-            Cell::new("/1m", &[&big_head, &big], &big),
+            Cell::new("/1k", HEAD_1K, PAYLOAD, PAYLOAD),
+            Cell::new("/1k-h20", HEAD_1K_H20, PAYLOAD, PAYLOAD),
+            Cell::new("/1k-gzip", &gzip_head, PAYLOAD_GZIP, PAYLOAD),
+            Cell::new("/1k-chunked", &chunked_head, &chunked(PAYLOAD), PAYLOAD),
+            Cell::new("/1m", &big_head, &big, &big),
         ];
-        let not_found = head("404 Not Found", &[("content-length", "0"), ("date", DATE)]);
-        Self { cells, not_found }
+        Self {
+            cells,
+            not_found: head("404 Not Found", &[("content-length", "0"), ("date", DATE)]),
+            bad_request: closing_head("400 Bad Request"),
+            head_too_large: closing_head("431 Request Header Fields Too Large"),
+        }
     }
 }
 
 impl Cell {
-    fn new(path: &'static str, parts: &[&[u8]], body: &[u8]) -> Self {
+    /// `wire_body` is the body as sent (framed, encoded); `body` is what a client decodes from it.
+    fn new(path: &'static str, head: &[u8], wire_body: &[u8], body: &[u8]) -> Self {
         Self {
             path,
-            response: parts.concat(),
+            response: [head, wire_body].concat(),
+            head_len: head.len(),
             body_fnv: fnv1a64(body),
         }
     }
@@ -117,12 +151,16 @@ fn head(status: &str, fields: &[(&str, &str)]) -> Vec<u8> {
     head.into_bytes()
 }
 
-fn gzip(body: &[u8]) -> Vec<u8> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(body)
-        .expect("writing into a Vec cannot fail");
-    encoder.finish().expect("writing into a Vec cannot fail")
+/// An empty error response that tells the client the connection closes after it.
+fn closing_head(status: &str) -> Vec<u8> {
+    head(
+        status,
+        &[
+            ("content-length", "0"),
+            ("connection", "close"),
+            ("date", DATE),
+        ],
+    )
 }
 
 /// `body` in `CHUNK_BYTES` chunks plus the last chunk, without trailers.
@@ -156,7 +194,10 @@ mod tests {
 
     use flate2::read::GzDecoder;
 
-    use super::{DATE, HEAD_1K, JSON, PAYLOAD, cells, fnv1a64, head};
+    use super::{
+        DATE, HEAD_1K, JSON, PAYLOAD, PAYLOAD_GZIP, Refusal, cells, fnv1a64, head, refusal,
+        response_for,
+    };
     use crate::request::find_head_end;
 
     fn split(response: &[u8]) -> (&[u8], &[u8]) {
@@ -168,6 +209,14 @@ mod tests {
         let head = std::str::from_utf8(head).expect("ASCII head");
         head.split("\r\n")
             .find_map(|line| line.strip_prefix(name)?.strip_prefix(": "))
+    }
+
+    fn gunzip(body: &[u8]) -> Vec<u8> {
+        let mut decoded = Vec::new();
+        GzDecoder::new(body)
+            .read_to_end(&mut decoded)
+            .expect("gzip");
+        decoded
     }
 
     fn dechunk(mut framed: &[u8]) -> Vec<u8> {
@@ -200,23 +249,21 @@ mod tests {
             .parse()
             .expect("length");
         assert_eq!(len, body.len(), "content-length matches the body");
-        if field(head, "content-encoding") != Some("gzip") {
-            return body.to_vec();
+        if field(head, "content-encoding") == Some("gzip") {
+            gunzip(body)
+        } else {
+            body.to_vec()
         }
-        let mut decoded = Vec::new();
-        GzDecoder::new(body)
-            .read_to_end(&mut decoded)
-            .expect("gzip");
-        decoded
     }
 
     #[test]
     fn head_builder_reproduces_the_1k_fixture() {
+        let len = PAYLOAD.len().to_string();
         let built = head(
             "200 OK",
             &[
                 ("content-type", JSON),
-                ("content-length", "847"),
+                ("content-length", &len),
                 ("date", DATE),
             ],
         );
@@ -232,6 +279,37 @@ mod tests {
             if cell.path != "/1m" {
                 assert_eq!(decoded, PAYLOAD, "{}", cell.path);
             }
+        }
+    }
+
+    #[test]
+    fn committed_gzip_decodes_to_the_payload() {
+        assert_eq!(gunzip(PAYLOAD_GZIP), PAYLOAD);
+    }
+
+    #[test]
+    fn head_only_responses_end_at_the_blank_line() {
+        for cell in cells() {
+            let head = response_for(cell.path.as_bytes(), true);
+            assert_eq!(head, split(&cell.response).0, "{}", cell.path);
+            assert_eq!(cell.head_len, head.len(), "{}", cell.path);
+        }
+        assert_eq!(response_for(b"/nope", true), response_for(b"/nope", false));
+    }
+
+    #[test]
+    fn refusals_close_the_connection() {
+        for (kind, status) in [
+            (Refusal::BadRequest, "400 "),
+            (Refusal::HeadTooLarge, "431 "),
+        ] {
+            let (head, body) = split(refusal(kind));
+            assert!(
+                head.starts_with(format!("HTTP/1.1 {status}").as_bytes()),
+                "{kind:?}"
+            );
+            assert_eq!(field(head, "connection"), Some("close"), "{kind:?}");
+            assert!(body.is_empty(), "{kind:?}");
         }
     }
 
