@@ -90,4 +90,4 @@ No row here was benchmarked: every speed effect is unverified. Where a row's *co
 
 | Idea | Hypothesis | How to measure | Status |
 |---|---|---|---|
-| Per-core `current_thread` runtimes, one `SO_REUSEPORT` listener each, instead of one multi-thread runtime | fewer cross-thread wakes and stealing atomics → lower server CPU per request | `/1k` c = 50 and 500, server `cpu.stat` per request, wrk in Docker | Unverified; fallback if the multi-thread server exceeds the 60% budget |
+| Per-core `current_thread` runtimes, one `SO_REUSEPORT` listener each, instead of one multi-thread runtime | fewer cross-thread wakes and stealing atomics → lower server CPU per request | `/1k` c = 50 and 500, server `cpu.stat` per request, wrk in Docker | Measured 2026-11-07 (journal): no win (median 11.05 vs 10.17 µs CPU/request); dropped |
