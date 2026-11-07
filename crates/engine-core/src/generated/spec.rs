@@ -728,6 +728,9 @@ pub struct H1Limits {
     pub max_status_line_bytes: usize,
     pub max_header_fields: usize,
     pub max_interim_responses: usize,
+    pub max_request_target_bytes: usize,
+    pub max_request_fields_bytes: usize,
+    pub max_copied_body_bytes: usize,
 }
 
 pub const H1_LIMITS: H1Limits = H1Limits {
@@ -735,4 +738,7 @@ pub const H1_LIMITS: H1Limits = H1Limits {
     max_status_line_bytes: 8192,
     max_header_fields: 100,
     max_interim_responses: 10,
+    max_request_target_bytes: 16_384,
+    max_request_fields_bytes: 65_536,
+    max_copied_body_bytes: 65_536,
 };
