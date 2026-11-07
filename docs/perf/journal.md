@@ -115,11 +115,15 @@ Record every measured idea. Keep only measured wins.
 
 ### 2026-11-07: `ResponseParser` vs the fastest head parsers in Rust, C, C++, Zig and Go (cross-language bench, dev numbers)
 
+- **Superseded by the "fix round 1" entry below.** This run compared our parser **without** the per-field split that
+  every other parser hands its caller (our API returns the field block as one range), so its "we lead" claims do not
+  compare like with like; C/C++ were built without `-DNDEBUG` (GCC 12.2), and the gate did not check the timed path.
+  Kept as the record of that run.
 - **Idea:** answer "how does our parser compare with the fastest parsers in every language?" on the same bytes and
   CPU: `bench/parsers/` (README there), one Docker image per language, differential gate before timing.
 - **Hypothesis:** at P0 (safe scalar Rust) we lead on short heads, are at parity with httparse on 20-header heads,
   and are linear under 1-byte feeds where restart-style parsers are not.
-- **Method:** `pnpm bench:parsers` (harness commit `ac7d0b4`; the runner's "refuse if other containers run" check
+- **Method:** `pnpm bench:parsers` (harness commit `d813c22` after the rebase onto the parser's fix round; the runner's "refuse if other containers run" check
   was added after this run and changes nothing measured). Linux arm64, Docker Desktop 28.5.1 on the owner's M2,
   kernel 6.11.11-linuxkit, every invocation `--cpus=1 --network=none`, no other container running. Same CPU baseline
   for all: generic Armv8-A (Rust `target-cpu=generic`, C/C++ `-march=armv8-a`, Zig `-mcpu=baseline`, Go
@@ -149,9 +153,9 @@ Record every measured idea. Keep only measured wins.
   **0.068**; llhttp 0.42 / 0.60 / 0.77 / 0.086; Zig 0.47 / 0.64 / 0.63 / 0.082; Go 1.42 / 2.52 / 2.63 / 0.25;
   httparse (re-parses from byte 0) 175 / 235 / 344 / 118; Beast (keeps lines, re-parses a partial line)
   1,009 / 25 / 2,085 / 38 (`response_parser`), similar for `basic_parser`.
-- **Where we win / lose:** fastest by median on the 3-header head (0.82× httparse, 0.86× picohttpparser;
+- **Where we win / lose (plain row only; see the caveat at the top):** fastest by median on the 3-header head (0.82× httparse, 0.86× picohttpparser;
   single rounds range 0.47–1.26) and on the 20-header head (0.96× httparse, ≈ 0.65× the C parsers); 2–16× faster than the C++, Zig
-  and Go parsers, which allocate (Beast fields, Go map) or split lines generically (Zig). **Parity, not a lead, with
+  and Go parsers, which allocate (Beast: one per field plus one, Go map) or split lines generically (Zig). **Parity, not a lead, with
   httparse** on 20 fields and on the mixed rotation (median ratio 0.95–0.96 but httparse's median ns on the rotation is
   lower, 244 vs 252, and the ranges overlap): this is the gap P1a must close. On feeds we are linear like llhttp,
   picohttpparser and Zig; picohttpparser is marginally faster on (d) (0.068 vs 0.079 ms, within the run's noise).
@@ -160,3 +164,51 @@ Record every measured idea. Keep only measured wins.
   SSE4.2 paths switch on, so its standing will change.
 - **Kept / dropped:** bench kept (`bench/parsers/`); results `bench/results/2026-11-07-arm64-dev-parsers.jsonl`.
 - **Commit:** `p0/parser-bench`.
+
+### 2026-11-07: Cross-language parser bench, fix round 1 (`blazehttp+fields`, gated timed path, GCC 14, dev numbers)
+
+- **Idea:** compare like with like. Every other parser hands its caller each field; ours returns the field block as one
+  offset range. New row `blazehttp+fields` = `ResponseParser` + a zero-allocation name/value split into a reused span
+  array (`bench/parsers/rust/src/engines.rs` `split_fields`, `memchr` per line), the output httparse gives. Also:
+  the gate checks the timed `parse` path (status, head length, length, keep-alive) against the input bytes and ours,
+  plus a chunked / `Connection: close` / trailing-OWS head; C/C++ with GCC 14.2 and `-DNDEBUG`, direct calls in every
+  timed loop; containers pinned with `--cpuset-cpus=2`; the 64-variant rings of each fixture timed as well.
+- **Hypothesis:** with the split, ours is still ahead of httparse on short heads and at parity on 20 fields.
+- **Method:** `pnpm bench:parsers --out …-gcc14.jsonl` at commit `12651b2` (clean tree), then `--cc gcc-12` for the
+  C/C++ rows. Linux arm64 Docker Desktop 28.5.1 on the owner's M2, `--cpus=1 --cpuset-cpus=2 --network=none`, no
+  other container at start; 7 interleaved rounds × 300 ms after 100 ms warm-up; feeds 5 rounds. Gate passed on all 10
+  workloads in both runs (it caught one real difference while being built: llhttp keeps trailing OWS in values; its
+  field view now trims it as a consumer must). **Host load average 8–33 during both runs** (other agents' builds and
+  load tests outside the containers): absolute ns are ≈ 3× a quiet run (ours on `1k.http`: 149 ns in the run vs 47 ns
+  measured alone just before), so only the **per-round ratios** are usable, and their ranges are wide.
+- **Numbers (GCC 14 run; median per-round ratio blazehttp+fields / theirs, > 1 = theirs faster; workloads `1k` /
+  `1k-h20` / `1k` × 64 / `1k-h20` × 64 / mixed 64):**
+
+  | vs | ours+fields / theirs | plain ours / theirs |
+  |---|---|---|
+  | httparse | **1.16 / 1.64 / 1.73 / 1.96 / 2.02** | 0.70 / 0.89 / 0.87 / 1.08 / 0.86 |
+  | picohttpparser | **1.21 / 1.33 / 1.78 / 1.34 / 1.57** | 0.78 / 0.74 / 0.80 / 0.71 / 0.73 |
+  | llhttp | **1.27 / 1.08 / 1.13 / 1.13 / 1.54** | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
+  | Beast `basic_parser` | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
+  | Beast `response_parser` | 0.33 / 0.35 / 0.57 / 0.42 / 0.35 | 0.23 / 0.22 / 0.30 / 0.23 / 0.19 |
+  | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.21 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
+  | Go `net/http` | 0.08 / 0.10 / 0.07 / 0.11 / 0.10 | 0.04 / 0.06 / 0.04 / 0.05 / 0.07 |
+
+  The split itself costs as much as the parse: plain / with-fields = 0.50–0.63. Allocations per head: 0 for every
+  parser except Beast `response_parser` (4 / 21 / 15.2) and Go (10 / 40 / 31.7). Feeds (median ms, (a)/(b)/(c)/(d)):
+  ours 0.52 / 0.66 / 0.41 / 0.076 (with fields 0.49 / 0.54 / 0.40 / 0.097), picohttpparser 0.56 / 0.56 / 0.74 / 0.082,
+  llhttp 0.62 / 0.73 / 0.52 / 0.073, Zig 0.73 / 0.65 / 0.60 / 0.069, Go 2.05 / 2.03 / 1.95 / 0.30, httparse
+  252 / 429 / 314 / 161, Beast 25 ms–2.2 s. **GCC 12.2 vs 14.2** (same rows, second run): no compiler effect resolvable
+  above this noise (picohttpparser ratio on `1k-h20` 1.08 vs 1.33, llhttp 1.37 vs 1.08: they move in opposite
+  directions between runs).
+- **Where we win / lose (headline, `blazehttp+fields`):** **httparse is ahead on every workload** (ours+fields takes
+  1.2–2.0× its time), and so are picohttpparser (1.2–1.8×) and llhttp (1.1–1.5×). We stay ahead of Beast (1.05–3× faster
+  across its two APIs), Zig `std.http` (3.7–5.4×) and Go `net/http` (9–14×). Without the split (`blazehttp`, what the engine pays when it needs
+  only the framing facts) we are ahead of all of them except httparse on the 20-field ring (1.08). On 1-byte feeds we
+  are linear and on par with the other resumable parsers; httparse and Beast are quadratic.
+- **What P1a must close:** the second pass. Our parser already finds every colon and line end; a span-emitting API
+  (names/values recorded during the one scan) removes the split, and SIMD scanning must then put us ahead of httparse:
+  target ≤ 0.85× httparse on `1k-h20` **with fields**. x64 still deferred (picohttpparser's SSE4.2 path is off on arm64).
+- **Kept / dropped:** `blazehttp+fields` kept as the headline row; runs kept in
+  `bench/results/2026-11-07-arm64-dev-parsers-gcc14.jsonl` and `…-gcc12.jsonl`. Re-run both in a quiet window.
+- **Commit:** `p0/parser-bench` (fix round 1).
