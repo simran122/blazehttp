@@ -1,5 +1,6 @@
 export type RuleId =
   | 'rust-allow-forbidden'
+  | 'rust-allow-attribute'
   | 'todo-needs-issue'
   | 'removal-note'
   | 'rust-commented-code'
@@ -42,6 +43,44 @@ const rustAllowForbidden: Rule = (path, content) =>
         const names = (match?.[1] ?? '').split(',').map((n) => n.trim().replace(/^\w+::/, ''));
         return names.some((n) => FORBIDDEN_LINTS.test(n)) ? 'allow/expect of a forbidden lint' : undefined;
       })
+    : [];
+
+const ATTRIBUTE_START = /#!?\s*\[/g;
+const ALLOW_CALL = /\ballow\s*\(/;
+
+/** Index just past the `]` that closes the attribute whose `[` is at `open` (or the end of `content`). */
+const attributeEnd = (content: string, open: number): number => {
+  let depth = 0;
+  for (let i = open; i < content.length; i += 1) {
+    depth += Number(content[i] === '[') - Number(content[i] === ']');
+    if (depth === 0) return i + 1;
+  }
+  return content.length;
+};
+
+/** Every outer (`#[…]`) and inner (`#![…]`) attribute with its first line, brackets balanced across lines. */
+const rustAttributes = (content: string): { readonly line: number; readonly text: string }[] => {
+  let line = 1;
+  let counted = 0;
+  return [...content.matchAll(ATTRIBUTE_START)].map((match) => {
+    line += content.slice(counted, match.index).split('\n').length - 1;
+    counted = match.index;
+    const open = match.index + match[0].length - 1;
+    return { line, text: content.slice(match.index, attributeEnd(content, open)) };
+  });
+};
+
+/**
+ * Lint exceptions are `#[expect(lint, reason = "…")]` only (design §13.1 rule 9). Clippy's `allow_attributes` sees
+ * outer attributes only, so this rule rejects `allow(` in every attribute form: outer, inner and inside `cfg_attr`.
+ */
+const rustAllowAttribute: Rule = (path, content) =>
+  path.endsWith('.rs')
+    ? rustAttributes(content)
+        .filter(({ text }) => ALLOW_CALL.test(text))
+        .map(({ line }) =>
+          violation(path, line, 'rust-allow-attribute', 'use #[expect(lint, reason = "…")], not allow'),
+        )
     : [];
 
 const todoNeedsIssue: Rule = (path, content) =>
@@ -138,6 +177,7 @@ const eslintDisableReason: Rule = (path, content) =>
 
 const RULES: Record<RuleId, Rule> = {
   'rust-allow-forbidden': rustAllowForbidden,
+  'rust-allow-attribute': rustAllowAttribute,
   'todo-needs-issue': todoNeedsIssue,
   'removal-note': removalNote,
   'rust-commented-code': rustCommentedCode,

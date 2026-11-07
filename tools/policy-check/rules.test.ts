@@ -4,7 +4,23 @@ import { checkFile } from './rules.ts';
 const v = (path: string, src: string) => checkFile(path, src, { packageVersion: '0.0.0' }).map((x) => x.rule);
 test('flags allow/expect of forbidden lints in rust', () => {
   for (const a of ['#[allow(dead_code)]', '#![allow(deprecated)]', '#[allow(unused_imports)]', '#[expect(dead_code)]'])
-    expect(v('crates/x/src/a.rs', `${a}\nfn f() {}`)).toEqual(['rust-allow-forbidden']);
+    expect(v('crates/x/src/a.rs', `${a}\nfn f() {}`)).toContain('rust-allow-forbidden');
+});
+test('rust lint exceptions are expect with a reason, never allow in any attribute form', () => {
+  const rust = (src: string) => checkFile('crates/x/src/a.rs', src, { packageVersion: '0.0.0' });
+  for (const a of [
+    '#[allow(clippy::too_many_lines)]',
+    '#![allow(clippy::pedantic, reason = "x")]',
+    '#[cfg_attr(test, allow(clippy::unwrap_used))]',
+    '#![ cfg_attr ( fuzzing , allow ( clippy::pedantic ) ) ]',
+  ])
+    expect(rust(`fn a() {}\n${a}\nfn f() {}`).map((x) => [x.rule, x.line])).toEqual([['rust-allow-attribute', 2]]);
+  expect(rust('#[cfg_attr(\n    test,\n    allow(clippy::x, reason = "y")\n)]\nfn f() {}').map((x) => x.line)).toEqual([
+    1,
+  ]);
+  expect(
+    rust('#[expect(clippy::too_many_lines, reason = "x")]\n#[derive(Debug)]\n#[doc = "allowance"]\nfn f() {}'),
+  ).toEqual([]);
 });
 test('TODO needs an issue link', () => {
   expect(v('a.ts', '// TODO: later')).toEqual(['todo-needs-issue']);
