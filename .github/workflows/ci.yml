@@ -51,3 +51,6 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test -p engine-core
+      # The fuzz crate is its own workspace (excluded from the main one), so it is checked by manifest path.
+      - run: cargo fmt --check --manifest-path crates/engine-core/fuzz/Cargo.toml
+      - run: cargo clippy --manifest-path crates/engine-core/fuzz/Cargo.toml --all-targets -- -D warnings
