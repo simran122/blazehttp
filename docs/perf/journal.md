@@ -98,3 +98,18 @@ Record every measured idea. Keep only measured wins.
   tests and the fuzz differential cover correctness.
 - **Commit:** fix round 1 (`p0/parser`).
 
+### 2026-11-07: `ResponseParser` after fix round 1 (committed bench, dev numbers)
+
+- **Idea:** re-measure the parser after fix round 1 (single-source status prefix, `trailing_zeros` value scan) with the
+  varied ring added.
+- **Hypothesis:** P0 budget still met (≤ 0.95× `1k.http`, ≤ 1.05× `1k-h20.http`, feeds ≤ 1 ms).
+- **Method:** as on 2026-11-06 (`cargo run --release -p engine-core --example h1_parse_bench`, 7 runs × 4 blocks,
+  median per-run ratio), binary run 3× per host. Linux arm64: Docker on the owner's M2, `--cpus=1`, rustc 1.99.1,
+  generic `aarch64`, no other container running. macOS: default `apple-m1` target CPU. Host load 4–7 (dev numbers).
+- **Numbers (Linux arm64, 3 runs; median ratio):** `1k.http` 0.824 / 0.822 / 0.792 (43–44 ns); `1k-h20.http` 0.953 /
+  0.962 / 0.962 (227–250 ns); `synthetic-h20.http` 0.951 / 0.965 / 0.963; varied ring 0.650 / 0.669 / 0.666 (403–413
+  ns vs httparse 614–622 ns). Feeds: (a) 0.19–0.38 ms (httparse 67–73 ms), (b) 0.21–0.25, (c) 0.18–0.23, (d)
+  0.03–0.04 ms. **macOS `apple-m1`:** 0.64–0.66 / 0.66 / 0.57 / 0.69–0.70; feeds 0.18–0.22 ms (httparse (a) 65–67 ms).
+- **Kept / dropped:** budget met on the Linux reference container.
+- **Commit:** fix round 1 (`p0/parser`).
+

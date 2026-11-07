@@ -525,6 +525,10 @@ as above, 3 runs of the binary, median per-run ratio ours/httparse + facts: `1k.
 prototype's `memchr` status line (43–45 ns vs 46.6 ns on the 3-header head). macOS: 0.64–0.66× with the default
 `apple-m1` target CPU, 0.88× / 0.97× with `-C target-cpu=generic`.
 
+**After fix round 1 (2026-11-07, same method, plus the varied ring):** Linux arm64 `1k.http` 0.79–0.82×,
+`1k-h20.http` 0.95–0.96×, `synthetic-h20.http` 0.95–0.97×, varied ring 0.65–0.67× (the `trailing_zeros` value scan,
+§6.2); feeds 0.03–0.38 ms. Budget (§8.4) still met.
+
 ### 8.3 Proposed `/1k-h20` layout (for Task 9)
 
 The 20 fields of a realistic JSON API response behind a CDN, in this order (status line `HTTP/1.1 200 OK`; total head
