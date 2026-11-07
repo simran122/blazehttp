@@ -373,8 +373,12 @@ enum Accepted {
     Final { start: usize, head: ResponseHead },
 }
 
-/// What the parser made of an exchange: the accepted heads and the error, if any.
-type Outcome = (Vec<Accepted>, Option<ErrorCode>);
+/// What the parser made of an exchange.
+#[derive(Debug, PartialEq, Eq)]
+struct Outcome {
+    accepted: Vec<Accepted>,
+    error: Option<ErrorCode>,
+}
 
 /// Feeds `input` in `reads` (increasing lengths), then EOF.
 fn exchange(input: &[u8], method: Method, reads: impl IntoIterator<Item = usize>) -> Outcome {
@@ -394,13 +398,24 @@ fn exchange(input: &[u8], method: Method, reads: impl IntoIterator<Item = usize>
                 }
                 Ok(ParseStatus::Complete(head)) => {
                     accepted.push(Accepted::Final { start, head });
-                    return (accepted, None);
+                    return Outcome {
+                        accepted,
+                        error: None,
+                    };
                 }
-                Err(e) => return (accepted, Some(e)),
+                Err(e) => {
+                    return Outcome {
+                        accepted,
+                        error: Some(e),
+                    };
+                }
             }
         }
     }
-    (accepted, None)
+    Outcome {
+        accepted,
+        error: None,
+    }
 }
 
 /// What httparse saw in one head.
@@ -443,11 +458,13 @@ struct FieldFacts {
     length: Option<u64>,
     chunked: bool,
     keep_alive_option: bool,
+    /// A `Connection: close` option in this head.
+    close: bool,
 }
 
 impl FieldFacts {
     /// Applies the count, `Content-Length`, `Transfer-Encoding` and `Connection` rules to the fields in order.
-    fn scan(head: &Oracle, interim: bool, close: &mut bool) -> Result<Self, ErrorCode> {
+    fn scan(head: &Oracle, interim: bool) -> Result<Self, ErrorCode> {
         let mut facts = Self::default();
         for (index, (name, value)) in head.fields.iter().enumerate() {
             if index >= H1_LIMITS.max_header_fields {
@@ -458,7 +475,7 @@ impl FieldFacts {
             } else if name.eq_ignore_ascii_case("transfer-encoding") {
                 facts.transfer_encoding(value, head.http10, interim)?;
             } else if name.eq_ignore_ascii_case("connection") {
-                facts.connection(value, close);
+                facts.connection(value);
             }
         }
         Ok(facts)
@@ -499,17 +516,17 @@ impl FieldFacts {
         Ok(())
     }
 
-    /// `close` is sticky across the exchange's heads; `keep-alive` counts for this head only.
-    fn connection(&mut self, value: &[u8], close: &mut bool) {
+    fn connection(&mut self, value: &[u8]) {
         for option in value.split(|&b| b == b',').map(<[u8]>::trim_ascii) {
-            *close |= option.eq_ignore_ascii_case(b"close");
+            self.close |= option.eq_ignore_ascii_case(b"close");
             self.keep_alive_option |= option.eq_ignore_ascii_case(b"keep-alive");
         }
     }
 }
 
 /// Reference model of the framing and count rules over one head's fields, in field order like the parser, returning
-/// the error class. `close` carries a `Connection: close` from earlier heads of the exchange and is updated.
+/// the error class. `close` is sticky across the exchange: it carries a `Connection: close` from earlier heads and
+/// takes this head's (`keep-alive` counts for this head only).
 fn model(
     head: &Oracle,
     interim_index: usize,
@@ -528,7 +545,9 @@ fn model(
         length,
         chunked,
         keep_alive_option,
-    } = FieldFacts::scan(head, interim, close)?;
+        close: close_option,
+    } = FieldFacts::scan(head, interim)?;
+    *close |= close_option;
     let bodiless = head_request || status == 204 || status == 304;
     let framing = match (bodiless, chunked, length) {
         (true, ..) => Framing::Empty,
@@ -588,7 +607,7 @@ fn check_rejection(
 
 /// Properties 3–5 for the whole-input outcome.
 fn check_against_oracle(input: &[u8], head_request: bool, valid: bool, outcome: &Outcome) {
-    let (accepted, error) = outcome;
+    let Outcome { accepted, error } = outcome;
     let mut close = false;
     let mut start = 0;
     let mut interim_index = 0;
@@ -658,7 +677,7 @@ fuzz_target!(|data: Input| {
         "1-byte reads"
     );
 
-    if let Some(e) = whole.1 {
+    if let Some(e) = whole.error {
         assert!(ErrorCode::ALL_SAMPLES.contains(&e), "{e:?}");
     }
     check_against_oracle(&input, data.head_request, valid, &whole);
