@@ -32,6 +32,8 @@ const INTERNAL: ErrorCode = ErrorCode::Engine(EngineDetail::Internal);
 
 /// `HTTP/1.x DDD`: version, SP and the three status digits.
 const STATUS_PREFIX_LEN: usize = 12;
+/// First reason byte after `HTTP/1.x DDD SP`.
+const REASON_START: usize = 13;
 const CRLF_LEN: usize = 2;
 
 /// HTTP version of a response's status line.
@@ -118,7 +120,7 @@ fn checked_add(a: usize, b: usize) -> Result<usize, ErrorCode> {
     a.checked_add(b).ok_or(INTERNAL)
 }
 
-/// Whether `b` may appear at offset `i` of the status prefix `HTTP/1.x DDD`.
+/// Whether `b` may appear at offset `i` of the status prefix `HTTP/1.x DDD`: the single definition of that grammar.
 fn status_prefix_byte(i: usize, b: u8) -> bool {
     match i {
         0..=6 => b"HTTP/1.".get(i) == Some(&b),
@@ -189,7 +191,7 @@ impl ResponseParser {
             let next = match self.phase {
                 Phase::StatusPrefix => self.status_prefix(window)?,
                 Phase::StatusReason => self.status_reason(window)?,
-                Phase::LineStart => self.line_start(window)?,
+                Phase::LineStart => self.at_line_start(window)?,
                 Phase::Name => self.name(window)?,
                 Phase::Value => self.value(window)?,
                 Phase::Done | Phase::Failed => return Err(INTERNAL),
@@ -206,43 +208,32 @@ impl ResponseParser {
     /// `HTTP/1.0 DDD` or `HTTP/1.1 DDD`, checked at every byte that has arrived, so non-HTTP bytes (a TLS record,
     /// HTML, HTTP/0.9) fail at their first byte. Re-checks at most 12 bytes per call while incomplete.
     fn status_prefix(&mut self, window: &[u8]) -> Result<Option<ParseStatus>, ErrorCode> {
-        let [
-            b'H',
-            b'T',
-            b'T',
-            b'P',
-            b'/',
-            b'1',
-            b'.',
-            minor,
-            b' ',
-            d1,
-            d2,
-            d3,
-            ..,
-        ] = *window
-        else {
-            return if window
+        let valid = |prefix: &[u8]| {
+            prefix
                 .iter()
-                .take(STATUS_PREFIX_LEN)
                 .enumerate()
                 .all(|(i, &b)| status_prefix_byte(i, b))
-            {
+        };
+        // The complete prefix is checked as a fixed-size array (unrolled, one comparison per byte); a partial one byte
+        // by byte as it arrives.
+        let Some(&prefix) = window.first_chunk::<STATUS_PREFIX_LEN>() else {
+            return if valid(window) {
                 Ok(Some(ParseStatus::Partial))
             } else {
                 Err(MALFORMED)
             };
         };
-        let version = match minor {
-            b'0' => HttpVersion::Http10,
-            b'1' => HttpVersion::Http11,
-            _ => return Err(MALFORMED),
-        };
-        if !(d1.is_ascii_digit() && d2.is_ascii_digit() && d3.is_ascii_digit()) {
+        if !valid(&prefix) {
             return Err(MALFORMED);
         }
+        let [.., minor, _, d1, d2, d3] = prefix;
+        let version = if minor == b'1' {
+            HttpVersion::Http11
+        } else {
+            HttpVersion::Http10
+        };
         let digit = |d: u8| u16::from(d.wrapping_sub(b'0'));
-        // Each digit is 0..=9, so the value is at most 999: the wrapping operations never wrap.
+        // Each digit is 0..=9 (validated above), so the value is at most 999: the wrapping operations never wrap.
         let status = digit(d1)
             .wrapping_mul(100)
             .wrapping_add(digit(d2).wrapping_mul(10))
@@ -267,10 +258,11 @@ impl ResponseParser {
         let limit = H1_LIMITS.max_status_line_bytes;
         let line = window.get(..window.len().min(limit)).ok_or(INTERNAL)?;
         if self.pos == STATUS_PREFIX_LEN {
-            match line.get(STATUS_PREFIX_LEN..) {
-                Some([b' ', ..]) => self.pos = checked_add(STATUS_PREFIX_LEN, 1)?,
-                Some([b'\r', ..]) => {}
-                Some([]) => return Ok(Some(ParseStatus::Partial)),
+            // A buffer shorter than the examined prefix is the caller's contract violation, not the peer's.
+            match line.get(STATUS_PREFIX_LEN..).ok_or(INTERNAL)? {
+                [b' ', ..] => self.pos = REASON_START,
+                [b'\r', ..] => {}
+                [] => return Ok(Some(ParseStatus::Partial)),
                 _ => return Err(MALFORMED),
             }
         }
@@ -295,7 +287,7 @@ impl ResponseParser {
     }
 
     /// The blank line that ends the head, or the first byte of a field name.
-    fn line_start(&mut self, window: &[u8]) -> Result<Option<ParseStatus>, ErrorCode> {
+    fn at_line_start(&mut self, window: &[u8]) -> Result<Option<ParseStatus>, ErrorCode> {
         match window.get(self.pos..).ok_or(INTERNAL)? {
             [] | [b'\r'] => Ok(Some(ParseStatus::Partial)),
             [b'\r', b'\n', ..] => self.end_of_head().map(Some),

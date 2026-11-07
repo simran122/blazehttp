@@ -2,16 +2,15 @@
 //! `docs/notes/response-parser.md` §9.6.
 
 mod support {
+    pub mod fixtures;
     pub mod vectors;
 }
-
-use std::fs;
-use std::path::Path;
 
 use engine_core::generated::spec::{
     EngineDetail, ErrorCode, H1_LIMITS, Method, NetworkDetail, ProtocolDetail,
 };
 use engine_core::h1::{Framing, HttpVersion, ParseStatus, ResponseHead, ResponseParser};
+use support::fixtures;
 use support::vectors::{Case, Expect, load_suite};
 
 const SUITE: &str = "engine-core:h1_response";
@@ -26,6 +25,9 @@ enum Outcome {
         headers: Vec<(Vec<u8>, Vec<u8>)>,
         body: Vec<u8>,
     },
+    /// A chunked body: decoding arrives in P1a (#7). An explicit outcome, so a corpus case that needs it fails its
+    /// comparison by name instead of aborting the whole test.
+    ChunkedBody(ResponseHead),
     Error(ErrorCode),
 }
 
@@ -42,6 +44,7 @@ impl Outcome {
                 body: body.clone(),
                 keep_alive: head.keep_alive,
             },
+            Self::ChunkedBody(_) => Expect::Error("chunked body (P1a, #7)".to_owned()),
             Self::Error(e) => Expect::Error(e.to_string()),
         }
     }
@@ -89,7 +92,7 @@ fn finish(head: ResponseHead, message: &[u8]) -> Outcome {
             Some(body) => body.to_vec(),
             None => return Outcome::Error(ErrorCode::Protocol(ProtocolDetail::IncompleteBody)),
         },
-        Framing::Chunked => panic!("chunked bodies arrive with chunked decoding in P1a (#7)"),
+        Framing::Chunked => return Outcome::ChunkedBody(head),
     };
     Outcome::Ok {
         headers: fields(&message[head.headers.clone()]),
@@ -166,6 +169,8 @@ fn every_vector_is_split_invariant() {
     }
 }
 
+/// Tripwire: `ErrorCode` carries no bytes today, so this holds by construction; it fails the day an error variant
+/// gains a payload that could echo peer bytes (design §5.2 "Errors never echo raw header bytes").
 #[test]
 fn every_error_is_a_payload_free_code() {
     let mut errors = 0;
@@ -182,13 +187,6 @@ fn every_error_is_a_payload_free_code() {
     assert_ne!(errors, 0);
 }
 
-fn fixture(name: &str) -> Vec<u8> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/h1-heads")
-        .join(name);
-    fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
-
 fn complete(parser: &mut ResponseParser, buf: &[u8]) -> ResponseHead {
     match parser.parse(buf) {
         Ok(ParseStatus::Complete(head)) => head,
@@ -203,7 +201,7 @@ fn fixture_heads_parse_to_their_facts() {
         ("1k-h20.http", 20, true),
         ("synthetic-h20.http", 20, true),
     ] {
-        let head_bytes = fixture(name);
+        let head_bytes = fixtures::h1_head(name);
         let head = complete(&mut ResponseParser::new(Method::Get), &head_bytes);
         assert_eq!(head.status, 200, "{name}");
         assert_eq!(head.version, HttpVersion::Http11, "{name}");
@@ -238,13 +236,49 @@ fn head_without_fields_has_an_empty_header_range() {
 }
 
 #[test]
-fn chunked_framing_is_reported_for_a_body_bearing_response() {
-    let head = complete(
-        &mut ResponseParser::new(Method::Get),
-        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
-    );
+fn te_on_get_framing() {
+    let input = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+    let Outcome::ChunkedBody(head) = exchange(input, Method::Get, [input.len()]) else {
+        panic!("a GET with Transfer-Encoding: chunked has a chunked body");
+    };
     assert_eq!(head.framing, Framing::Chunked);
     assert!(head.keep_alive);
+}
+
+#[test]
+fn bodiless_statuses_and_head_have_empty_framing() {
+    for (method, input, keep_alive) in [
+        (
+            Method::Get,
+            &b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"[..],
+            true,
+        ),
+        (
+            Method::Get,
+            b"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n",
+            true,
+        ),
+        (
+            Method::Get,
+            b"HTTP/1.1 304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n",
+            false,
+        ),
+        (
+            Method::Head,
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n",
+            true,
+        ),
+        (
+            Method::Head,
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            true,
+        ),
+        (Method::Head, b"HTTP/1.1 200 OK\r\n\r\n", true),
+    ] {
+        let head = complete(&mut ResponseParser::new(method), input);
+        assert_eq!(head.framing, Framing::Empty, "{method:?} {input:?}");
+        assert_eq!(head.keep_alive, keep_alive, "{method:?} {input:?}");
+    }
 }
 
 #[test]
@@ -272,6 +306,13 @@ fn a_buffer_shorter_than_the_examined_prefix_is_a_contract_violation() {
     let mut parser = ResponseParser::new(Method::Get);
     assert_eq!(parser.parse(input), Ok(ParseStatus::Partial));
     assert_eq!(parser.parse(&input[..15]), Err(INTERNAL));
+}
+
+#[test]
+fn a_buffer_shorter_than_the_status_prefix_after_it_was_examined_is_a_contract_violation() {
+    let mut parser = ResponseParser::new(Method::Get);
+    assert_eq!(parser.parse(b"HTTP/1.1 200"), Ok(ParseStatus::Partial));
+    assert_eq!(parser.parse(b"HTTP/"), Err(INTERNAL));
 }
 
 #[test]

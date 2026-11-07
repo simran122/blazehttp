@@ -43,10 +43,10 @@ impl StatusLine {
     }
 }
 
-/// The facts of one exchange: `framing` per head, `connection` across the interim heads and the final head.
+/// The facts of one exchange: `framing_fact` per head, `connection` across the interim heads and the final head.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Facts {
-    framing: FramingFact,
+    framing_fact: FramingFact,
     connection: ConnectionOption,
 }
 
@@ -67,7 +67,7 @@ fn decimal(value: &[u8]) -> Option<u64> {
 
 impl Facts {
     pub(super) const NEW: Self = Self {
-        framing: FramingFact::None,
+        framing_fact: FramingFact::None,
         connection: ConnectionOption::Default,
     };
 
@@ -96,26 +96,26 @@ impl Facts {
     }
 
     fn content_length(&mut self, line: StatusLine, value: &[u8]) -> Result<(), ErrorCode> {
-        if self.framing != FramingFact::None {
+        if self.framing_fact != FramingFact::None {
             return Err(SMUGGLING);
         }
         let length = decimal(value).ok_or(MALFORMED)?;
         if line.is_interim() && length != 0 {
             return Err(SMUGGLING);
         }
-        self.framing = FramingFact::Length(length);
+        self.framing_fact = FramingFact::Length(length);
         Ok(())
     }
 
     fn transfer_encoding(&mut self, line: StatusLine, value: &[u8]) -> Result<(), ErrorCode> {
-        if self.framing != FramingFact::None
+        if self.framing_fact != FramingFact::None
             || line.version == HttpVersion::Http10
             || line.is_interim()
             || !value.eq_ignore_ascii_case(b"chunked")
         {
             return Err(SMUGGLING);
         }
-        self.framing = FramingFact::Chunked;
+        self.framing_fact = FramingFact::Chunked;
         Ok(())
     }
 
@@ -146,7 +146,7 @@ impl Facts {
     /// The final head's framing and whether its connection may be reused.
     pub(super) fn conclude(self, line: StatusLine, head_request: bool) -> (Framing, bool) {
         let bodiless_status = matches!(line.status, 204 | 304);
-        let framing = match self.framing {
+        let framing = match self.framing_fact {
             _ if head_request || bodiless_status => Framing::Empty,
             FramingFact::Chunked => Framing::Chunked,
             FramingFact::Length(n) => Framing::ContentLength(n),
@@ -157,7 +157,7 @@ impl Facts {
             HttpVersion::Http10 => self.connection == ConnectionOption::KeepAlive,
         };
         // A 204/304 that announces a body is accepted without one, but the server may still send it: not reused.
-        let announced_body = match self.framing {
+        let announced_body = match self.framing_fact {
             FramingFact::Chunked => true,
             FramingFact::Length(n) => n > 0,
             FramingFact::None => false,

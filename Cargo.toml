@@ -15,6 +15,11 @@ deprecated = "deny"
 pedantic = { level = "deny", priority = -1 }
 await_holding_refcell_ref = "deny"
 
+# Tests sweep every split point of the 64 KiB limit vectors (O(n²) parser calls); opt-level 1 keeps that fast while
+# debug assertions and overflow checks stay on (they follow `debug-assertions`/`overflow-checks`, not opt-level).
+[profile.test]
+opt-level = 1
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
