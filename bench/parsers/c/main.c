@@ -1,6 +1,7 @@
 /* C harness of the cross-language response-head parser bench: picohttpparser and llhttp.
  * Command line and output protocol: bench/parsers/README.md ("Harness protocol"). */
 #define _POSIX_C_SOURCE 200809L /* clock_gettime */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,15 +9,8 @@
 
 #include "engine.h"
 
-#define WARM_UP_NS 100000000ull
-#define BLOCK 1000
 #define ALLOC_SAMPLE 10000
 #define MAX_HEADS 256
-
-typedef struct {
-    const char *at;
-    size_t len;
-} head_t;
 
 /* Allocation counter: the build links with -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc, so every call made by
  * the harness and both parsers lands here. */
@@ -24,16 +18,25 @@ static unsigned long long allocations;
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t n, size_t size);
 void *__real_realloc(void *p, size_t size);
-void *__wrap_malloc(size_t size) { allocations++; return __real_malloc(size); }
-void *__wrap_calloc(size_t n, size_t size) { allocations++; return __real_calloc(n, size); }
-void *__wrap_realloc(void *p, size_t size) { allocations++; return __real_realloc(p, size); }
+void *__wrap_malloc(size_t size) {
+    allocations++;
+    return __real_malloc(size);
+}
+void *__wrap_calloc(size_t n, size_t size) {
+    allocations++;
+    return __real_calloc(n, size);
+}
+void *__wrap_realloc(void *p, size_t size) {
+    allocations++;
+    return __real_realloc(p, size);
+}
 
 _Noreturn void die(const char *what) {
     fprintf(stderr, "error: %s\n", what);
     exit(1);
 }
 
-static unsigned long long now_ns(void) {
+unsigned long long now_ns(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (unsigned long long)t.tv_sec * 1000000000ull + (unsigned long long)t.tv_nsec;
@@ -63,7 +66,7 @@ static size_t split_heads(const char *bytes, size_t len, head_t *heads) {
             i += 3;
         }
     }
-    if (start != len) die("trailing bytes after the last head");
+    if (count == 0 || start != len) die("a workload is one or more heads, each ending at its first CRLF CRLF");
     return count;
 }
 
@@ -72,47 +75,26 @@ static void print_hex(const char *bytes, size_t len) {
 }
 
 static void check(const engine_t *engine, const head_t *heads, size_t count) {
-    static description_t d;
+    static field_list_t list;
     for (size_t h = 0; h < count; h++) {
-        engine->describe(heads[h].at, heads[h].len, &d);
-        printf("head %d %zu ", d.status, d.head_len);
-        if (d.content_length < 0) printf("- "); else printf("%lld ", (long long)d.content_length);
-        printf("%zu\n", d.num_fields);
-        for (size_t i = 0; i < d.num_fields; i++) {
+        facts_t f = engine->parse(heads[h].at, heads[h].len);
+        engine->fields(heads[h].at, heads[h].len, &list);
+        printf("head %d %zu ", f.status, f.head_len);
+        if (f.length_kind == LENGTH_BYTES) printf("%llu ", (unsigned long long)f.length);
+        else printf("%s ", f.length_kind == LENGTH_CHUNKED ? "chunked" : "-");
+        printf("%d %zu\n", f.keep_alive ? 1 : 0, list.count);
+        for (size_t i = 0; i < list.count; i++) {
             printf("field ");
-            print_hex(d.fields[i].name, d.fields[i].name_len);
+            print_hex(list.fields[i].name, list.fields[i].name_len);
             printf(" ");
-            print_hex(d.fields[i].value, d.fields[i].value_len);
+            print_hex(list.fields[i].value, list.fields[i].value_len);
             printf("\n");
         }
     }
     unsigned long long before = allocations;
     volatile uint64_t sink = 0;
-    for (size_t i = 0; i < ALLOC_SAMPLE; i++) sink += engine->parse(heads[i % count].at, heads[i % count].len);
+    for (size_t i = 0; i < ALLOC_SAMPLE; i++) sink += fold(engine->parse(heads[i % count].at, heads[i % count].len));
     printf("allocs %g\n", (double)(allocations - before) / ALLOC_SAMPLE);
-}
-
-static uint64_t block(const engine_t *engine, const head_t *heads, size_t count, size_t *next) {
-    uint64_t sink = 0;
-    for (int i = 0; i < BLOCK; i++) {
-        sink += engine->parse(heads[*next].at, heads[*next].len);
-        *next = (*next + 1) % count;
-    }
-    return sink;
-}
-
-static void time_engine(const engine_t *engine, const head_t *heads, size_t count, unsigned long long run_ns) {
-    size_t next = 0;
-    uint64_t sink = 0;
-    unsigned long long warm = now_ns();
-    while (now_ns() - warm < WARM_UP_NS) sink += block(engine, heads, count, &next);
-    unsigned long long parsed = 0, start = now_ns(), elapsed = 0;
-    while ((elapsed = now_ns() - start) < run_ns) {
-        sink += block(engine, heads, count, &next);
-        parsed += BLOCK;
-    }
-    elapsed = now_ns() - start;
-    printf("ns %.4f %llu\n", (double)elapsed / (double)parsed, (unsigned long long)sink);
 }
 
 static void feed(const engine_t *engine, const head_t *heads, size_t count) {
@@ -122,6 +104,17 @@ static void feed(const engine_t *engine, const head_t *heads, size_t count) {
     const char *mode = engine->feed(heads[0].at, heads[0].len, &head_len);
     unsigned long long ns = now_ns() - start;
     printf("feed %llu %s %zu\n", ns, mode, head_len);
+}
+
+static unsigned long long run_ms(int argc, char **argv) {
+    if (argc < 5) die("time needs a positive integer run time in ms");
+    char *end = NULL;
+    errno = 0;
+    unsigned long long ms = strtoull(argv[4], &end, 10);
+    if (errno != 0 || end == argv[4] || *end != '\0' || ms == 0 || argv[4][0] == '-') {
+        die("time needs a positive integer run time in ms");
+    }
+    return ms;
 }
 
 int main(int argc, char **argv) {
@@ -136,12 +129,13 @@ int main(int argc, char **argv) {
     char *bytes = read_file(argv[3], &len);
     static head_t heads[MAX_HEADS];
     size_t count = split_heads(bytes, len, heads);
-    if (count == 0) die("empty workload");
     if (strcmp(argv[2], "check") == 0) {
         check(engine, heads, count);
     } else if (strcmp(argv[2], "time") == 0) {
-        unsigned long long ms = argc > 4 ? strtoull(argv[4], NULL, 10) : 300;
-        time_engine(engine, heads, count, ms * 1000000ull);
+        unsigned long long ms = run_ms(argc, argv);
+        uint64_t sink = 0;
+        double ns = engine->time(heads, count, ms * 1000000ull, &sink);
+        printf("ns %.4f %llu\n", ns, (unsigned long long)sink);
     } else if (strcmp(argv[2], "feed") == 0) {
         feed(engine, heads, count);
     } else {

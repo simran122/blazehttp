@@ -25,11 +25,31 @@ fn read(bytes: []const u8) struct { usize, Head } {
     return .{ len, head };
 }
 
-/// Timed path: status, head length and framing facts folded into one number.
-fn parse(bytes: []const u8) u64 {
+/// What the timed path produces for one head (printed by `check` as the head line).
+const Facts = struct {
+    status: u64,
+    head_len: usize,
+    chunked: bool,
+    content_length: ?u64,
+    keep_alive: bool,
+
+    /// Folds the facts into one number so the timed work cannot be optimised away.
+    fn fold(f: Facts) u64 {
+        const length: u64 = if (f.chunked) 1 << 40 else f.content_length orelse 0;
+        return f.status + f.head_len + length + @intFromBool(f.keep_alive);
+    }
+};
+
+/// The timed path: one complete head in, the facts out.
+fn parse(bytes: []const u8) Facts {
     const len, const head = read(bytes);
-    const length: u64 = if (head.transfer_encoding == .chunked) 1 << 40 else head.content_length orelse 0;
-    return @as(u64, @backingInt(head.status)) + len + length + @intFromBool(head.keep_alive);
+    return .{
+        .status = @backingInt(head.status),
+        .head_len = len,
+        .chunked = head.transfer_encoding == .chunked,
+        .content_length = head.content_length,
+        .keep_alive = head.keep_alive,
+    };
 }
 
 /// Splits a workload file into heads: each head ends at its first CRLF CRLF.
@@ -50,13 +70,16 @@ fn printHex(w: *Io.Writer, bytes: []const u8) !void {
 
 fn check(w: *Io.Writer, heads: []const []const u8) !void {
     for (heads) |bytes| {
-        const len, const head = read(bytes);
+        const f = parse(bytes);
+        _, const head = read(bytes);
         var count: usize = 0;
         var counter = head.iterateHeaders();
         while (counter.next()) |_| count += 1;
-        try w.print("head {d} {d} ", .{ @backingInt(head.status), len });
-        if (head.content_length) |n| try w.print("{d} ", .{n}) else try w.writeAll("- ");
-        try w.print("{d}\n", .{count});
+        try w.print("head {d} {d} ", .{ f.status, f.head_len });
+        if (f.chunked) {
+            try w.writeAll("chunked ");
+        } else if (f.content_length) |n| try w.print("{d} ", .{n}) else try w.writeAll("- ");
+        try w.print("{d} {d}\n", .{ @intFromBool(f.keep_alive), count });
         var it = head.iterateHeaders();
         while (it.next()) |field| {
             try w.writeAll("field ");
@@ -73,8 +96,9 @@ fn check(w: *Io.Writer, heads: []const []const u8) !void {
 fn runBlock(heads: []const []const u8, next: *usize) u64 {
     var sink: u64 = 0;
     for (0..block) |_| {
-        sink +%= parse(heads[next.*]);
-        next.* = (next.* + 1) % heads.len;
+        sink +%= parse(heads[next.*]).fold();
+        next.* += 1;
+        if (next.* == heads.len) next.* = 0;
     }
     return sink;
 }
@@ -130,7 +154,8 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, mode, "check")) {
         try check(w, heads);
     } else if (std.mem.eql(u8, mode, "time")) {
-        const ms = if (args.len > 4) try std.fmt.parseInt(u64, args[4], 10) else 300;
+        const ms = if (args.len > 4) std.fmt.parseInt(u64, args[4], 10) catch 0 else 0;
+        if (ms == 0) fail("time needs a positive integer run time in ms", .{});
         try time(io, w, heads, ms * std.time.ns_per_ms);
     } else if (std.mem.eql(u8, mode, "feed")) {
         try feed(io, w, heads);
