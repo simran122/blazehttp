@@ -29,6 +29,14 @@ const VALID: VectorFile = {
       request: { method: 'HEAD' },
       expect: { native: { error: 'PROTOCOL/malformed-response' }, undici: { error: 'TOO_MANY_REDIRECTS' } },
     },
+    {
+      name: 'latin1',
+      input: 'HTTP/1.1 200 OK\r\nX: \u00a0\r\n\r\n',
+      inputEncoding: 'latin1',
+      request: { method: 'GET' },
+      expect: { native: { ok: { status: 200, headers: [['X', '\u00a0']], body: '', keepAlive: false } } },
+      derivedFrom: 'src/lib.rs:test_x @ v1',
+    },
   ],
 };
 
@@ -55,7 +63,34 @@ describe('loadVectorFile', () => {
     ['missing source field', () => mutate((f) => delete (f['source'] as Record<string, unknown>)['url']), /url/],
     ['no cases', () => mutate((f) => (f.cases = [])), /at least one case/],
     ['cases not an array', () => mutate((f) => Object.assign(f, { cases: {} })), /cases: expected an array/],
-    ['bad encoding', () => mutate((f) => (f.cases[0] = { ...f.cases[0], inputEncoding: 'base64' })), /utf8/],
+    [
+      'bad encoding',
+      () => mutate((f) => (f.cases[0] = { ...f.cases[0], inputEncoding: 'base64' })),
+      /expected utf8 or latin1/,
+    ],
+    [
+      'a code point above U+00FF in a latin1 case',
+      () => mutate((f) => (f.cases[2] = { ...f.cases[2], input: '\u00a0\u0100' })),
+      /cases\[2\]\.input: a code point above U\+00FF/,
+    ],
+    [
+      'a latin1 expectation above U+00FF',
+      () =>
+        mutate(
+          (f) => ((f.cases[2] as { expect: { native: { ok: { body: string } } } }).expect.native.ok.body = '\u0100'),
+        ),
+      /cases\[2\]\.expect\.native\.ok: a code point above U\+00FF/,
+    ],
+    [
+      'latin1 without a high byte',
+      () => mutate((f) => (f.cases[2] = { ...f.cases[2], input: 'HTTP/1.1 200 OK\r\n\r\n' })),
+      /latin1 without a byte >= 0x80; use utf8/,
+    ],
+    [
+      'bad derivedFrom',
+      () => mutate((f) => (f.cases[2] = { ...f.cases[2], derivedFrom: 1 })),
+      /derivedFrom: expected a string/,
+    ],
     [
       'an error the engine cannot produce',
       () => mutate((f) => (f.cases[1] = { ...f.cases[1], expect: { native: { error: 'HTTP_STATUS' } } })),

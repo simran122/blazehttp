@@ -7,7 +7,10 @@ const NOTICES_FILE = join(REPO_ROOT, 'THIRD_PARTY_NOTICES');
 const OWN_PROJECT = 'blazehttp';
 const RULE = '='.repeat(80);
 
-/** Licence texts by SPDX id; the copyright line comes from each vector file's source. */
+/**
+ * Licence texts by SPDX id, only for licences whose text names no project or organisation; the copyright line comes
+ * from each vector file's source.
+ */
 export const LICENCE_TEXTS: Readonly<Record<string, string>> = {
   MIT: `Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the
@@ -27,7 +30,68 @@ NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.`,
+  /** curl's licence (`COPYING`), the text after its copyright line. */
+  curl: `All rights reserved.
+
+Permission to use, copy, modify, and distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright
+notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN
+NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall not
+be used in advertising or otherwise to promote the sale, use or other dealings
+in this Software without prior written authorization of the copyright holder.`,
 };
+
+/**
+ * Licence texts that name an organisation (e.g. BSD-3-Clause's "Neither the name of …" clause), keyed by project and
+ * used only when the source's licence matches. Taken verbatim from the licence file at the recorded commit.
+ */
+const PROJECT_LICENCE_TEXTS: Readonly<Record<string, { readonly licence: string; readonly text: string }>> = {
+  go: {
+    licence: 'BSD-3-Clause',
+    text: `Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`,
+  },
+};
+
+/** The licence text for `source`: its project's own text when it has one, else the generic SPDX text. */
+export function licenceText(source: VectorSource): string {
+  const own = PROJECT_LICENCE_TEXTS[source.project];
+  const text = own?.licence === source.licence ? own.text : LICENCE_TEXTS[source.licence];
+  if (text === undefined) throw new Error(`no licence text for ${source.licence} (${source.project})`);
+  return text;
+}
 
 const HEADER = `Third-party notices
 
@@ -54,8 +118,7 @@ export function renderNotices(files: readonly NoticeInput[]): string {
     blocks.set(key, block);
   }
   const rendered = [...blocks.values()].map(({ source, lines }) => {
-    const text = LICENCE_TEXTS[source.licence];
-    if (text === undefined) throw new Error(`no licence text for ${source.licence} (${source.project})`);
+    const text = licenceText(source);
     return [
       RULE,
       `Project: ${source.project}`,

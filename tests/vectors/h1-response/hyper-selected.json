@@ -1,0 +1,34 @@
+{
+  "source": {
+    "project": "hyper",
+    "url": "https://github.com/hyperium/hyper/blob/7f67699ce32d717081deb7018b4da7d679277ac0/src/proto/h1/role.rs",
+    "tag": "v1.12.0",
+    "commit": "7f67699ce32d717081deb7018b4da7d679277ac0",
+    "licence": "MIT",
+    "copyright": "Copyright (c) 2014-2026 Sean McArthur"
+  },
+  "cases": [
+    {
+      "name": "htab-inside-value",
+      "input": "HTTP/1.1 200 OK\r\nserver: hello\tworld\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["server", "hello\tworld"],
+              ["Content-Length", "0"]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      },
+      "derivedFrom": "src/proto/h1/role.rs:parse_header_htabs @ v1.12.0"
+    }
+  ]
+}

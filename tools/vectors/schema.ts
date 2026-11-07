@@ -30,11 +30,17 @@ interface OkExpect {
 /** `error` is the engine's display form `CODE/detail`, e.g. `PROTOCOL/malformed-response`. */
 export type NativeExpect = { readonly ok: OkExpect } | { readonly error: string };
 
+/**
+ * How the case's byte strings (`input`, expected header names and values, body) become bytes: `utf8` encodes the
+ * string as UTF-8; `latin1` maps each code point U+0000–U+00FF to one byte (used only when a byte ≥ 0x80 occurs).
+ */
+type InputEncoding = 'utf8' | 'latin1';
+
 export interface VectorCase {
   readonly name: string;
   /** Every byte the server sends; the server then closes the connection. */
   readonly input: string;
-  readonly inputEncoding: 'utf8';
+  readonly inputEncoding: InputEncoding;
   readonly request: { readonly method: string };
   readonly expect: {
     readonly native: NativeExpect;
@@ -44,6 +50,8 @@ export interface VectorCase {
   };
   /** What reference implementations did with the input, keyed by project (informational). */
   readonly reference?: Readonly<Record<string, string>>;
+  /** Provenance of a case re-derived from an upstream test: `<file>:<test> @ <tag>` (informational). */
+  readonly derivedFrom?: string;
 }
 
 export interface VectorFile {
@@ -59,6 +67,11 @@ const ENGINE_ERROR_SET: ReadonlySet<string> = new Set(ENGINE_ERRORS);
 const METHOD_SET: ReadonlySet<string> = new Set(METHODS);
 const MIN_STATUS = 100;
 const MAX_STATUS = 599;
+/** A code point that is not one latin1 byte. */
+const NOT_LATIN1 = /[\u{100}-\u{10ffff}]/u;
+const isLatin1 = (text: string): boolean => !NOT_LATIN1.test(text);
+/** A latin1 byte that UTF-8 would encode differently: the reason to choose `latin1`. */
+const HIGH_BYTE = /[\x80-\xff]/u;
 
 const parseSource = (value: unknown, at: string): VectorSource => {
   const s = asObject(value, at, ['project', 'url', 'commit', 'licence', 'copyright'], ['tag']);
@@ -101,9 +114,18 @@ export const parseNativeExpect = (value: unknown, at: string): NativeExpect => {
   return ENGINE_ERROR_SET.has(error) ? { error } : fail(`${at}.error`, `${error} is not an engine error`);
 };
 
+const parseEncoding = (value: unknown, input: string, at: string): InputEncoding => {
+  if (value === 'utf8') return value;
+  if (value !== 'latin1') return fail(`${at}.inputEncoding`, 'expected utf8 or latin1');
+  if (!isLatin1(input)) fail(`${at}.input`, 'a code point above U+00FF in a latin1 case');
+  if (!HIGH_BYTE.test(input)) fail(`${at}.inputEncoding`, 'latin1 without a byte >= 0x80; use utf8');
+  return value;
+};
+
 const parseCase = (value: unknown, at: string): VectorCase => {
-  const c = asObject(value, at, ['name', 'input', 'inputEncoding', 'request', 'expect'], ['reference']);
-  if (c['inputEncoding'] !== 'utf8') fail(`${at}.inputEncoding`, 'expected utf8');
+  const c = asObject(value, at, ['name', 'input', 'inputEncoding', 'request', 'expect'], ['reference', 'derivedFrom']);
+  const input = asString(c['input'], `${at}.input`);
+  const inputEncoding = parseEncoding(c['inputEncoding'], input, at);
   const request = asObject(c['request'], `${at}.request`, ['method']);
   const method = asString(request['method'], `${at}.request.method`);
   if (!METHOD_SET.has(method)) fail(`${at}.request.method`, `${method} is not a generated Method`);
@@ -117,18 +139,27 @@ const parseCase = (value: unknown, at: string): VectorCase => {
             asString(v, `${at}.reference.${k}`),
           ]),
         );
+  const derivedFrom = c['derivedFrom'] === undefined ? undefined : asString(c['derivedFrom'], `${at}.derivedFrom`);
+  const native = parseNativeExpect(expectJson['native'], `${at}.expect.native`);
+  if (inputEncoding === 'latin1' && 'ok' in native) {
+    const { headers, body } = native.ok;
+    if (![body, ...headers.flat()].every(isLatin1)) {
+      fail(`${at}.expect.native.ok`, 'a code point above U+00FF in a latin1 case');
+    }
+  }
   return {
     name: asString(c['name'], `${at}.name`),
-    input: asString(c['input'], `${at}.input`),
-    inputEncoding: 'utf8',
+    input,
+    inputEncoding,
     request: { method },
     expect: {
-      native: parseNativeExpect(expectJson['native'], `${at}.expect.native`),
+      native,
       ...(expectJson['undici'] === undefined
         ? {}
         : { undici: parseNativeExpect(expectJson['undici'], `${at}.expect.undici`) }),
     },
     ...(reference === undefined ? {} : { reference }),
+    ...(derivedFrom === undefined ? {} : { derivedFrom }),
   };
 };
 

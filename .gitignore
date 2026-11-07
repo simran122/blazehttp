@@ -5,3 +5,9 @@ coverage/
 dist/
 *.node
 .DS_Store
+.claude/worktrees/
+# cargo-fuzz output
+crates/engine-core/fuzz/target/
+crates/engine-core/fuzz/corpus/
+crates/engine-core/fuzz/artifacts/
+crates/engine-core/fuzz/coverage/

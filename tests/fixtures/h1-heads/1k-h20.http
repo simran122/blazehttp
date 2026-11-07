@@ -1,0 +1,22 @@
+HTTP/1.1 200 OK
+date: Fri, 06 Nov 2026 12:00:00 GMT
+content-type: application/json
+content-length: 847
+connection: keep-alive
+server: bench-server
+cache-control: private, no-cache, max-age=0
+etag: W/"34f-9c1e4a7b2d8f6e03"
+last-modified: Fri, 06 Nov 2026 11:59:00 GMT
+vary: Accept-Encoding, Origin
+x-request-id: 0b7c1f0e-5d2a-4c8e-9f3b-7a6d1e2c4b59
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+strict-transport-security: max-age=31536000; includeSubDomains
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: strict-origin-when-cross-origin
+access-control-allow-origin: *
+x-ratelimit-limit: 1000
+x-ratelimit-remaining: 999
+x-ratelimit-reset: 1793966400
+server-timing: cdn-cache;desc=MISS, edge;dur=1, origin;dur=3
+

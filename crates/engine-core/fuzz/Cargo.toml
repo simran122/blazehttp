@@ -1,0 +1,36 @@
+# Fuzz targets for engine-core (cargo-fuzz, pinned nightly: docs/notes/toolchain.md). Its own workspace, excluded from
+# the main one; never shipped. httparse is the differential oracle only (docs/notes/response-parser.md §9.7).
+[package]
+name = "engine-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.5.0", features = ["derive"] }
+engine-core = { path = ".." }
+httparse = "=1.10.1"
+libfuzzer-sys = "0.4.13"
+
+[[bin]]
+name = "h1_response"
+path = "fuzz_targets/h1_response.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+deprecated = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+
+[workspace]
+
+[profile.release]
+debug-assertions = true
+overflow-checks = true
