@@ -121,8 +121,7 @@ request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells)
      → `400`.
    - `content-length`: digits only, at most once, else `400`. The value is the number of body bytes to skip.
    - `transfer-encoding` → `400`. Chunked request bodies are not supported yet, and refusing loudly beats mis-framing
-     the requests that follow. Follow-up: the G1 streaming-upload cell needs them, and an issue is to be opened
-     (see the Task 9 report).
+     the requests that follow. TODO(#16): the G1 streaming-upload cell needs them.
    - `connection`: the `close` token, or HTTP/1.0 without `keep-alive`, closes the connection after this response.
 6. Look the target up in the cell table; an unknown target gets the pre-built 404.
 7. When no complete request is left in the buffer, write the batch, `flush()` it (TLS), and compact the leftover

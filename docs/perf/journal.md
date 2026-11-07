@@ -328,5 +328,5 @@ Record every measured idea. Keep only measured wins.
 - **Numbers (no CI, n = 3):** server CPU per request A 10.17 / 9.74 / 10.64 µs (median 10.17), B 11.05 / 10.13 /
   13.67 µs (median 11.05); 85–87% of it is kernel time in both.
 - **Kept / dropped:** A kept (simpler, no measured loss at c = 50). B is not settled: c = 500 was not measured, so the
-  comparison is repeated at c = 50 and 500 in the nightly window (`docs/perf/ideas.md`).
+  comparison is repeated at c = 50 and 500 in the nightly window (#15).
 - **Commit:** see the PR that adds `crates/bench-server`.

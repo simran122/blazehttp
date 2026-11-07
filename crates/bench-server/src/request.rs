@@ -111,6 +111,7 @@ fn fields<'a>(lines: impl Iterator<Item = &'a [u8]>) -> Option<Fields> {
     let mut content_length = None;
     for line in lines {
         let (name, value) = field_line(line)?;
+        // TODO(#16): skip chunked request bodies for the G1 streaming-upload cell instead of refusing them.
         if name.eq_ignore_ascii_case(b"transfer-encoding") {
             return None;
         }
