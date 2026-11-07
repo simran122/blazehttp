@@ -58,3 +58,9 @@ re-run in the Linux reference container (nightly window) and on the x64 VM first
 | Benchmark parser with a varied-head ring, not only one repeated head | repeated head lets the predictor memorise exits | Task 4 bench / P1a criterion / G0 report | Dev: same scalar code 186 ns repeated vs 436–585 ns varied; proposed rule |
 | SWAR `[A-Za-z0-9-]` name fast path, `table8` names | fewer branches than per-byte table | same | Dev: slower than the table in the chain (321 / — vs 186 ns); drop |
 | Avoid `pcmpestri`/`pcmpistri` | 8 µops, 12–17-cycle latency (uops.info) vs `pshufb` 1 µop | — | Verified (uops.info); no SSE4.2 string ops in `engine-simd` |
+
+## Benchmark server (Task 9, 2026-11-07; detail in `docs/notes/bench-server.md`)
+
+| Idea | Hypothesis | How to measure | Status |
+|---|---|---|---|
+| Per-core `current_thread` runtimes, one `SO_REUSEPORT` listener each, instead of one multi-thread runtime | fewer cross-thread wakes and stealing atomics → lower server CPU per request | `/1k` c = 50 and 500, server `cpu.stat` per request, wrk in Docker | Unverified; fallback if the multi-thread server exceeds the 60% budget |
