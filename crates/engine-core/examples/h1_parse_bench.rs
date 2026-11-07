@@ -2,15 +2,21 @@
 //! (`docs/notes/response-parser.md` §8.1). Run with `cargo run --release -p engine-core --example h1_parse_bench`.
 //! Results are dev measurements (`docs/perf/journal.md`); P1a replaces this with the criterion bench `benches/h1_parse.rs`.
 
+#[path = "../tests/support/fixtures.rs"]
+mod fixtures;
+
 use std::hint::black_box;
 use std::mem::MaybeUninit;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use engine_core::generated::spec::Method;
 use engine_core::h1::{Framing, ParseStatus, ResponseParser};
 
 const FIXTURES: [&str; 3] = ["1k.http", "1k-h20.http", "synthetic-h20.http"];
+/// The varied ring (docs/notes/simd-scanning-research.md §7 item 1): `1k-h20.http` with shuffled field order and
+/// value lengths scaled 0.5–1.5×, so the branch predictor cannot learn one head.
+const VARIED_HEADS: usize = 256;
+const VARIED: &str = "varied 1k-h20 ring";
 const VARIANTS: usize = 64;
 const RUNS: usize = 7;
 const BLOCKS_PER_RUN: u32 = 4;
@@ -26,13 +32,6 @@ const VARYING: [(&[u8], usize); 5] = [
     (b"traceparent: 00-", 18),
     (b"etag: W/\"34f-", 15),
 ];
-
-fn fixture(name: &str) -> Vec<u8> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/h1-heads")
-        .join(name);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
 
 /// 64 heads of the same length as `base`, differing in the digits named by `VARYING`, so no single head trains
 /// the branch predictor.
@@ -59,6 +58,48 @@ fn variants(base: &[u8]) -> Vec<Vec<u8>> {
             }
             assert_eq!(head.len(), base.len());
             head
+        })
+        .collect()
+}
+
+/// xorshift64: a fixed, seedable sequence (no dependency) for the varied ring.
+fn next(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+fn varied(base: &[u8]) -> Vec<Vec<u8>> {
+    let text = std::str::from_utf8(base).expect("ASCII fixture");
+    let mut lines: Vec<&str> = text
+        .trim_end_matches("\r\n")
+        .split("\r\n")
+        .skip(1)
+        .collect();
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    (0..VARIED_HEADS)
+        .map(|_| {
+            for i in (1..lines.len()).rev() {
+                let j = usize::try_from(next(&mut state) % (i as u64 + 1)).expect("small");
+                lines.swap(i, j);
+            }
+            let mut head = String::from("HTTP/1.1 200 OK\r\n");
+            for line in &lines {
+                let (name, value) = line.split_once(": ").expect("fixture field");
+                let scale = 50 + next(&mut state) % 101; // percent, 50..=150
+                let len = (value.len() * usize::try_from(scale).expect("small") / 100).max(1);
+                let value: String = if name == "content-length" {
+                    value.to_owned()
+                } else {
+                    value.chars().cycle().take(len).collect()
+                };
+                for part in [name, ": ", &value, "\r\n"] {
+                    head.push_str(part);
+                }
+            }
+            head.push_str("\r\n");
+            head.into_bytes()
         })
         .collect()
 }
@@ -201,9 +242,18 @@ fn main() {
         "| head | bytes | ours ns (median) | httparse ns (median) | ratio median | ratio min | ratio max |"
     );
     println!("|---|---|---|---|---|---|---|");
-    for name in FIXTURES {
-        let base = fixture(name);
-        let heads = variants(&base);
+    let rings = FIXTURES
+        .iter()
+        .map(|&name| {
+            let base = fixtures::h1_head(name);
+            (name, base.len(), variants(&base))
+        })
+        .chain(std::iter::once({
+            let heads = varied(&fixtures::h1_head("1k-h20.http"));
+            let mean = heads.iter().map(Vec::len).sum::<usize>() / heads.len();
+            (VARIED, mean, heads)
+        }));
+    for (name, bytes, heads) in rings {
         for head in &heads {
             assert_eq!(ours(head), httparse_with_facts(head), "{name}");
         }
@@ -224,7 +274,7 @@ fn main() {
         let max = ratios.iter().copied().fold(0.0, f64::max);
         println!(
             "| `{name}` | {} | {:.1} | {:.1} | {:.3} | {min:.3} | {max:.3} |",
-            base.len(),
+            bytes,
             median(&mut ours_ns),
             median(&mut theirs_ns),
             median(&mut ratios),

@@ -68,3 +68,33 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** kept. Budget met on the Linux reference container (0.83–0.84× and 0.96–0.98×, feeds ≤ 0.21 ms).
   The byte-wise status prefix did not regress: 3-header head 43–45 ns vs the prototype's 46.6 ns with `memchr`.
 - **Commit:** Task 4 PR (`p0/parser`).
+
+### 2026-11-07: Scan seam `token_end`/`value_end(window, pos)` (SIMD survey §7 item 3)
+
+- **Idea:** phrase the parser's span scans as `end = token_end(window, pos)` / `value_end(window, pos)` so P1a's
+  bitmaps drop in without touching the phase logic.
+- **Hypothesis:** behaviour-neutral and not slower.
+- **Method:** same-container A/B on Linux arm64 (Docker, `--cpus=1`, rustc 1.99.1, generic aarch64): base and
+  candidate built side by side, binaries alternated, committed bench (7 runs × 4 blocks, median per-run ratio vs
+  httparse 1.10.1 + facts) incl. the new varied ring. Host load 6–26 (busy; quietest rounds used).
+- **Numbers (median ratio, quiet rounds):** `1k-h20.http` base 0.958 / 0.964 vs seam 0.988 / 0.997 (≈ +3%);
+  with the seam reverted the same tree measured 0.959–0.977 vs base 0.950–0.982 (neutral). `1k.http` and the varied
+  ring were neutral.
+- **Kept / dropped:** dropped (≈ 3% slower on `1k-h20`); P1a adds the seam with the bitmaps if their shape needs it.
+- **Commit:** none (reverted before commit).
+
+### 2026-11-07: `value_len` jumps to the lowest SWAR flag with `trailing_zeros` (SIMD survey §7 item 2)
+
+- **Idea:** the lowest SWAR flag is exact (borrows only propagate upward), so `trailing_zeros(flags) / 8` is the stop
+  byte unless it is HTAB; drop the per-word `position` re-scan.
+- **Hypothesis:** a win on varied heads (unpredictable stop lanes), no regression on `1k`/`1k-h20`.
+- **Method:** same-container A/B as above (base = the parser without the seam), 4 alternated rounds, N = 7 runs each.
+- **Numbers (median ratio per round, base → candidate):** varied ring 0.814 / 0.807 / 0.808 / 0.843 →
+  **0.661 / 0.672 / 0.666 / 0.663** (≈ 18% less time); `1k.http` 0.823 / 0.819 / 0.795 / 0.819 → 0.790 / 0.811 /
+  0.822 / 0.804 (neutral); `1k-h20.http` 0.962 / 0.982 / 0.960 / 0.964 → 0.963 / 0.967 / 0.955 / 0.958 (neutral);
+  `synthetic-h20.http` 0.883 / 0.930 / 0.932 / 0.928 → 0.963 / 0.962 / 0.973 / 0.961 (≈ +3–4%: long uniform values,
+  not a keep criterion).
+- **Kept / dropped:** kept (win on the varied ring, no regression on `1k`/`1k-h20`). Exhaustive lane and pair unit
+  tests and the fuzz differential cover correctness.
+- **Commit:** fix round 1 (`p0/parser`).
+
