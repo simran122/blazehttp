@@ -1,0 +1,98 @@
+{
+  "source": {
+    "project": "hyper",
+    "url": "https://github.com/hyperium/hyper/blob/7f67699ce32d717081deb7018b4da7d679277ac0/src/proto/h1/role.rs",
+    "tag": "v1.12.0",
+    "commit": "7f67699ce32d717081deb7018b4da7d679277ac0",
+    "licence": "MIT",
+    "copyright": "Copyright (c) 2014-2026 Sean McArthur"
+  },
+  "cases": [
+    {
+      "name": "explicit te / chunked with content-length",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "headers": "content-length: 10\r\ntransfer-encoding: chunked\r\n",
+        "headerLines": 2,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/proto/h1/role.rs:test_client_request_encode_explicit_transfer_encoding_removes_content_length @ v1.12.0"
+    },
+    {
+      "name": "explicit te / gzip",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "headers": "transfer-encoding: gzip\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/proto/h1/role.rs:test_client_request_encode_explicit_transfer_encoding_removes_content_length @ v1.12.0"
+    },
+    {
+      "name": "automatic te / user content-length 10",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "headers": "content-length: 10\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/proto/h1/role.rs:test_client_request_encode_automatic_transfer_encoding_removes_content_length @ v1.12.0"
+    },
+    {
+      "name": "automatic te / user content-length list",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "headers": "content-length: 10, 11\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/proto/h1/role.rs:test_client_request_encode_automatic_transfer_encoding_removes_content_length @ v1.12.0"
+    },
+    {
+      "name": "automatic te / generated content-length",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": "0123456789"
+      },
+      "expect": {
+        "bytes": "POST / HTTP/1.1\r\nhost: 127.0.0.1:3999\r\ncontent-length: 10\r\n\r\n0123456789",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/proto/h1/role.rs:test_client_request_encode_automatic_transfer_encoding_removes_content_length @ v1.12.0"
+    }
+  ]
+}

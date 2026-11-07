@@ -836,11 +836,11 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 
 | File | Source | Cases (planned) |
 |---|---|---|
-| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 |
-| `h1-request/undici-selected.json` | undici v8.12.4 (§9.4) | ≈ 25 |
-| `h1-request/go-selected.json` | go1.27.3 (§9.4) | ≈ 15 |
-| `h1-request/httpguts-selected.json` | x/net v0.62.0 `TestValidHeaderFieldName` | ≈ 15 |
-| `h1-request/hyper-selected.json` | hyper v1.12.0 (§9.4) | 4 |
+| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 241) |
+| `h1-request/undici-selected.json` | undici v8.12.4 (§9.4) | ≈ 25 (built: 38) |
+| `h1-request/go-selected.json` | go1.27.3 (§9.4) | ≈ 15 (built: 17) |
+| `h1-request/httpguts-selected.json` | x/net v0.62.0 `TestValidHeaderFieldName`, `TestIsTokenRune`, `TestPunycodeHostPort` | ≈ 15 (built: 145; `TestValidHeaderFieldName` has only 6 cases, so the token-rune and host tests were added) |
+| `h1-request/hyper-selected.json` | hyper v1.12.0 (§9.4) | 4 (built: 5) |
 
 ### 9.4 Ported from upstream (behaviour only, re-expressed as vectors, at pinned tags)
 - **undici `v8.12.4` (`779ee3e…`, MIT):**
@@ -849,8 +849,10 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
   - `test/invalid-headers.js`: invalid names and values, the `transfer-encoding`/`upgrade`/`expect`/`keep-alive`/
     `connection` rules;
   - `test/upgrade-crlf.js` (CVE-2026-1527);
-  - `test/content-length.js`: duplicate and case-variant `content-length`, and `content-length: 0` on bodiless
-    `POST`/`PUT`/`PATCH`.
+  - `test/content-length.js`: a user `content-length` and `content-length: 0` on a bodiless `PUT`;
+  - `test/headers-as-array.js`: duplicate and case-variant `content-length` (CVE-2026-1525) and `host` — these cases
+    live here, not in `content-length.js` (corrected in Task 5);
+  - `test/query.js`: `QUERY` with and without a body.
 - **hyper `v1.12.0` (`7f67699…`, MIT), `src/proto/h1/role.rs`:**
   `test_client_request_encode_explicit_transfer_encoding_removes_content_length` (L2745) and
   `test_client_request_encode_automatic_transfer_encoding_removes_content_length` (L2805). Ported as
