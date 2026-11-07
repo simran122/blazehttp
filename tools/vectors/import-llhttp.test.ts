@@ -253,6 +253,8 @@ const closeCase = (version: string, fields: readonly (readonly [string, string])
 const UNMODELLED: [string, string, string][] = [
   ['bytes before the status line', '\\r\\nHTTP/1.1 200 OK\n\n', 'off=2 message begin'],
   ['no final response head', 'HTTP/1.1 200 OK', 'off=0 message begin'],
+  ['an unknown log event "constructor"', 'HTTP/1.1 200 OK\n\n', 'off=0 message begin\noff=0 constructor'],
+  ['an unknown log event "on_url complete"', 'HTTP/1.1 200 OK\n\n', 'off=0 message begin\noff=0 on_url complete'],
   [
     'version 0.9',
     'HTTP/0.9 200 OK\n\n',
@@ -356,6 +358,12 @@ describe('importLlhttp', () => {
     expect(() => run(mdFile(shifted))).toThrow(/span at off=34/);
   });
 
+  it('ignores spans it does not model, prototype names included', () => {
+    const extraSpans = ['constructor', '__proto__', 'toString'].map((name) => `off=0 len=4 span[${name}]="HTTP"`);
+    const withExtra = SIMPLE.replace('off=0 len=4 span[protocol]="HTTP"', (line) => [line, ...extraSpans].join('\n'));
+    expect(nativeOf(withExtra)).toEqual(nativeOf(SIMPLE));
+  });
+
   it('skips lenient modes and chunked bodies', () => {
     const lenient = runOne(mdCase('Lenient', LENIENT, 'HTTP/1.1 200 OK\n\n', 'off=0 x'));
     expect(lenient.skipped.map((s) => s.name)).toEqual(['fixture / Lenient']);
@@ -417,7 +425,7 @@ describe('importLlhttp framing and keep-alive', () => {
     });
   });
 
-  it('keeps no 204/304 connection that announced a body', () => {
+  it('keeps a 204 connection that announces no body', () => {
     expect(
       bodyless('204 No Content', '', [
         'off=0 len=4 span[protocol]="HTTP"',
@@ -425,6 +433,9 @@ describe('importLlhttp framing and keep-alive', () => {
         'off=27 message complete',
       ]),
     ).toEqual({ ok: { status: 204, headers: [], body: '', keepAlive: true } });
+  });
+
+  it('keeps no 204/304 connection that announced a body', () => {
     expect(
       bodyless('304 Not Modified', 'Transfer-Encoding: chunked\n', [
         'off=0 len=4 span[protocol]="HTTP"',

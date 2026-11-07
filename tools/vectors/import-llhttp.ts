@@ -172,51 +172,60 @@ interface Fence {
   readonly body: string[];
 }
 
-/** Parser state between lines: the open test, a meta comment waiting for its block, and the open fence. */
-interface MdState {
-  readonly tests: MdTest[];
-  current: MdTest | undefined;
-  pendingMeta: unknown;
-  fence: Fence | undefined;
+/** Reads llhttp markdown line by line; mdgator semantics, with CR and CRLF already split like LF. */
+class MarkdownReader {
+  private readonly tests: MdTest[] = [];
+  /** The test owning the next block; `undefined` under a depth-1 heading or before any heading. */
+  private current: MdTest | undefined;
+  /** Meta comment waiting for the next fenced block. */
+  private pendingMeta: unknown;
+  private fence: Fence | undefined;
+
+  readLine(line: string, lineNumber: number): void {
+    if (this.fence === undefined) this.readOuterLine(line, lineNumber);
+    else this.readFenceLine(this.fence, line);
+  }
+
+  /** Tests that own at least one block; fails on a fence left open. */
+  finish(): MdTest[] {
+    if (this.fence !== undefined) throw new Error(`unclosed fence at line ${String(this.fence.line)}`);
+    return this.tests.filter((t) => t.blocks.size > 0);
+  }
+
+  /** Body text, or the closing fence that files the block (and its meta) under the current test. */
+  private readFenceLine(fence: Fence, line: string): void {
+    if (!FENCE_CLOSE.test(line)) {
+      fence.body.push(`${line}\n`);
+      return;
+    }
+    const { current } = this;
+    current?.blocks.set(fence.info, [...(current.blocks.get(fence.info) ?? []), fence.body.join('')]);
+    if (this.pendingMeta !== undefined) current?.meta.set(fence.info, this.pendingMeta);
+    this.pendingMeta = undefined;
+    this.fence = undefined;
+  }
+
+  /** A heading opens (depth ≥ 2) or closes (depth 1) a test; a meta comment or fence opening is noted. */
+  private readOuterLine(line: string, lineNumber: number): void {
+    const heading = SUB_HEADING.exec(line)?.[1];
+    if (heading !== undefined || TOP_HEADING.test(line)) {
+      this.current = heading === undefined ? undefined : { name: heading, blocks: new Map(), meta: new Map() };
+      if (this.current !== undefined) this.tests.push(this.current);
+      this.pendingMeta = undefined;
+      return;
+    }
+    const meta = META.exec(line)?.[1];
+    if (meta !== undefined) this.pendingMeta = JSON.parse(meta);
+    const info = FENCE_OPEN.exec(line)?.[1];
+    if (info !== undefined) this.fence = { info, line: lineNumber, body: [] };
+  }
 }
-
-/** A line inside a fence: body text, or the closing fence that files the block (and its meta) under the open test. */
-const readFenceLine = (state: MdState, fence: Fence, line: string): void => {
-  if (!FENCE_CLOSE.test(line)) {
-    fence.body.push(`${line}\n`);
-    return;
-  }
-  const { current } = state;
-  current?.blocks.set(fence.info, [...(current.blocks.get(fence.info) ?? []), fence.body.join('')]);
-  if (state.pendingMeta !== undefined) current?.meta.set(fence.info, state.pendingMeta);
-  state.pendingMeta = undefined;
-  state.fence = undefined;
-};
-
-/** A line outside fences: a heading opens (depth ≥ 2) or closes (depth 1) a test; a meta comment or fence is noted. */
-const readOuterLine = (state: MdState, line: string, lineNumber: number): void => {
-  const heading = SUB_HEADING.exec(line)?.[1];
-  if (heading !== undefined || TOP_HEADING.test(line)) {
-    state.current = heading === undefined ? undefined : { name: heading, blocks: new Map(), meta: new Map() };
-    if (state.current !== undefined) state.tests.push(state.current);
-    state.pendingMeta = undefined;
-    return;
-  }
-  const meta = META.exec(line)?.[1];
-  if (meta !== undefined) state.pendingMeta = JSON.parse(meta);
-  const info = FENCE_OPEN.exec(line)?.[1];
-  if (info !== undefined) state.fence = { info, line: lineNumber, body: [] };
-};
 
 /** Headings at depth ≥ 2 that own fenced blocks become tests, as in mdgator (which normalises CR and CRLF to LF). */
 const parseMarkdown = (md: string): MdTest[] => {
-  const state: MdState = { tests: [], current: undefined, pendingMeta: undefined, fence: undefined };
-  for (const [i, line] of md.split(/\r\n?|\n/).entries()) {
-    if (state.fence === undefined) readOuterLine(state, line, i + 1);
-    else readFenceLine(state, state.fence, line);
-  }
-  if (state.fence !== undefined) throw new Error(`unclosed fence at line ${String(state.fence.line)}`);
-  return state.tests.filter((t) => t.blocks.size > 0);
+  const reader = new MarkdownReader();
+  for (const [i, line] of md.split(/\r\n?|\n/).entries()) reader.readLine(line, i + 1);
+  return reader.finish();
 };
 
 // ---- llhttp test log ----
@@ -243,35 +252,63 @@ const LOG_LINE = /^off=(\d+) (.*)$/;
 const SPAN = /^len=(\d+) span\[([\w.]+)\]=("(?:.*)"|lf|cr)$/;
 const HEADERS = /^headers complete status=(\d+) v=(\d+)\/(\d+) /;
 const ERROR = /^error code=(\d+) reason=/;
-const SPAN_CHAR: Readonly<Record<string, string>> = { lf: '\n', cr: '\r' };
-const FIXED_EVENTS: Readonly<Record<string, (off: number) => LogEvent>> = {
-  'message begin': (off) => ({ kind: 'begin', off }),
-  'message complete': (off) => ({ kind: 'complete', off }),
-  'header_value complete': () => ({ kind: 'valueComplete' }),
+const SPAN_CHAR: ReadonlyMap<string, string> = new Map([
+  ['lf', '\n'],
+  ['cr', '\r'],
+]);
+const FIXED_EVENTS: ReadonlyMap<string, (off: number) => LogEvent> = new Map<string, (off: number) => LogEvent>([
+  ['message begin', (off) => ({ kind: 'begin', off })],
+  ['message complete', (off) => ({ kind: 'complete', off })],
+  ['header_value complete', () => ({ kind: 'valueComplete' })],
+]);
+/** llhttp callbacks the model does not need. Any other event fails, so a new callback is never silently ignored. */
+const IGNORED_EVENTS: ReadonlySet<string> = new Set([
+  'protocol complete',
+  'version complete',
+  'status complete',
+  'header_field complete',
+  'chunk complete',
+  'reset',
+  'skip body',
+]);
+const CHUNK_HEADER = /^chunk header len=\d+$/;
+
+const spanEvent = (off: number, rest: string): LogEvent<'span'> | undefined => {
+  const span = SPAN.exec(rest);
+  if (span === null) return undefined;
+  const value = String(span[3]);
+  return {
+    kind: 'span',
+    off,
+    len: Number(span[1]),
+    span: String(span[2]),
+    text: SPAN_CHAR.get(value) ?? value.slice(1, -1),
+  };
+};
+
+/** A `headers complete` or `error` event, which carry values. */
+const valueEvent = (rest: string): LogEvent<'headers' | 'error'> | undefined => {
+  const headers = HEADERS.exec(rest);
+  if (headers !== null) {
+    return { kind: 'headers', status: Number(headers[1]), version: `${String(headers[2])}.${String(headers[3])}` };
+  }
+  const error = ERROR.exec(rest);
+  return error === null ? undefined : { kind: 'error', code: Number(error[1]) };
+};
+
+/** A fixed-text event: one the model uses, one it ignores, or a failure naming the unknown event. */
+const namedEvent = (off: number, rest: string, fail: (why: string) => never): LogEvent => {
+  const fixed = FIXED_EVENTS.get(rest);
+  if (fixed !== undefined) return fixed(off);
+  if (IGNORED_EVENTS.has(rest) || CHUNK_HEADER.test(rest)) return { kind: 'other' };
+  return fail(`an unknown log event "${rest}"`);
 };
 
 const parseLogLine = (line: string, fail: (why: string) => never): LogEvent => {
   const match = LOG_LINE.exec(line) ?? fail('an unparsed log line');
   const off = Number(match[1]);
   const rest = String(match[2]);
-  const span = SPAN.exec(rest);
-  if (span !== null) {
-    const value = String(span[3]);
-    return {
-      kind: 'span',
-      off,
-      len: Number(span[1]),
-      span: String(span[2]),
-      text: SPAN_CHAR[value] ?? value.slice(1, -1),
-    };
-  }
-  const headers = HEADERS.exec(rest);
-  if (headers !== null) {
-    return { kind: 'headers', status: Number(headers[1]), version: `${String(headers[2])}.${String(headers[3])}` };
-  }
-  const error = ERROR.exec(rest);
-  if (error !== null) return { kind: 'error', code: Number(error[1]) };
-  return FIXED_EVENTS[rest]?.(off) ?? { kind: 'other' };
+  return spanEvent(off, rest) ?? valueEvent(rest) ?? namedEvent(off, rest, fail);
 };
 
 /** Log lines with md-test's expected-output escapes applied (`\t`, `\f`). */
@@ -380,15 +417,30 @@ const finalOutcome = (msg: Message, method: string, fail: (why: string) => never
 };
 
 type SpanTarget = keyof Pick<Message, 'field' | 'value' | 'protocol' | 'body'>;
-const SPAN_TARGET: Readonly<Record<string, SpanTarget>> = {
-  header_field: 'field',
-  header_value: 'value',
-  protocol: 'protocol',
-  body: 'body',
+const SPAN_TARGET: ReadonlyMap<string, SpanTarget> = new Map<string, SpanTarget>([
+  ['header_field', 'field'],
+  ['header_value', 'value'],
+  ['protocol', 'protocol'],
+  ['body', 'body'],
+]);
+
+type EventHandlers = {
+  readonly [K in LogEventKind]: (replay: LogReplay, event: LogEvent<K>) => Outcome | undefined;
 };
 
 /** Replays llhttp log events: interim messages are checked and dropped; the final message or an error decides. */
 class LogReplay {
+  /** Handler per event kind; each returns the outcome once an event decides it, else `undefined`. */
+  private static readonly HANDLERS: EventHandlers = {
+    begin: (replay, event) => replay.begin(event),
+    span: (replay, event) => replay.span(event),
+    valueComplete: (replay) => replay.valueComplete(),
+    headers: (replay, event) => replay.headers(event),
+    complete: (replay, event) => replay.complete(event),
+    error: (replay, event) => replay.error(event),
+    other: () => undefined,
+  };
+
   private msg: Message | undefined;
   private nextBegin = 0;
   private readonly method: string;
@@ -403,7 +455,7 @@ class LogReplay {
 
   /** The outcome once an event decides it, else `undefined`. */
   apply<K extends LogEventKind>(event: LogEvent<K>): Outcome | undefined {
-    return EVENT_HANDLERS[event.kind](this, event);
+    return LogReplay.HANDLERS[event.kind](this, event);
   }
 
   /** The log ended: the open message is the final response. */
@@ -411,29 +463,33 @@ class LogReplay {
     return finalOutcome(this.msg ?? this.fail('input that ends after an interim response'), this.method, this.fail);
   }
 
-  begin(event: LogEvent<'begin'>): void {
+  private begin(event: LogEvent<'begin'>): Outcome | undefined {
     if (event.off !== this.nextBegin) this.fail('bytes before the status line');
     this.msg = { headers: [], protocol: '', body: '', field: '', value: '' };
+    return undefined;
   }
 
-  span(event: LogEvent<'span'>): void {
-    const target = SPAN_TARGET[event.span];
+  private span(event: LogEvent<'span'>): Outcome | undefined {
+    const target = SPAN_TARGET.get(event.span);
     if (target !== undefined) this.current()[target] += event.text;
+    return undefined;
   }
 
-  valueComplete(): void {
+  private valueComplete(): Outcome | undefined {
     const m = this.current();
     m.headers.push([m.field, m.value.replace(OWS, '')]);
     m.field = '';
     m.value = '';
+    return undefined;
   }
 
-  headers(event: LogEvent<'headers'>): void {
+  private headers(event: LogEvent<'headers'>): Outcome | undefined {
     this.current().status = event.status;
     this.current().version = event.version;
+    return undefined;
   }
 
-  complete(event: LogEvent<'complete'>): Outcome | undefined {
+  private complete(event: LogEvent<'complete'>): Outcome | undefined {
     const m = this.current();
     if (Number(m.status) >= 200) return finalOutcome(m, this.method, this.fail);
     // §5.2 Interim heads: framing fields are rejected and `Connection: close` is sticky; not modelled here.
@@ -446,7 +502,7 @@ class LogReplay {
     return undefined;
   }
 
-  error(event: LogEvent<'error'>): Outcome {
+  private error(event: LogEvent<'error'>): Outcome {
     const name = this.errorNames.get(event.code) ?? this.fail('an unknown llhttp error code');
     return { native: nativeError(name) };
   }
@@ -455,30 +511,6 @@ class LogReplay {
     return this.msg ?? this.fail('a log event outside a message');
   }
 }
-
-const EVENT_HANDLERS: {
-  readonly [K in LogEventKind]: (replay: LogReplay, event: LogEvent<K>) => Outcome | undefined;
-} = {
-  begin: (replay, event) => {
-    replay.begin(event);
-    return undefined;
-  },
-  span: (replay, event) => {
-    replay.span(event);
-    return undefined;
-  },
-  valueComplete: (replay) => {
-    replay.valueComplete();
-    return undefined;
-  },
-  headers: (replay, event) => {
-    replay.headers(event);
-    return undefined;
-  },
-  complete: (replay, event) => replay.complete(event),
-  error: (replay, event) => replay.error(event),
-  other: () => undefined,
-};
 
 const outcomeOf = (
   events: readonly LogEvent[],
