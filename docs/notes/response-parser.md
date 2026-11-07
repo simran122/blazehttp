@@ -611,6 +611,33 @@ loops; assert ranges; `get_unchecked` only as a last resort — not available to
 `slice::as_chunks` (stable since 1.88.0), `slice::split_at_checked` (stable since 1.80.0), `slice::get`, slice
 patterns (Reference, "Slice patterns"); Clippy lints `indexing_slicing` and `chunks_exact_to_as_chunks` (§15).
 
+### 8.6 Cross-language comparison (dev)
+
+`bench/parsers/` (method and fairness rules in its README) parses the shared fixtures with our parser and the
+fastest head parsers in each language, each in its own `--cpus=1` container built for the same generic Armv8-A
+baseline, after a differential gate (same status, head length, Content-Length and field bytes on every head). Dev
+run of 2026-11-07 on the owner's M2 (Linux arm64 Docker, host load 3.7–16.7, so ranges are wide; full table and
+versions in `docs/perf/journal.md` and `bench/results/2026-11-07-arm64-dev-parsers.jsonl`). Median ns/head and the
+median per-round ratio ours/theirs (< 1: ours faster):
+
+| Parser | 3 headers | 20 headers | rotated 64 | Work per head |
+|---|---|---|---|---|
+| **blazehttp** `ResponseParser` | **55** | **269** | 252 | validates every byte, offsets + facts, 0 allocations |
+| httparse 1.10.1 | 62 (0.82×) | 300 (0.96×) | **244** (0.95×) | validates, slices into a caller array, + facts pass |
+| picohttpparser `dd573d8` | 61 (0.86×) | 391 (0.65×) | 326 (0.67×) | validates, pointers into a caller array, + facts pass |
+| llhttp 9.4.3 (strict) | 84 (0.62×) | 391 (0.66×) | 339 (0.70×) | state machine, facts built in |
+| Beast 1.92 `basic_parser` | 117 (0.50×) | 615 (0.43×) | 505 (0.45×) | virtual call per field, facts built in |
+| Beast 1.92 `response_parser` | 187 (0.28×) | 1,323 (0.19×) | 1,970 (0.11×) | builds `http::fields` (4 / 21 allocations) |
+| Zig 0.17.1 `std.http` | 358 (0.16×) | 2,329 (0.12×) | 1,976 (0.11×) | finds the end, splits lines; little validation |
+| Go 1.27.3 `net/http` | 909 (0.06×) | 4,082 (0.07×) | 3,415 (0.07×) | `*Response` + header map (10 / 40 allocations) |
+
+1-byte feeds (a)–(d): we stay linear (0.08–0.56 ms), as do llhttp, picohttpparser (its `last_len` scan, then one
+parse), Zig and Go (1.4–2.6 ms); httparse re-parses from byte 0 (118–344 ms) and Beast re-parses the current partial
+line (25 ms–2.1 s). Conclusion for P1a: P0 leads every parser on short heads and every non-Rust parser on 20-field
+heads, but is only **at parity with httparse** on 20-field and mixed heads; P1a's SIMD target (§8.4: ≤ 0.85×
+httparse on `1k-h20.http`) is what turns that into a lead. x64 (where picohttpparser enables SSE4.2) is deferred to
+the owner's x64 VM.
+
 ## 9. Additional test cases (beyond the brief)
 
 Each vector is a full input followed by EOF (`docs/notes/vectors.md`). "→" gives the expected native result.

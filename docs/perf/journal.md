@@ -113,3 +113,50 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** budget met on the Linux reference container.
 - **Commit:** fix round 1 (`p0/parser`).
 
+### 2026-11-07: `ResponseParser` vs the fastest head parsers in Rust, C, C++, Zig and Go (cross-language bench, dev numbers)
+
+- **Idea:** answer "how does our parser compare with the fastest parsers in every language?" on the same bytes and
+  CPU: `bench/parsers/` (README there), one Docker image per language, differential gate before timing.
+- **Hypothesis:** at P0 (safe scalar Rust) we lead on short heads, are at parity with httparse on 20-header heads,
+  and are linear under 1-byte feeds where restart-style parsers are not.
+- **Method:** `pnpm bench:parsers` (harness commit `ac7d0b4`; the runner's "refuse if other containers run" check
+  was added after this run and changes nothing measured). Linux arm64, Docker Desktop 28.5.1 on the owner's M2,
+  kernel 6.11.11-linuxkit, every invocation `--cpus=1 --network=none`, no other container running. Same CPU baseline
+  for all: generic Armv8-A (Rust `target-cpu=generic`, C/C++ `-march=armv8-a`, Zig `-mcpu=baseline`, Go
+  `GOARM64=v8.0`); Rust release + fat LTO + 1 CGU (rustc 1.99.1), C/C++ GCC 12.2 `-O3 -flto`, Zig 0.17.1
+  `ReleaseFast`, Go 1.27.3 default. Parsers: blazehttp `ResponseParser` (`p0/parser` @ `e65a950`), httparse 1.10.1,
+  picohttpparser `dd573d8` (HEAD, 2026-10-27), llhttp 9.4.3 (strict), Boost.Beast 1.92.0 (`response_parser<empty_body>`
+  and a `basic_parser<false>` subclass), Zig `std.http` (`HeadParser` + `Client.Response.Head.parse`), Go
+  `net/http.ReadResponse`. Gate: identical status, head length, Content-Length, field count and field bytes on all 7
+  workloads (passed). 7 interleaved rounds (start parser rotated per round), 100 ms warm-up + 300 ms timed per
+  invocation; median of per-round ratios ours/theirs (< 1 = ours faster). **Host load average 3.7 → 16.7 during the
+  run** (other work on the Mac, outside the nightly window): dev numbers, wide min–max, no gate claim.
+- **Numbers (median ns/head; ours/theirs median, min–max):**
+
+  | parser | 3 headers (109 B) | 20 headers (779 B) | rotated 64 (mixed) | allocs/head (3 / 20) |
+  |---|---|---|---|---|
+  | **blazehttp** (Rust) | **55.1** | **268.9** | 252.3 | 0 / 0 |
+  | httparse (Rust) | 62.0 — 0.82 (0.47–1.26) | 300.3 — 0.96 (0.76–1.12) | **244.3** — 0.95 (0.83–2.85) | 0 / 0 |
+  | picohttpparser (C) | 60.8 — 0.86 (0.52–1.01) | 390.8 — 0.65 (0.17–0.89) | 326.3 — 0.67 (0.59–2.14) | 0 / 0 |
+  | llhttp (C) | 84.3 — 0.62 (0.39–0.93) | 390.9 — 0.66 (0.57–0.86) | 339.1 — 0.70 (0.53–2.08) | 0 / 0 |
+  | Beast `basic_parser` (C++) | 117.1 — 0.50 | 614.5 — 0.43 | 504.9 — 0.45 | 0 / 0 |
+  | Beast `response_parser` (C++) | 186.6 — 0.28 | 1322.5 — 0.19 | 1970.4 — 0.11 | 4 / 21 |
+  | Zig `std.http` | 358.2 — 0.16 | 2329.2 — 0.12 | 1975.5 — 0.11 | 0 / 0 |
+  | Go `net/http` | 909.3 — 0.06 | 4081.7 — 0.07 | 3415.2 — 0.07 | 10 / 40 |
+
+  1-byte feeds (median ms, (a) 60 KB value / (b) 99 × 600 B / (c) 60 KB name / (d) 8 KiB status line): blazehttp
+  0.36 / 0.53 / 0.56 / 0.079; picohttpparser (re-parses once complete, `last_len` scan meanwhile) 0.50 / 0.55 / 0.77 /
+  **0.068**; llhttp 0.42 / 0.60 / 0.77 / 0.086; Zig 0.47 / 0.64 / 0.63 / 0.082; Go 1.42 / 2.52 / 2.63 / 0.25;
+  httparse (re-parses from byte 0) 175 / 235 / 344 / 118; Beast (keeps lines, re-parses a partial line)
+  1,009 / 25 / 2,085 / 38 (`response_parser`), similar for `basic_parser`.
+- **Where we win / lose:** fastest by median on the 3-header head (0.82× httparse, 0.86× picohttpparser;
+  single rounds range 0.47–1.26) and on the 20-header head (0.96× httparse, ≈ 0.65× the C parsers); 2–16× faster than the C++, Zig
+  and Go parsers, which allocate (Beast fields, Go map) or split lines generically (Zig). **Parity, not a lead, with
+  httparse** on 20 fields and on the mixed rotation (median ratio 0.95–0.96 but httparse's median ns on the rotation is
+  lower, 244 vs 252, and the ranges overlap): this is the gap P1a must close. On feeds we are linear like llhttp,
+  picohttpparser and Zig; picohttpparser is marginally faster on (d) (0.068 vs 0.079 ms, within the run's noise).
+- **What P1a SIMD must close:** a clear lead over httparse on 20-field and mixed heads (target ≤ 0.85× on `1k-h20`,
+  note §8.4) on arm64 and x64. x64 is **not measured yet** (deferred to the owner's x64 VM); there picohttpparser's
+  SSE4.2 paths switch on, so its standing will change.
+- **Kept / dropped:** bench kept (`bench/parsers/`); results `bench/results/2026-11-07-arm64-dev-parsers.jsonl`.
+- **Commit:** `p0/parser-bench`.
