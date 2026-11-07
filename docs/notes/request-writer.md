@@ -10,7 +10,7 @@ note; **unverified** = everything else (unverified ideas are listed only in `doc
 ## 1. Summary and decision
 
 **Decision: Design B — a pre-encoded, pre-validated header template plus a validated per-request delta, appended
-with `extend_from_slice` into one reused `Vec<u8>` sized once with `try_reserve`; `Content-Length` formatted with the
+with `extend_from_slice` into one reused `Vec<u8>` sized once with `try_reserve_exact`; `Content-Length` formatted with the
 standard library's `format_into` (stable since 1.98.0); head and body in one buffer for one write. The writer returns
 `Reuse` from the one framing predicate, and a template only serves the connection authority it was built for.**
 
@@ -21,7 +21,7 @@ standard library's `format_into` (stable since 1.98.0); head and body in one buf
 - **Per request:** `METHOD SP target SP "HTTP/1.1" CRLF` + template + delta + `content-length: N CRLF` (when due) +
   `connection: close CRLF` (only for a body on `GET`/`DELETE`/`OPTIONS`) + `CRLF` + body; returns
   `Reuse::{Allowed, CloseAfterExchange}` (§6.5). Zero allocations once `out` has grown to the connection's working
-  size (`Vec::clear` keeps the capacity; a single `try_reserve` per request is a no-op then).
+  size (`Vec::clear` keeps the capacity; a single `try_reserve_exact` per request is a no-op then; the writer never shrinks `out`, Task 6 does after the write).
 - **Re-validation in Rust on every request** for the bytes that change per request: the target (origin form, visible
   ASCII except `#`, ≤ 16 KiB) and the delta (`token ": " field-content CRLF` per line, forbidden names in any case,
   singleton names at most once across template and delta). This is the
@@ -39,7 +39,7 @@ standard library's `format_into` (stable since 1.98.0); head and body in one buf
 - `HeaderTemplate::new(host, fields, sensitive_names)` takes **wire bytes**, in the same `("name: value\r\n")*`
   format as `RequestParts::headers`. Latin1 values cannot round-trip through `&str`, and one format means one
   validator.
-- `write_request(out, conn_authority, parts, template) -> Result<Reuse, ErrorCode>`.
+- `write_request(out, parts, template, conn_authority) -> Result<Reuse, ErrorCode>`.
 
 **Rule changes (§6.5):**
 - `content-length: 0` is also sent for an empty `QUERY` (RFC 10008 defines content for it; RFC 9110 §8.6).
@@ -54,7 +54,7 @@ grammar violations to `Engine(Internal)` as the brief says, with a fixed precede
   wins from 16 KiB in 2 of 3 runs and clearly from 64 KiB (1.6–3.3×). Two separate writes are the worst at 1–4 KiB
   (1.5–2×).
 - Under TLS, rustls 0.23.46's `write_vectored` allocates a `Vec` per call, so TLS always uses the single buffer.
-- In P0, bodies > 64 KiB never reach the writer (`maxCopiedBodyBytes`, §6.7), so `write_request` always copies.
+- In P0, bodies > 64 KiB never reach the writer: Task 6's `try_submit` rejects them with `TooLarge(RequestBody)` (`maxCopiedBodyBytes`, §6.7). So `write_request` always copies.
 - The large-body path (`write_head` + `writev`, threshold between 4 and 16 KiB, measured on the reference host) is
   owned by P1b.
 
@@ -441,9 +441,9 @@ pub struct RequestParts<'a> {
 }
 pub fn write_request(
     out: &mut Vec<u8>,
-    conn_authority: &[u8],
     parts: &RequestParts<'_>,
     template: &HeaderTemplate,
+    conn_authority: &[u8],
 ) -> Result<Reuse, ErrorCode>;
 ```
 1. **`HeaderTemplate::new(host: &[u8], fields: &[u8], sensitive_names: &[&[u8]])`** replaces
@@ -459,19 +459,25 @@ pub fn write_request(
 4. **`RequestParts` keeps `pub` fields.** It is a passive borrowed parameter object with no invariants and no state
    changes. That is the carve-out to design §13.2 rule 1 listed in §11, and its doc comment says so. `HeaderTemplate`
    keeps private fields and `pub(crate) fn as_bytes()`.
-5. `write_request` clears `out`, runs every check (§7 order), computes the total length with checked additions, does
-   one `out.try_reserve(total)` (a no-op in steady state), then appends. On any error `out` is left **cleared**
+5. **Buffer contract:** `write_request` **clears `out` at the start**, runs every check (§7 order), computes the total
+   length with checked additions, **reserves exactly** with one `out.try_reserve_exact(total)` (a no-op when the
+   capacity already suffices, i.e. in steady state), then appends. It **never shrinks** `out`. Shrinking is Task 6's,
+   because only the connection knows when the write completed (§6.7, §10.1). On any error `out` is left **cleared**
    (capacity kept) and nothing has been sent.
 6. Content-Length uses `usize::format_into(&mut NumBuffer::<usize>::new())` (stable since 1.98.0, verified by
    compiling on 1.99.1 under `forbid(unsafe_code)` and `-D warnings`), so no `u64` conversion is needed.
 
 ### 6.7 Memory (W5, F10, F12)
-- **P0:** bodies larger than `maxCopiedBodyBytes` (64 KiB) do not reach `write_request` (the caller's contract). If
-  one does, the writer returns `Engine(Internal)`. This keeps the transient copy bounded at head + 64 KiB.
-- **Shrink rule (Task 6):** after the write of a request completes, if `out.capacity()` > 64 KiB then
-  `out.shrink_to(64 * 1024)`. So one large request does not pin capacity on a pooled connection (in addition to the
-  30 s idle trim, design §11.1).
-- **From P1a:** capacity of `out` above its base size is charged to the §11.1 byte budget *before* `try_reserve`. If
+- **P0 body limit:** bodies larger than `maxCopiedBodyBytes` (64 KiB) are rejected **by Task 6's `try_submit` with
+  `TooLarge(RequestBody)`** before any connection work, so they never reach `write_request`. The writer re-checks it
+  as part of its contract and returns `Engine(Internal)` if a caller bypassed `try_submit`. This keeps the transient
+  copy bounded at head + 64 KiB.
+- **Shrink (owned by Task 6, not the writer):** after the write of a request completes, Task 6 does `out.clear();`
+  and, if `out.capacity()` > 64 KiB, `out.shrink_to(64 * 1024)`. So one large request does not pin capacity on a
+  pooled connection (in addition to the 30 s idle trim, design §11.1). The writer only clears at its own start,
+  reserves exactly, and never shrinks (§6.6 item 5).
+- **From P1a:** capacity of `out` above its base size is charged to the §11.1 byte budget *before*
+  `try_reserve_exact`. If
   the charge fails, the request waits for the budget, then fails with `QUEUE_FULL/bytes` after `queue` (G6).
 - **Large bodies (owner P1b):** one copied buffer stays the rule for small bodies. For large plaintext bodies, P1b
   adds `write_head` (the same code without the body append) plus `writev([head, body])`, with the threshold measured
@@ -485,8 +491,8 @@ pub fn write_request(
 ### 6.8 No panics, no `unsafe`
 - `engine-core` is `#![forbid(unsafe_code)]`.
 - `extend_from_slice` "Panics if the new capacity exceeds isize::MAX bytes" (Vec docs 1.99.1, verified). That cannot
-  happen after a successful `try_reserve(total)`.
-- The total is a `checked_add` chain; overflow is `Engine(ResourceExhausted)`. `try_reserve` failure is the same code.
+  happen after a successful `try_reserve_exact(total)`.
+- The total is a `checked_add` chain; overflow is `Engine(ResourceExhausted)`. `try_reserve_exact` failure is the same code.
 - Slicing uses `split_at_checked`, `strip_prefix` and `get`, under the hoisted lint block (§6.1).
 
 ## 7. Error mapping (decided)
@@ -496,7 +502,7 @@ first failing check wins, so every input has exactly one error.
 
 | # | Check | Error |
 |---|---|---|
-| 1 | `body.len() > maxCopiedBodyBytes` (P0 contract) | `Engine(Internal)` |
+| 1 | `body.len() > maxCopiedBodyBytes` (P0 contract; Task 6 `try_submit` already returns `TooLarge(RequestBody)`, so reaching here is a bypass) | `Engine(Internal)` |
 | 2 | `target.len() > maxRequestTargetBytes` (16,384) | `TooLarge(Url)` |
 | 3 | `template.as_bytes().len() + headers.len() > maxRequestFieldsBytes` (65,536; §6.4 counting) | `TooLarge(Headers)` |
 | 4 | `conn_authority != template.authority()` | `Engine(Internal)` |
@@ -504,7 +510,7 @@ first failing check wins, so every input has exactly one error.
 | 6 | target empty, first byte not `/`, or a byte not graphic or equal to `#` | `Engine(Internal)` |
 | 7 | delta line grammar, forbidden name in any case, repeated singleton | `Engine(Internal)` |
 | 8 | `checked_add` overflow of the total length | `Engine(ResourceExhausted)` |
-| 9 | `out.try_reserve(total)` fails | `Engine(ResourceExhausted)` |
+| 9 | `out.try_reserve_exact(total)` fails | `Engine(ResourceExhausted)` |
 | T1 | `HeaderTemplate::new`: host line + fields > 65,536 (template alone) | `TooLarge(Headers)` |
 | T2 | `HeaderTemplate::new`: host structure or field grammar, forbidden or repeated singleton | `Engine(Internal)` |
 | T3 | `HeaderTemplate::new`: `try_reserve_exact` fails or the length sum overflows | `Engine(ResourceExhausted)` |
@@ -536,7 +542,7 @@ op). Inputs: `get` (template-only `GET /data`), `post1k` (1 KiB JSON, `content-t
 `extend_from_slice` calls in the same order (request line, template, delta, `content-length` line via `format_into`,
 CRLF, body) into the same reused `Vec` after `clear()`. It has no target, delta or limit checks, no authority or
 singleton checks, no framing predicate (it uses the plain content-length rule), no checked length sum and no
-`try_reserve`. So writer − floor = validation + bookkeeping. The committed bench (§8.4) defines it the same way in
+`try_reserve_exact`. So writer − floor = validation + bookkeeping. The committed bench (§8.4) defines it the same way in
 one function next to the timed loop.
 
 **Correctness of the prototype (verified):** the brief's exact-bytes `GET` case; capacity and pointer unchanged on
@@ -886,7 +892,7 @@ and §7 from the RFC grammar with per-byte loops and string comparisons. `write_
 - **Partial writes:** if a request is aborted or cancelled after some bytes were written (partial write), close the
   connection (W11). "Zero bytes written" (the stale-connection re-send rule, design §5.1) comes from the first
   write's result.
-- After the write completes, if `out.capacity()` > 64 KiB then `out.shrink_to(64 * 1024)` (§6.7).
+- **Shrink is Task 6's:** after the write completes, `out.clear();` then, if `out.capacity()` > 64 KiB, `out.shrink_to(64 * 1024)` (§6.7). The writer clears at its start, reserves exactly and never shrinks.
 - `TCP_NODELAY` on every connection (curl and Go do the same; `tcp(7)`); no `TCP_CORK`/`MSG_MORE`.
 - `ShardConfig` holds templates as `Rc<HeaderTemplate>` (§6.2).
 
@@ -964,7 +970,7 @@ Exact text changes for `docs/specs/2026-11-06-blazehttp-design.md`. This note ro
 5. **§11.2 Header templates:** add "bound to one authority; looked up by (id, generation), never falling back;
    deduplicated on full bytes, never a hash alone; flagged sensitive from the client's `sensitiveHeaders`".
 6. **§11.5 limits table and `spec.json`:** add `maxRequestTargetBytes` 16 KiB → `TOO_LARGE/url`,
-   `maxRequestFieldsBytes` 64 KiB → `TOO_LARGE/headers`, `maxCopiedBodyBytes` 64 KiB (P0: larger bodies do not reach
+   `maxRequestFieldsBytes` 64 KiB → `TOO_LARGE/headers`, `maxCopiedBodyBytes` 64 KiB (P0: rejected by the connection's `try_submit` with `TOO_LARGE/request-body`; larger bodies do not reach
    the writer).
 7. **§5.3:** replace "vectored writes only for large plaintext bodies" with "vectored writes only for plaintext
    bodies above a measured threshold (P1b); never `write_vectored` under TLS (rustls allocates per call)".
