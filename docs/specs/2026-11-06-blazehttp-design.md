@@ -404,6 +404,7 @@ First of {completion, failure, abort, deadline, close, teardown, poison} wins (o
 | **Factory method** | Creator `TransportComposer.compose(kit)` calls the factory method `PlatformKit.createTransport()`, which each kit implements (GoF: an abstract factory's creation operations are factory methods) | Each kit decides its concrete transport; the composer stays independent of it |
 | **Builder** | `SubmissionBatchBuilder` (`add`, `addCredit`, `addCancel`, `addChunk`, `build`, `reset`) — data commands only; control commands go through `control()` | Incremental, bounded assembly of each batch |
 | **Singleton** | Rust `Engine` root (immutable); JS `NativeSession` and `TimerHeap` per environment | One engine per process; one session/timer per environment (the default `blaze` instance is just a pre-built client, not a pattern use) |
+| **Singleton** | `bench-server` `Catalog` (`LazyLock`) | Pre-built cells, once per process |
 | **Adapter** | `NativeTransport`, `UndiciTransport`, `FetchTransport`, `XhrTransport` | One contract over four engines |
 | **Decorator** | TS `RetryTransport`, `BodyMaterializer`, `ObservedTransport`; Rust `Exchange` middleware (Redirect → Limits → Decompress → Rate, order from `spec.json`) | Behaviour around an exchange |
 | **Facade** | `Client` | One entry point that orchestrates |
