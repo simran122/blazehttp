@@ -4,7 +4,8 @@ export type RuleId =
   | 'removal-note'
   | 'rust-commented-code'
   | 'no-install-scripts'
-  | 'no-http-engine-dep';
+  | 'no-http-engine-dep'
+  | 'eslint-disable-reason';
 
 export type Violation = { file: string; line: number; rule: RuleId; message: string };
 export type Context = { packageVersion: string };
@@ -120,6 +121,21 @@ const noHttpEngineDep: Rule = (path, content) => {
   });
 };
 
+const SCRIPT_FILE = /\.(ts|mts|js|mjs)$/;
+/** Any ESLint disable or enable directive, in a line or block comment. */
+const ESLINT_DIRECTIVE = /(?:\/\/|\/\*)\s*eslint-(?:disable|enable)/;
+/** The one accepted form (design §13.1 rule 9): next line only, named rules, and a reason after `--`. */
+const ESLINT_NEXT_LINE = /\/\/\s*eslint-disable-next-line\s+[@a-z][\w@/-]*(?:\s*,\s*[@a-z][\w@/-]*)*\s+--\s+\S/;
+
+const eslintDisableReason: Rule = (path, content) =>
+  SCRIPT_FILE.test(path)
+    ? scanLines(path, content, 'eslint-disable-reason', (line) =>
+        ESLINT_DIRECTIVE.test(line) && !ESLINT_NEXT_LINE.test(line)
+          ? 'only eslint-disable-next-line <rule> -- <reason> is allowed (design §13.1 rule 9)'
+          : undefined,
+      )
+    : [];
+
 const RULES: Record<RuleId, Rule> = {
   'rust-allow-forbidden': rustAllowForbidden,
   'todo-needs-issue': todoNeedsIssue,
@@ -127,6 +143,7 @@ const RULES: Record<RuleId, Rule> = {
   'rust-commented-code': rustCommentedCode,
   'no-install-scripts': noInstallScripts,
   'no-http-engine-dep': noHttpEngineDep,
+  'eslint-disable-reason': eslintDisableReason,
 };
 
 export const checkFile = (path: string, content: string, ctx: Context): Violation[] =>

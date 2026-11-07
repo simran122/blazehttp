@@ -5,6 +5,8 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   { ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', '**/target/**', 'spike/**'] },
+  // A disable directive that suppresses nothing fails, like Rust `#[expect]` (design §13.1 rule 9).
+  { linterOptions: { reportUnusedDisableDirectives: 'error' } },
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   {
@@ -22,7 +24,7 @@ export default defineConfig(
         { selector: 'SwitchStatement', message: 'Use a lookup map instead of switch.' },
       ],
       // One function, one job (design §13.1 rule 9).
-      'max-lines-per-function': ['error', { max: 60, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['error', { max: 60, skipBlankLines: true, skipComments: true, IIFEs: true }],
       complexity: ['error', 10],
       'max-depth': ['error', 4],
       'max-params': 'off',
