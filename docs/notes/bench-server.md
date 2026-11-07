@@ -9,8 +9,8 @@ secondary source, not checked.
 ## 1. Summary and decision
 
 - One tokio **multi-thread** runtime (`--threads`, default = available CPUs), one listener per port, one task per
-  connection (design A, §4). Per-core `current_thread` runtimes with `SO_REUSEPORT` (design B) are the documented
-  fallback if A misses the headroom target; A is measured in §7.
+  connection (design A, §4). Per-core `current_thread` runtimes with `SO_REUSEPORT` (design B) were measured against it
+  and were not cheaper (§7.1), so A stays.
 - Every response is a **pre-built `&'static [u8]`**, built once at start-up (`LazyLock`) from the shared fixtures
   (`tests/fixtures/h1-heads/{1k,1k-h20}.http` + `tests/fixtures/bodies/1k.json`). Per request the server does: find
   `\r\n\r\n`, take the target between the first two spaces, look it up in a 5-entry table, write the bytes.
@@ -79,8 +79,8 @@ Findings that shape the code (verified in source):
 Time per request is O(head bytes) in every design (one scan, a 5-entry lookup); space O(1) per connection.
 
 **Decision: A.** It is the simplest, balances at every connection count, and works the same on macOS and Linux. B's
-gain (no stealing/atomics on wakes) is real in theory but unmeasured for us; it goes to `docs/perf/ideas.md` and is
-the first fallback if §7 shows the server above the budget. C is rejected (c = 500 cells).
+expected gain (no stealing/atomics on wakes) did not show up when measured (§7.1: median 11.05 vs 10.17 µs CPU per
+request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells).
 
 ## 5. Request handling (exact)
 
@@ -106,15 +106,35 @@ container's `/sys/fs/cgroup/cpu.stat` before and after a run: server CPU% = Δ`u
 
 ## 7. Headroom measurement (dev, not a gate run)
 
-Method: Linux arm64 in Docker Desktop on the owner's Mac (8 CPUs), server container `--cpus=4` running the release
-build with `--threads 4`, wrk in a second container `--cpus=4`, both on one user-defined Docker network, `GET /1k`,
-c = 50, 4 wrk threads, 20 s after a 5 s warm-up; server CPU from the container's `cpu.stat` as in §6.
+Method: Linux arm64 in Docker Desktop on the owner's M2 (8 CPUs for the VM), release build (fat LTO), server container
+`--cpus=4` with `--threads 4`, wrk 4.1.0 (Debian bookworm package) in a second container `--cpus=3 -t3` sharing the
+server's network namespace (loopback, so the Docker bridge is not measured), `GET /1k`, c = 50, 5 s warm-up then 20 s;
+server CPU = Δ`usage_usec` of the server container's `cpu.stat` (§6) over the 20 s load window. **The host was not idle**
+(load average 14–28 from other work on the same 8 CPUs, so wrk and the server competed with it): dev numbers only,
+not a gate run.
 
-Results: see §7.1 (filled in with the implementation commit).
+### 7.1 Results (2026-11-07, verified by measurement)
 
-### 7.1 Results
+| Run | req/s | Server CPU (of 4) | Server CPU µs / request | Kernel share |
+|---|---|---|---|---|
+| A, `/1k`, c = 50, round 1 / 2 / 3 | 116,713 / 150,225 / 107,359 | 29.8% / 36.7% / 28.7% | 10.17 / 9.74 / 10.64 | 85–86% |
+| B (per-core, `SO_REUSEPORT`), same, round 1 / 2 / 3 | 127,381 / 143,549 / 78,128 | 35.4% / 36.5% / 26.8% | 11.05 / 10.13 / 13.67 | 87% |
+| A, `/1k`, c = 50, Docker bridge network (load avg 13) | 110,364 | 42.7% | 15.43 | — |
+| A, `/1k`, c = 500 | 140,021 | 47.4% | 13.50 | 85% |
+| A, `/1k-h20`, c = 50 | 136,447 | 34.8% | 10.17 | 85% |
+| A, HTTPS `/1k`, c = 50 | 85,833 | 31.7% | 14.75 | 70% |
 
-(pending implementation)
+Reading:
+- **The load generator, not the server, was the limit in every run**: the server never exceeded 48% of its 4 CPUs.
+- Server cost is ≈ 10 µs CPU per request on `/1k`, and **85% of it is kernel time** (loopback TCP `read`/`write`/epoll
+  inside the Docker Desktop VM); our user-space work is ≈ 1.5 µs. At the 60% limit (2.4 CPU-s per second) that is
+  ≈ 236,000 req/s of capacity on `/1k` on this host — above the ~200k target but not "well above"; the margin is set by
+  the kernel, not by this code. The binding gate case is far below it: the reference cell's client has 1 CPU and
+  targets ≥ 63,790 req/s, which costs the server ≈ 16% of 4 CPUs.
+- B was not cheaper (median 11.05 vs 10.17 µs), so A stays (`docs/perf/journal.md`, 2026-11-07).
+- The Docker bridge adds ≈ 50% server CPU per request (15.4 vs 10.2 µs): the harness (Task 10) should put the client in
+  the server's network namespace (`--network container:<server>`) or on the host network, and must keep asserting
+  server CPU < 60% per run (§16.2), since a contended host raises the cost per request.
 
 ## 8. Cells
 
