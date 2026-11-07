@@ -1630,6 +1630,143 @@
       }
     },
     {
+      "name": "connection-close-then-keep-alive-11",
+      "input": "HTTP/1.1 200 OK\r\nConnection: close\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["Connection", "close"],
+              ["Connection", "keep-alive"],
+              ["Content-Length", "0"]
+            ],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      }
+    },
+    {
+      "name": "connection-close-keep-alive-10",
+      "input": "HTTP/1.0 200 OK\r\nConnection: close, keep-alive\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["Connection", "close, keep-alive"],
+              ["Content-Length", "0"]
+            ],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      }
+    },
+    {
+      "name": "connection-htab-ows",
+      "input": "HTTP/1.1 200 OK\r\nConnection:\tclose\t\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["Connection", "close"],
+              ["Content-Length", "0"]
+            ],
+            "body": "",
+            "keepAlive": false
+          }
+        }
+      }
+    },
+    {
+      "name": "name-every-tchar-special",
+      "input": "HTTP/1.1 200 OK\r\nx!#$%&'*+-.^_`|~: v\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "ok": {
+            "status": 200,
+            "headers": [
+              ["x!#$%&'*+-.^_`|~", "v"],
+              ["Content-Length", "0"]
+            ],
+            "body": "",
+            "keepAlive": true
+          }
+        }
+      }
+    },
+    {
+      "name": "te-on-103",
+      "input": "HTTP/1.1 103 Early Hints\r\nTransfer-Encoding: chunked\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/smuggling-risk"
+        }
+      }
+    },
+    {
+      "name": "cl-5-on-100",
+      "input": "HTTP/1.1 100 Continue\r\nContent-Length: 5\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/smuggling-risk"
+        }
+      }
+    },
+    {
+      "name": "fields-101-in-103",
+      "input": "HTTP/1.1 103 Early Hints\r\nx-fill-0000: a\r\nx-fill-0001: a\r\nx-fill-0002: a\r\nx-fill-0003: a\r\nx-fill-0004: a\r\nx-fill-0005: a\r\nx-fill-0006: a\r\nx-fill-0007: a\r\nx-fill-0008: a\r\nx-fill-0009: a\r\nx-fill-0010: a\r\nx-fill-0011: a\r\nx-fill-0012: a\r\nx-fill-0013: a\r\nx-fill-0014: a\r\nx-fill-0015: a\r\nx-fill-0016: a\r\nx-fill-0017: a\r\nx-fill-0018: a\r\nx-fill-0019: a\r\nx-fill-0020: a\r\nx-fill-0021: a\r\nx-fill-0022: a\r\nx-fill-0023: a\r\nx-fill-0024: a\r\nx-fill-0025: a\r\nx-fill-0026: a\r\nx-fill-0027: a\r\nx-fill-0028: a\r\nx-fill-0029: a\r\nx-fill-0030: a\r\nx-fill-0031: a\r\nx-fill-0032: a\r\nx-fill-0033: a\r\nx-fill-0034: a\r\nx-fill-0035: a\r\nx-fill-0036: a\r\nx-fill-0037: a\r\nx-fill-0038: a\r\nx-fill-0039: a\r\nx-fill-0040: a\r\nx-fill-0041: a\r\nx-fill-0042: a\r\nx-fill-0043: a\r\nx-fill-0044: a\r\nx-fill-0045: a\r\nx-fill-0046: a\r\nx-fill-0047: a\r\nx-fill-0048: a\r\nx-fill-0049: a\r\nx-fill-0050: a\r\nx-fill-0051: a\r\nx-fill-0052: a\r\nx-fill-0053: a\r\nx-fill-0054: a\r\nx-fill-0055: a\r\nx-fill-0056: a\r\nx-fill-0057: a\r\nx-fill-0058: a\r\nx-fill-0059: a\r\nx-fill-0060: a\r\nx-fill-0061: a\r\nx-fill-0062: a\r\nx-fill-0063: a\r\nx-fill-0064: a\r\nx-fill-0065: a\r\nx-fill-0066: a\r\nx-fill-0067: a\r\nx-fill-0068: a\r\nx-fill-0069: a\r\nx-fill-0070: a\r\nx-fill-0071: a\r\nx-fill-0072: a\r\nx-fill-0073: a\r\nx-fill-0074: a\r\nx-fill-0075: a\r\nx-fill-0076: a\r\nx-fill-0077: a\r\nx-fill-0078: a\r\nx-fill-0079: a\r\nx-fill-0080: a\r\nx-fill-0081: a\r\nx-fill-0082: a\r\nx-fill-0083: a\r\nx-fill-0084: a\r\nx-fill-0085: a\r\nx-fill-0086: a\r\nx-fill-0087: a\r\nx-fill-0088: a\r\nx-fill-0089: a\r\nx-fill-0090: a\r\nx-fill-0091: a\r\nx-fill-0092: a\r\nx-fill-0093: a\r\nx-fill-0094: a\r\nx-fill-0095: a\r\nx-fill-0096: a\r\nx-fill-0097: a\r\nx-fill-0098: a\r\nx-fill-0099: a\r\nx-fill-0100: a\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      }
+    },
+    {
+      "name": "cl-not-digits-in-103",
+      "input": "HTTP/1.1 103 Early Hints\r\nContent-Length: abc\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET"
+      },
+      "expect": {
+        "native": {
+          "error": "PROTOCOL/malformed-response"
+        }
+      }
+    },
+    {
       "name": "eof-empty",
       "input": "",
       "inputEncoding": "utf8",
