@@ -1,5 +1,7 @@
 //! Test-vector loader for engine-core integration tests. Format and semantics: `docs/notes/vectors.md`.
-//! The informational fields `reference` and `derivedFrom` are validated by `tools/vectors/schema.ts` and not read here.
+//! One loader walks `tests/vectors/index.json` for every suite; each case kind (`response_vectors.rs`,
+//! `request_vectors.rs`) only says how its JSON decodes. The informational fields `reference` and `derivedFrom` are
+//! validated by `tools/vectors/schema.ts` and not read here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -11,67 +13,17 @@ use serde::de::DeserializeOwned;
 const VECTORS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/vectors");
 const INDEX_FILE: &str = "index.json";
 
-/// One vector case: the bytes the server sends before closing, and what the engine must report.
-#[derive(Debug)]
-pub struct Case {
-    pub name: String,
-    pub input: Vec<u8>,
-    pub method: String,
-    pub expect: Expect,
-}
+/// A case kind: the raw JSON shape of one case and how it becomes the decoded case.
+pub trait VectorCase: Sized {
+    type Raw: DeserializeOwned;
 
-/// The native engine's expected result; `Error` holds `ErrorCode`'s display form, e.g. `PROTOCOL/malformed-response`.
-/// Header names, values and the body are bytes, decoded with the case's `inputEncoding`.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Expect {
-    Ok {
-        status: u16,
-        headers: Vec<(Vec<u8>, Vec<u8>)>,
-        body: Vec<u8>,
-        keep_alive: bool,
-    },
-    Error(String),
+    fn decode(raw: Self::Raw) -> Self;
 }
 
 #[derive(Deserialize)]
-struct RawFile {
-    cases: Vec<RawCase>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawCase {
-    name: String,
-    input: String,
-    input_encoding: String,
-    request: RawRequest,
-    expect: RawExpect,
-}
-
-#[derive(Deserialize)]
-struct RawRequest {
-    method: String,
-}
-
-#[derive(Deserialize)]
-struct RawExpect {
-    native: RawNative,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum RawNative {
-    Ok(RawOk),
-    Error(String),
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RawOk {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: String,
-    keep_alive: bool,
+#[serde(bound = "R: DeserializeOwned")]
+struct RawFile<R> {
+    cases: Vec<R>,
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> T {
@@ -80,7 +32,7 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> T {
 }
 
 /// `utf8`: the string's UTF-8 bytes; `latin1`: one byte per code point U+0000–U+00FF.
-fn bytes(text: String, encoding: &str, case: &str) -> Vec<u8> {
+pub fn bytes(text: String, encoding: &str, case: &str) -> Vec<u8> {
     match encoding {
         "utf8" => text.into_bytes(),
         "latin1" => text
@@ -94,30 +46,6 @@ fn bytes(text: String, encoding: &str, case: &str) -> Vec<u8> {
     }
 }
 
-fn decode(raw: RawCase) -> Case {
-    let encoding = raw.input_encoding.as_str();
-    let name = raw.name.as_str();
-    let expect = match raw.expect.native {
-        RawNative::Ok(ok) => Expect::Ok {
-            status: ok.status,
-            headers: ok
-                .headers
-                .into_iter()
-                .map(|(n, v)| (bytes(n, encoding, name), bytes(v, encoding, name)))
-                .collect(),
-            body: bytes(ok.body, encoding, name),
-            keep_alive: ok.keep_alive,
-        },
-        RawNative::Error(error) => Expect::Error(error),
-    };
-    Case {
-        input: bytes(raw.input, encoding, name),
-        method: raw.request.method,
-        expect,
-        name: raw.name,
-    }
-}
-
 /// Every case of every vector file registered for `suite` in `tests/vectors/index.json`, paired with
 /// the file's path relative to `tests/vectors`.
 ///
@@ -125,7 +53,7 @@ fn decode(raw: RawCase) -> Case {
 ///
 /// As [`load_suite_in`].
 #[must_use]
-pub fn load_suite(suite: &str) -> Vec<(String, Case)> {
+pub fn load_suite<C: VectorCase>(suite: &str) -> Vec<(String, C)> {
     load_suite_in(Path::new(VECTORS_ROOT), suite)
 }
 
@@ -137,12 +65,26 @@ pub fn load_suite(suite: &str) -> Vec<(String, Case)> {
 /// file has no cases, or when a `.json` file sits in a directory of the suite's files without being
 /// registered in `index.json`.
 #[must_use]
-pub fn load_suite_in(root: &Path, suite: &str) -> Vec<(String, Case)> {
+pub fn load_suite_in<C: VectorCase>(root: &Path, suite: &str) -> Vec<(String, C)> {
+    suite_files(root, suite)
+        .into_iter()
+        .flat_map(|file| {
+            let raw: RawFile<C::Raw> = read_json(&root.join(&file));
+            assert!(!raw.cases.is_empty(), "{file}: no cases");
+            raw.cases
+                .into_iter()
+                .map(move |case| (file.clone(), C::decode(case)))
+        })
+        .collect()
+}
+
+/// The files registered for `suite`, after checking that every `.json` file next to them is registered.
+fn suite_files(root: &Path, suite: &str) -> Vec<String> {
     let index: BTreeMap<String, Vec<String>> = read_json(&root.join(INDEX_FILE));
-    let files: Vec<&String> = index
+    let files: Vec<String> = index
         .iter()
         .filter(|(_, suites)| suites.iter().any(|s| s == suite))
-        .map(|(file, _)| file)
+        .map(|(file, _)| file.clone())
         .collect();
     assert!(
         !files.is_empty(),
@@ -153,36 +95,32 @@ pub fn load_suite_in(root: &Path, suite: &str) -> Vec<(String, Case)> {
         .map(|file| file.rsplit_once('/').map_or("", |(dir, _)| dir))
         .collect();
     for dir in dirs {
-        let entries = fs::read_dir(root.join(dir)).unwrap_or_else(|e| panic!("{dir}: {e}"));
-        for entry in entries {
-            let path = entry.unwrap_or_else(|e| panic!("{dir}: {e}")).path();
-            // Case-sensitive, like `listVectorFiles` in tools/vectors/schema.ts.
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_else(|| panic!("{}: non-UTF-8 file name", path.display()));
-            let file = if dir.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{dir}/{name}")
-            };
-            assert!(
-                file == INDEX_FILE || index.contains_key(&file),
-                "{file} is not registered in tests/vectors/{INDEX_FILE}"
-            );
-        }
+        assert_registered(root, dir, &index);
     }
     files
-        .into_iter()
-        .flat_map(|file| {
-            let raw: RawFile = read_json(&root.join(file));
-            assert!(!raw.cases.is_empty(), "{file}: no cases");
-            raw.cases
-                .into_iter()
-                .map(move |case| (file.clone(), decode(case)))
-        })
-        .collect()
+}
+
+/// Panics on a `.json` file in `root/dir` that `index` does not list.
+fn assert_registered(root: &Path, dir: &str, index: &BTreeMap<String, Vec<String>>) {
+    let entries = fs::read_dir(root.join(dir)).unwrap_or_else(|e| panic!("{dir}: {e}"));
+    for entry in entries {
+        let path = entry.unwrap_or_else(|e| panic!("{dir}: {e}")).path();
+        // Case-sensitive, like `listVectorFiles` in tools/vectors/schema.ts.
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_else(|| panic!("{}: non-UTF-8 file name", path.display()));
+        let file = if dir.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{dir}/{name}")
+        };
+        assert!(
+            file == INDEX_FILE || index.contains_key(&file),
+            "{file} is not registered in tests/vectors/{INDEX_FILE}"
+        );
+    }
 }
