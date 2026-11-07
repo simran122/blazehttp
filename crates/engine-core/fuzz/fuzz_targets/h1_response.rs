@@ -373,12 +373,11 @@ enum Accepted {
     Final { start: usize, head: ResponseHead },
 }
 
-/// Feeds `input` in `reads` (increasing lengths), then EOF; the outcome is the accepted heads and the error, if any.
-fn exchange(
-    input: &[u8],
-    method: Method,
-    reads: impl IntoIterator<Item = usize>,
-) -> (Vec<Accepted>, Option<ErrorCode>) {
+/// What the parser made of an exchange: the accepted heads and the error, if any.
+type Outcome = (Vec<Accepted>, Option<ErrorCode>);
+
+/// Feeds `input` in `reads` (increasing lengths), then EOF.
+fn exchange(input: &[u8], method: Method, reads: impl IntoIterator<Item = usize>) -> Outcome {
     let mut parser = ResponseParser::new(method);
     let mut accepted = Vec::new();
     let mut start = 0;
@@ -438,6 +437,77 @@ fn httparse_head(buf: &[u8]) -> Option<Oracle> {
     })
 }
 
+/// Framing facts the model collects from one head's fields.
+#[derive(Default)]
+struct FieldFacts {
+    length: Option<u64>,
+    chunked: bool,
+    keep_alive_option: bool,
+}
+
+impl FieldFacts {
+    /// Applies the count, `Content-Length`, `Transfer-Encoding` and `Connection` rules to the fields in order.
+    fn scan(head: &Oracle, interim: bool, close: &mut bool) -> Result<Self, ErrorCode> {
+        let mut facts = Self::default();
+        for (index, (name, value)) in head.fields.iter().enumerate() {
+            if index >= H1_LIMITS.max_header_fields {
+                return Err(MALFORMED);
+            }
+            if name.eq_ignore_ascii_case("content-length") {
+                facts.content_length(value, interim)?;
+            } else if name.eq_ignore_ascii_case("transfer-encoding") {
+                facts.transfer_encoding(value, head.http10, interim)?;
+            } else if name.eq_ignore_ascii_case("connection") {
+                facts.connection(value, close);
+            }
+        }
+        Ok(facts)
+    }
+
+    fn content_length(&mut self, value: &[u8], interim: bool) -> Result<(), ErrorCode> {
+        if self.length.is_some() || self.chunked {
+            return Err(SMUGGLING);
+        }
+        let digits = !value.is_empty() && value.iter().all(u8::is_ascii_digit);
+        let n: u64 = std::str::from_utf8(value)
+            .ok()
+            .filter(|_| digits)
+            .and_then(|v| v.parse().ok())
+            .ok_or(MALFORMED)?;
+        if interim && n != 0 {
+            return Err(SMUGGLING);
+        }
+        self.length = Some(n);
+        Ok(())
+    }
+
+    fn transfer_encoding(
+        &mut self,
+        value: &[u8],
+        http10: bool,
+        interim: bool,
+    ) -> Result<(), ErrorCode> {
+        if self.length.is_some()
+            || self.chunked
+            || http10
+            || interim
+            || !value.eq_ignore_ascii_case(b"chunked")
+        {
+            return Err(SMUGGLING);
+        }
+        self.chunked = true;
+        Ok(())
+    }
+
+    /// `close` is sticky across the exchange's heads; `keep-alive` counts for this head only.
+    fn connection(&mut self, value: &[u8], close: &mut bool) {
+        for option in value.split(|&b| b == b',').map(<[u8]>::trim_ascii) {
+            *close |= option.eq_ignore_ascii_case(b"close");
+            self.keep_alive_option |= option.eq_ignore_ascii_case(b"keep-alive");
+        }
+    }
+}
+
 /// Reference model of the framing and count rules over one head's fields, in field order like the parser, returning
 /// the error class. `close` carries a `Connection: close` from earlier heads of the exchange and is updated.
 fn model(
@@ -454,44 +524,11 @@ fn model(
     {
         return Err(MALFORMED);
     }
-    let mut length: Option<u64> = None;
-    let mut chunked = false;
-    let mut keep_alive_option = false;
-    for (index, (name, value)) in head.fields.iter().enumerate() {
-        if index >= H1_LIMITS.max_header_fields {
-            return Err(MALFORMED);
-        }
-        if name.eq_ignore_ascii_case("content-length") {
-            if length.is_some() || chunked {
-                return Err(SMUGGLING);
-            }
-            let digits = !value.is_empty() && value.iter().all(u8::is_ascii_digit);
-            let n: u64 = std::str::from_utf8(value)
-                .ok()
-                .filter(|_| digits)
-                .and_then(|v| v.parse().ok())
-                .ok_or(MALFORMED)?;
-            if interim && n != 0 {
-                return Err(SMUGGLING);
-            }
-            length = Some(n);
-        } else if name.eq_ignore_ascii_case("transfer-encoding") {
-            if length.is_some()
-                || chunked
-                || head.http10
-                || interim
-                || !value.eq_ignore_ascii_case(b"chunked")
-            {
-                return Err(SMUGGLING);
-            }
-            chunked = true;
-        } else if name.eq_ignore_ascii_case("connection") {
-            for option in value.split(|&b| b == b',').map(<[u8]>::trim_ascii) {
-                *close |= option.eq_ignore_ascii_case(b"close");
-                keep_alive_option |= option.eq_ignore_ascii_case(b"keep-alive");
-            }
-        }
-    }
+    let FieldFacts {
+        length,
+        chunked,
+        keep_alive_option,
+    } = FieldFacts::scan(head, interim, close)?;
     let bodiless = head_request || status == 204 || status == 304;
     let framing = match (bodiless, chunked, length) {
         (true, ..) => Framing::Empty,
@@ -522,14 +559,36 @@ fn fields_of(block: &[u8]) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-/// Properties 3–5 for the whole-input outcome.
-fn check_against_oracle(
-    input: &[u8],
-    head_request: bool,
+/// A head httparse completed but we did not accept: we must have rejected it for a reason the model or the limits
+/// give (we are stricter, never laxer).
+fn check_rejection(
+    verdict: Result<(Framing, bool), ErrorCode>,
+    fits: bool,
+    error: ErrorCode,
     valid: bool,
-    accepted: &[Accepted],
-    error: Option<ErrorCode>,
 ) {
+    match verdict {
+        _ if !fits => assert!(
+            error == TOO_LARGE || error == MALFORMED || error == SMUGGLING,
+            "{error:?}"
+        ),
+        Err(class) => assert!(
+            error == class || error == MALFORMED,
+            "error class: ours {error:?}, model {class:?}"
+        ),
+        Ok(_) => {
+            assert_ne!(error, SMUGGLING, "smuggling-risk where the model accepts");
+            assert!(
+                !valid,
+                "over-strict: rejected a valid exchange the model accepts ({error:?})"
+            );
+        }
+    }
+}
+
+/// Properties 3–5 for the whole-input outcome.
+fn check_against_oracle(input: &[u8], head_request: bool, valid: bool, outcome: &Outcome) {
+    let (accepted, error) = outcome;
     let mut close = false;
     let mut start = 0;
     let mut interim_index = 0;
@@ -547,25 +606,8 @@ fn check_against_oracle(
         let fits = start + oracle.len <= H1_LIMITS.max_head_bytes
             && oracle.status_line_len <= H1_LIMITS.max_status_line_bytes;
         let Some(next) = next else {
-            // httparse completed a head we did not accept: we rejected it (we are stricter, never laxer).
             let error = error.expect("a complete head was neither accepted nor rejected");
-            match verdict {
-                _ if !fits => assert!(
-                    error == TOO_LARGE || error == MALFORMED || error == SMUGGLING,
-                    "{error:?}"
-                ),
-                Err(class) => assert!(
-                    error == class || error == MALFORMED,
-                    "error class: ours {error:?}, model {class:?}"
-                ),
-                Ok(_) => {
-                    assert_ne!(error, SMUGGLING, "smuggling-risk where the model accepts");
-                    assert!(
-                        !valid,
-                        "over-strict: rejected a valid exchange the model accepts ({error:?})"
-                    );
-                }
-            }
+            check_rejection(verdict, fits, error, valid);
             return;
         };
         let verdict = verdict.expect("the model accepts every head we accept");
@@ -619,5 +661,5 @@ fuzz_target!(|data: Input| {
     if let Some(e) = whole.1 {
         assert!(ErrorCode::ALL_SAMPLES.contains(&e), "{e:?}");
     }
-    check_against_oracle(&input, data.head_request, valid, &whole.0, whole.1);
+    check_against_oracle(&input, data.head_request, valid, &whole);
 });

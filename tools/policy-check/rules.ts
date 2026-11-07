@@ -93,20 +93,30 @@ const PACKAGE_RENAME = /\bpackage\s*=\s*"([\w-]+)"/;
 const engineMessage = (crate: string | undefined): string | undefined =>
   crate !== undefined && HTTP_ENGINE_CRATES.has(crate) ? `HTTP engine crate ${crate}` : undefined;
 
+/** The Cargo table a line sits in: a `[dependencies]`-style list, a `[dependencies.<name>]` table, or another table. */
+type CargoTable = 'dependency-list' | 'dependency-table' | 'other';
+
+const tableOf = (header: RegExpExecArray | null): CargoTable => {
+  if (header === null) return 'other';
+  return header[1] === undefined ? 'dependency-list' : 'dependency-table';
+};
+
+/** Engine crate named by a line inside a table: by key in a dependency list, or by a `package = "…"` rename. */
+const dependencyLineMessage = (table: CargoTable, line: string): string | undefined => {
+  if (table === 'other') return undefined;
+  const renamed = engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
+  return table === 'dependency-table' ? renamed : (engineMessage(DEPENDENCY_KEY.exec(line)?.[1]) ?? renamed);
+};
+
 const noHttpEngineDep: Rule = (path, content) => {
   if (!ENGINE_CRATE_MANIFEST.test(path)) return [];
-  let inDependencies = false; // inside a `[dependencies]`-style table
-  let inDependencyTable = false; // inside a `[dependencies.<name>]` table
+  let table: CargoTable = 'other';
   return scanLines(path, content, 'no-http-engine-dep', (line) => {
-    const header = DEPENDENCY_HEADER.exec(line.trim());
-    if (header !== null || line.trim().startsWith('[')) {
-      inDependencies = header !== null && header[1] === undefined;
-      inDependencyTable = header?.[1] !== undefined;
-      return engineMessage(header?.[1]);
-    }
-    if (inDependencyTable) return engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
-    if (!inDependencies) return undefined;
-    return engineMessage(DEPENDENCY_KEY.exec(line)?.[1]) ?? engineMessage(PACKAGE_RENAME.exec(line)?.[1]);
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('[')) return dependencyLineMessage(table, line);
+    const header = DEPENDENCY_HEADER.exec(trimmed);
+    table = tableOf(header);
+    return engineMessage(header?.[1]);
   });
 };
 

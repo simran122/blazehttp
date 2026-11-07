@@ -81,6 +81,24 @@ const checkDetailList = (where: string, values: readonly string[], idBits: numbe
   if (dup !== undefined) fail(where, `duplicate value "${dup}"`);
 };
 
+type FieldEntry = readonly [string, FieldType];
+
+/** Field list of a code: not empty, and every enum field a valid detail list. */
+const checkFields = (where: string, fields: readonly FieldEntry[]): void => {
+  if (fields.length === 0) fail(`${where}.fields`, 'empty object');
+  for (const [name, type] of fields) if (Array.isArray(type)) checkDetailList(`${where}.fields.${name}`, type, 256);
+};
+
+/** Wire words carry at most one u32 and one enum, and never a string. */
+const checkWireFields = (where: string, fields: readonly FieldEntry[]): void => {
+  const strings = fields.filter(([, t]) => t === 'string').map(([name]) => name);
+  if (strings.length > 0)
+    fail(where, `string field "${strings.join(', ')}" needs wire: false (words carry only u32 and enums)`);
+  const enums = fields.filter(([, t]) => typeof t !== 'string');
+  if (enums.length > 1 || fields.length - enums.length > 1)
+    fail(where, 'a wire code takes at most one u32 and one enum field');
+};
+
 const checkError = (e: ErrorSpec, index: number): void => {
   const where = `${SPEC}.errors[${String(index)}] (${e.code})`;
   if (!CODE_NAME.test(e.code)) fail(where, 'code must be UPPER_SNAKE_CASE');
@@ -90,15 +108,8 @@ const checkError = (e: ErrorSpec, index: number): void => {
     return;
   }
   const fields = Object.entries(e.fields ?? {});
-  if (fields.length === 0) fail(`${where}.fields`, 'empty object');
-  for (const [name, type] of fields) if (Array.isArray(type)) checkDetailList(`${where}.fields.${name}`, type, 256);
-  if (e.wire === false) return;
-  const strings = fields.filter(([, t]) => t === 'string').map(([name]) => name);
-  if (strings.length > 0)
-    fail(where, `string field "${strings.join(', ')}" needs wire: false (words carry only u32 and enums)`);
-  const enums = fields.filter(([, t]) => typeof t !== 'string');
-  if (enums.length > 1 || fields.length - enums.length > 1)
-    fail(where, 'a wire code takes at most one u32 and one enum field');
+  checkFields(where, fields);
+  if (e.wire !== false) checkWireFields(where, fields);
 };
 
 /** Semantic validation: ids must fit the wire format and stay unambiguous. */

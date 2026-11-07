@@ -166,50 +166,78 @@ const META = /<!--\s+meta=(.*)\s+-->/;
 const FENCE_OPEN = /^```(\S*)\s*$/;
 const FENCE_CLOSE = /^```\s*$/;
 
+interface Fence {
+  readonly info: string;
+  readonly line: number;
+  readonly body: string[];
+}
+
+/** Parser state between lines: the open test, a meta comment waiting for its block, and the open fence. */
+interface MdState {
+  readonly tests: MdTest[];
+  current: MdTest | undefined;
+  pendingMeta: unknown;
+  fence: Fence | undefined;
+}
+
+/** A line inside a fence: body text, or the closing fence that files the block (and its meta) under the open test. */
+const readFenceLine = (state: MdState, fence: Fence, line: string): void => {
+  if (!FENCE_CLOSE.test(line)) {
+    fence.body.push(`${line}\n`);
+    return;
+  }
+  const { current } = state;
+  current?.blocks.set(fence.info, [...(current.blocks.get(fence.info) ?? []), fence.body.join('')]);
+  if (state.pendingMeta !== undefined) current?.meta.set(fence.info, state.pendingMeta);
+  state.pendingMeta = undefined;
+  state.fence = undefined;
+};
+
+/** A line outside fences: a heading opens (depth ≥ 2) or closes (depth 1) a test; a meta comment or fence is noted. */
+const readOuterLine = (state: MdState, line: string, lineNumber: number): void => {
+  const heading = SUB_HEADING.exec(line)?.[1];
+  if (heading !== undefined || TOP_HEADING.test(line)) {
+    state.current = heading === undefined ? undefined : { name: heading, blocks: new Map(), meta: new Map() };
+    if (state.current !== undefined) state.tests.push(state.current);
+    state.pendingMeta = undefined;
+    return;
+  }
+  const meta = META.exec(line)?.[1];
+  if (meta !== undefined) state.pendingMeta = JSON.parse(meta);
+  const info = FENCE_OPEN.exec(line)?.[1];
+  if (info !== undefined) state.fence = { info, line: lineNumber, body: [] };
+};
+
 /** Headings at depth ≥ 2 that own fenced blocks become tests, as in mdgator (which normalises CR and CRLF to LF). */
 const parseMarkdown = (md: string): MdTest[] => {
-  const tests: MdTest[] = [];
-  let current: MdTest | undefined;
-  let pendingMeta: unknown;
-  let fence: { readonly info: string; readonly line: number; readonly body: string[] } | undefined;
+  const state: MdState = { tests: [], current: undefined, pendingMeta: undefined, fence: undefined };
   for (const [i, line] of md.split(/\r\n?|\n/).entries()) {
-    if (fence !== undefined) {
-      if (!FENCE_CLOSE.test(line)) {
-        fence.body.push(`${line}\n`);
-        continue;
-      }
-      current?.blocks.set(fence.info, [...(current.blocks.get(fence.info) ?? []), fence.body.join('')]);
-      if (pendingMeta !== undefined) current?.meta.set(fence.info, pendingMeta);
-      pendingMeta = undefined;
-      fence = undefined;
-      continue;
-    }
-    const heading = SUB_HEADING.exec(line)?.[1];
-    if (heading !== undefined || TOP_HEADING.test(line)) {
-      current = heading === undefined ? undefined : { name: heading, blocks: new Map(), meta: new Map() };
-      if (current !== undefined) tests.push(current);
-      pendingMeta = undefined;
-      continue;
-    }
-    const meta = META.exec(line)?.[1];
-    if (meta !== undefined) pendingMeta = JSON.parse(meta);
-    const info = FENCE_OPEN.exec(line)?.[1];
-    if (info !== undefined) fence = { info, line: i + 1, body: [] };
+    if (state.fence === undefined) readOuterLine(state, line, i + 1);
+    else readFenceLine(state, state.fence, line);
   }
-  if (fence !== undefined) throw new Error(`unclosed fence at line ${String(fence.line)}`);
-  return tests.filter((t) => t.blocks.size > 0);
+  if (state.fence !== undefined) throw new Error(`unclosed fence at line ${String(state.fence.line)}`);
+  return state.tests.filter((t) => t.blocks.size > 0);
 };
 
 // ---- llhttp test log ----
 
-type LogEvent =
-  | { readonly kind: 'begin'; readonly off: number }
-  | { readonly kind: 'span'; readonly off: number; readonly len: number; readonly span: string; readonly text: string }
-  | { readonly kind: 'valueComplete' }
-  | { readonly kind: 'headers'; readonly status: number; readonly version: string }
-  | { readonly kind: 'complete'; readonly off: number }
-  | { readonly kind: 'error'; readonly code: number }
-  | { readonly kind: 'other' };
+/** Fields of each log event, by kind. */
+interface LogEventFields {
+  readonly begin: { readonly off: number };
+  readonly span: { readonly off: number; readonly len: number; readonly span: string; readonly text: string };
+  readonly valueComplete: unknown;
+  readonly headers: { readonly status: number; readonly version: string };
+  readonly complete: { readonly off: number };
+  readonly error: { readonly code: number };
+  readonly other: unknown;
+}
+
+type LogEventKind = keyof LogEventFields;
+
+/** One event of kind `K` (the union of all kinds by default); the map form lets a handler table be indexed by kind. */
+type LogEvent<K extends LogEventKind = LogEventKind> = {
+  readonly [P in K]: { readonly kind: P } & LogEventFields[P];
+}[K];
 
 const LOG_LINE = /^off=(\d+) (.*)$/;
 const SPAN = /^len=(\d+) span\[([\w.]+)\]=("(?:.*)"|lf|cr)$/;
@@ -268,40 +296,188 @@ const OWS = /^[ \t]+|[ \t]+$/g;
 const INTERIM_DECIDED_FIELDS: ReadonlySet<string> = new Set(['content-length', 'transfer-encoding', 'connection']);
 const SWITCHING_PROTOCOLS = 101;
 
+/** A final response head the importer can model, with what its framing rules need. */
+interface FinalResponse {
+  readonly status: number;
+  readonly version: string;
+  readonly headers: Header[];
+  readonly body: string;
+  /** The connection may be reused (§5.2 keep-alive rules). */
+  readonly persistent: boolean;
+  /** HEAD, 204 or 304: no body follows the head. */
+  readonly noBody: boolean;
+  /** §5.2 Bodies: a 204/304 (not HEAD) announcing a body is accepted without one, but its connection is not reused. */
+  readonly unsentBodyStatus: boolean;
+}
+
+const headerValues = (headers: readonly Header[], name: string): string[] =>
+  headers.filter(([n]) => n.toLowerCase() === name).map(([, v]) => v);
+
+/** HTTP/1.1 persists unless `Connection: close`; HTTP/1.0 only with `Connection: keep-alive`. */
+const persists = (headers: readonly Header[], version: string): boolean => {
+  const tokens = headerValues(headers, 'connection').flatMap((v) => v.split(',').map((t) => t.trim().toLowerCase()));
+  return !tokens.includes('close') && (version === '1.1' || tokens.includes('keep-alive'));
+};
+
+/** Status and version of a final head inside the modelled grammar; anything else fails. */
+const modelledHead = (msg: Message, fail: (why: string) => never): { status: number; version: string } => {
+  const status = msg.status ?? fail('no final response head');
+  const { version } = msg;
+  if (msg.protocol !== 'HTTP') fail(`protocol ${msg.protocol}`);
+  if (version !== '1.0' && version !== '1.1') fail(`version ${String(version)}`);
+  if (status > 599) fail(`status ${String(status)}`);
+  if (msg.headers.some(([, v]) => /[\r\n]/.test(v))) fail('line break in a header value');
+  return { status, version };
+};
+
+const finalResponse = (msg: Message, method: string, fail: (why: string) => never): FinalResponse => {
+  const { status, version } = modelledHead(msg, fail);
+  const bodylessStatus = status === 204 || status === 304;
+  return {
+    status,
+    version,
+    headers: msg.headers,
+    body: msg.body,
+    persistent: persists(msg.headers, version),
+    noBody: method === 'HEAD' || bodylessStatus,
+    unsentBodyStatus: method !== 'HEAD' && bodylessStatus,
+  };
+};
+
+const delivered = (r: FinalResponse, body: string, keepAlive: boolean): Outcome => ({
+  native: { ok: { status: r.status, headers: r.headers, body, keepAlive } },
+});
+
+const chunkedOutcome = (
+  r: FinalResponse,
+  te: readonly string[],
+  hasContentLength: boolean,
+  fail: (why: string) => never,
+): Outcome => {
+  if (te.join() !== 'chunked' || hasContentLength || r.version !== '1.1') fail(`Transfer-Encoding "${te.join(', ')}"`);
+  if (r.noBody) return delivered(r, '', r.persistent && !r.unsentBodyStatus);
+  // removal: P1a (#7)
+  return { skip: 'chunked body: chunked decoding and transfer-encoding.md arrive in P1a (#7)' };
+};
+
+const contentLengthOutcome = (r: FinalResponse, cl: readonly string[], fail: (why: string) => never): Outcome => {
+  const [length = ''] = cl;
+  if (cl.length > 1 || !/^\d+$/.test(length) || BigInt(length) > U64_MAX) fail(`Content-Length "${cl.join(', ')}"`);
+  if (r.noBody) return delivered(r, '', r.persistent && !(r.unsentBodyStatus && BigInt(length) > 0n));
+  return Buffer.byteLength(r.body) < Number(length)
+    ? { native: { error: 'PROTOCOL/incomplete-body' } }
+    : delivered(r, r.body, r.persistent);
+};
+
 /** The response the client delivers once the server closes the connection after `input`. */
 const finalOutcome = (msg: Message, method: string, fail: (why: string) => never): Outcome => {
-  const { headers, protocol, body } = msg;
-  const status = msg.status ?? fail('no final response head');
-  if (protocol !== 'HTTP') fail(`protocol ${protocol}`);
-  if (msg.version !== '1.0' && msg.version !== '1.1') fail(`version ${String(msg.version)}`);
-  if (status > 599) fail(`status ${String(status)}`);
-  if (headers.some(([, v]) => /[\r\n]/.test(v))) fail('line break in a header value');
-  const values = (name: string): string[] => headers.filter(([n]) => n.toLowerCase() === name).map(([, v]) => v);
-  const te = values('transfer-encoding');
-  const cl = values('content-length');
-  const tokens = values('connection').flatMap((v) => v.split(',').map((t) => t.trim().toLowerCase()));
-  const persistent = !tokens.includes('close') && (msg.version === '1.1' || tokens.includes('keep-alive'));
-  const noBody = method === 'HEAD' || status === 204 || status === 304;
-  // §5.2 Bodies: a 204/304 (not HEAD) announcing a body is accepted without one, but its connection is not reused.
-  const unsentBodyStatus = method !== 'HEAD' && (status === 204 || status === 304);
-  const ok = (bodyText: string, keepAlive: boolean): Outcome => ({
-    native: { ok: { status, headers, body: bodyText, keepAlive } },
-  });
-  if (te.length > 0) {
-    if (te.join() !== 'chunked' || cl.length > 0 || msg.version !== '1.1') fail(`Transfer-Encoding "${te.join(', ')}"`);
-    if (noBody) return ok('', persistent && !unsentBodyStatus);
-    // removal: P1a (#7)
-    return { skip: 'chunked body: chunked decoding and transfer-encoding.md arrive in P1a (#7)' };
+  const r = finalResponse(msg, method, fail);
+  const te = headerValues(r.headers, 'transfer-encoding');
+  const cl = headerValues(r.headers, 'content-length');
+  if (te.length > 0) return chunkedOutcome(r, te, cl.length > 0, fail);
+  if (cl.length > 0) return contentLengthOutcome(r, cl, fail);
+  return r.noBody ? delivered(r, '', r.persistent) : delivered(r, r.body, false);
+};
+
+type SpanTarget = keyof Pick<Message, 'field' | 'value' | 'protocol' | 'body'>;
+const SPAN_TARGET: Readonly<Record<string, SpanTarget>> = {
+  header_field: 'field',
+  header_value: 'value',
+  protocol: 'protocol',
+  body: 'body',
+};
+
+/** Replays llhttp log events: interim messages are checked and dropped; the final message or an error decides. */
+class LogReplay {
+  private msg: Message | undefined;
+  private nextBegin = 0;
+  private readonly method: string;
+  private readonly errorNames: ReadonlyMap<number, string>;
+  private readonly fail: (why: string) => never;
+
+  constructor(method: string, errorNames: ReadonlyMap<number, string>, fail: (why: string) => never) {
+    this.method = method;
+    this.errorNames = errorNames;
+    this.fail = fail;
   }
-  if (cl.length > 0) {
-    const [length = ''] = cl;
-    if (cl.length > 1 || !/^\d+$/.test(length) || BigInt(length) > U64_MAX) fail(`Content-Length "${cl.join(', ')}"`);
-    if (noBody) return ok('', persistent && !(unsentBodyStatus && BigInt(length) > 0n));
-    return Buffer.byteLength(body) < Number(length)
-      ? { native: { error: 'PROTOCOL/incomplete-body' } }
-      : ok(body, persistent);
+
+  /** The outcome once an event decides it, else `undefined`. */
+  apply<K extends LogEventKind>(event: LogEvent<K>): Outcome | undefined {
+    return EVENT_HANDLERS[event.kind](this, event);
   }
-  return noBody ? ok('', persistent) : ok(body, false);
+
+  /** The log ended: the open message is the final response. */
+  end(): Outcome {
+    return finalOutcome(this.msg ?? this.fail('input that ends after an interim response'), this.method, this.fail);
+  }
+
+  begin(event: LogEvent<'begin'>): void {
+    if (event.off !== this.nextBegin) this.fail('bytes before the status line');
+    this.msg = { headers: [], protocol: '', body: '', field: '', value: '' };
+  }
+
+  span(event: LogEvent<'span'>): void {
+    const target = SPAN_TARGET[event.span];
+    if (target !== undefined) this.current()[target] += event.text;
+  }
+
+  valueComplete(): void {
+    const m = this.current();
+    m.headers.push([m.field, m.value.replace(OWS, '')]);
+    m.field = '';
+    m.value = '';
+  }
+
+  headers(event: LogEvent<'headers'>): void {
+    this.current().status = event.status;
+    this.current().version = event.version;
+  }
+
+  complete(event: LogEvent<'complete'>): Outcome | undefined {
+    const m = this.current();
+    if (Number(m.status) >= 200) return finalOutcome(m, this.method, this.fail);
+    // §5.2 Interim heads: framing fields are rejected and `Connection: close` is sticky; not modelled here.
+    // A `101` is not interim for us: llhttp's upgrade pause that follows maps to an error.
+    if (m.status !== SWITCHING_PROTOCOLS && m.headers.some(([n]) => INTERIM_DECIDED_FIELDS.has(n.toLowerCase()))) {
+      this.fail('framing or Connection in a 1xx head');
+    }
+    this.nextBegin = event.off;
+    this.msg = undefined;
+    return undefined;
+  }
+
+  error(event: LogEvent<'error'>): Outcome {
+    const name = this.errorNames.get(event.code) ?? this.fail('an unknown llhttp error code');
+    return { native: nativeError(name) };
+  }
+
+  private current(): Message {
+    return this.msg ?? this.fail('a log event outside a message');
+  }
+}
+
+const EVENT_HANDLERS: {
+  readonly [K in LogEventKind]: (replay: LogReplay, event: LogEvent<K>) => Outcome | undefined;
+} = {
+  begin: (replay, event) => {
+    replay.begin(event);
+    return undefined;
+  },
+  span: (replay, event) => {
+    replay.span(event);
+    return undefined;
+  },
+  valueComplete: (replay) => {
+    replay.valueComplete();
+    return undefined;
+  },
+  headers: (replay, event) => {
+    replay.headers(event);
+    return undefined;
+  },
+  complete: (replay, event) => replay.complete(event),
+  error: (replay, event) => replay.error(event),
+  other: () => undefined,
 };
 
 const outcomeOf = (
@@ -310,46 +486,12 @@ const outcomeOf = (
   errorNames: ReadonlyMap<number, string>,
   fail: (why: string) => never,
 ): Outcome => {
-  let msg: Message | undefined;
-  let nextBegin = 0;
-  const current = (): Message => msg ?? fail('a log event outside a message');
-  const spanTarget: Readonly<Record<string, keyof Pick<Message, 'field' | 'value' | 'protocol' | 'body'>>> = {
-    header_field: 'field',
-    header_value: 'value',
-    protocol: 'protocol',
-    body: 'body',
-  };
+  const replay = new LogReplay(method, errorNames, fail);
   for (const event of events) {
-    if (event.kind === 'begin') {
-      if (event.off !== nextBegin) fail('bytes before the status line');
-      msg = { headers: [], protocol: '', body: '', field: '', value: '' };
-    } else if (event.kind === 'span') {
-      const target = spanTarget[event.span];
-      if (target !== undefined) current()[target] += event.text;
-    } else if (event.kind === 'valueComplete') {
-      const m = current();
-      m.headers.push([m.field, m.value.replace(OWS, '')]);
-      m.field = '';
-      m.value = '';
-    } else if (event.kind === 'headers') {
-      current().status = event.status;
-      current().version = event.version;
-    } else if (event.kind === 'complete') {
-      const m = current();
-      if (Number(m.status) >= 200) return finalOutcome(m, method, fail);
-      // §5.2 Interim heads: framing fields are rejected and `Connection: close` is sticky; not modelled here.
-      // A `101` is not interim for us: llhttp's upgrade pause that follows maps to an error.
-      if (m.status !== SWITCHING_PROTOCOLS && m.headers.some(([n]) => INTERIM_DECIDED_FIELDS.has(n.toLowerCase()))) {
-        fail('framing or Connection in a 1xx head');
-      }
-      nextBegin = event.off;
-      msg = undefined;
-    } else if (event.kind === 'error') {
-      const name = errorNames.get(event.code) ?? fail('an unknown llhttp error code');
-      return { native: nativeError(name) };
-    }
+    const outcome = replay.apply(event);
+    if (outcome !== undefined) return outcome;
   }
-  return finalOutcome(msg ?? fail('input that ends after an interim response'), method, fail);
+  return replay.end();
 };
 
 /** Every span in the log must equal the normalised input at its offset: proof the normalisation matches. */
@@ -365,6 +507,22 @@ const checkSpans = (events: readonly LogEvent[], input: Buffer, fail: (why: stri
 
 const INLINE_JS = /\$\{(.+?)\}/;
 
+/** The single `http` block and single `log` block a test must have. */
+const testBlocks = (test: MdTest, name: string): { readonly http: string; readonly log: string } => {
+  const [http, ...moreHttp] = test.blocks.get('http') ?? [];
+  const [log, ...moreLogs] = test.blocks.get('log') ?? [];
+  if (http === undefined || log === undefined || moreHttp.length > 0 || moreLogs.length > 0) {
+    throw new Error(`${name}: expected one http and one log block`);
+  }
+  return { http, log };
+};
+
+/** The meta comment before the `http` block. */
+const httpMeta = (test: MdTest, name: string): Record<string, unknown> => {
+  if (!test.meta.has('http')) throw new Error(`${name}: missing meta comment before the http block`);
+  return asRecord(test.meta.get('http'), `${name}: meta`);
+};
+
 const importCase = (
   test: MdTest,
   name: string,
@@ -373,13 +531,8 @@ const importCase = (
   const fail = (why: string): never => {
     throw new Error(`${name}: cannot model ${why}; decide the case with an override in ${OVERRIDES_FILE}`);
   };
-  const [http, ...moreHttp] = test.blocks.get('http') ?? [];
-  const [log, ...moreLogs] = test.blocks.get('log') ?? [];
-  if (http === undefined || log === undefined || moreHttp.length > 0 || moreLogs.length > 0) {
-    throw new Error(`${name}: expected one http and one log block`);
-  }
-  if (!test.meta.has('http')) throw new Error(`${name}: missing meta comment before the http block`);
-  const meta = asRecord(test.meta.get('http'), `${name}: meta`);
+  const { http, log } = testBlocks(test, name);
+  const meta = httpMeta(test, name);
   if (meta['type'] !== 'response')
     return { name, reason: `llhttp ${String(meta['type'])} mode; blazehttp has no lenient modes (§5.2)` };
   const input = normaliseInput(http);
