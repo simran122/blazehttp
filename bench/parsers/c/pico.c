@@ -11,7 +11,7 @@ typedef struct {
     int64_t content_length; /* -1: absent */
     bool chunked;
     bool close;
-} facts_t;
+} header_facts_t;
 
 static bool name_is(const struct phr_header *h, const char *name) {
     size_t len = strlen(name);
@@ -35,8 +35,8 @@ static bool has_close(const char *value, size_t len) {
     return false;
 }
 
-static facts_t derive_facts(const struct phr_header *headers, size_t count) {
-    facts_t f = {-1, false, false};
+static header_facts_t derive_facts(const struct phr_header *headers, size_t count) {
+    header_facts_t f = {-1, false, false};
     for (size_t i = 0; i < count; i++) {
         const struct phr_header *h = &headers[i];
         if (name_is(h, "content-length")) {
@@ -74,22 +74,21 @@ static int parse_into(const char *head, size_t len, size_t last_len, parsed_t *o
     return r;
 }
 
-static uint64_t parse(const char *head, size_t len) {
+static facts_t parse(const char *head, size_t len) {
     parsed_t p;
     if (parse_into(head, len, 0, &p) <= 0) die("picohttpparser did not parse the head");
-    facts_t f = derive_facts(p.headers, p.num_headers);
-    uint64_t length = f.chunked ? 1ull << 40 : f.content_length < 0 ? 0 : (uint64_t)f.content_length;
-    bool keep_alive = !f.close && (f.chunked || f.content_length >= 0);
-    return (uint64_t)p.status + p.head_len + length + keep_alive;
+    header_facts_t f = derive_facts(p.headers, p.num_headers);
+    length_kind_t kind = f.chunked ? LENGTH_CHUNKED : f.content_length < 0 ? LENGTH_UNKNOWN : LENGTH_BYTES;
+    return (facts_t){p.status, p.head_len, kind, kind == LENGTH_BYTES ? (uint64_t)f.content_length : 0,
+                     !f.close && kind != LENGTH_UNKNOWN};
 }
 
-static void describe(const char *head, size_t len, description_t *out) {
+ENGINE_TIMER(time_parse, parse)
+
+static void fields(const char *head, size_t len, field_list_t *out) {
     parsed_t p;
     if (parse_into(head, len, 0, &p) <= 0) die("picohttpparser did not parse the head");
-    out->status = p.status;
-    out->head_len = p.head_len;
-    out->content_length = derive_facts(p.headers, p.num_headers).content_length;
-    out->num_fields = p.num_headers;
+    out->count = p.num_headers;
     for (size_t i = 0; i < p.num_headers; i++) {
         out->fields[i] = (field_t){p.headers[i].name, p.headers[i].name_len, p.headers[i].value, p.headers[i].value_len};
     }
@@ -108,4 +107,4 @@ static const char *feed(const char *input, size_t len, size_t *head_len) {
     return "restart-skip";
 }
 
-const engine_t pico_engine = {"picohttpparser", parse, describe, feed};
+const engine_t pico_engine = {"picohttpparser", parse, time_parse, fields, feed};

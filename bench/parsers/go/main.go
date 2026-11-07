@@ -49,20 +49,39 @@ func (p *parser) read(head []byte) (*http.Response, int) {
 	return resp, len(head) - p.br.Buffered()
 }
 
-// parse is the timed path: status, head length and framing facts folded into one number.
-func (p *parser) parse(head []byte) uint64 {
-	resp, headLen := p.read(head)
+// facts is what the timed path produces for one head (printed by check as the head line).
+type facts struct {
+	status    int
+	headLen   int
+	chunked   bool
+	length    int64 // -1: no Content-Length
+	keepAlive bool
+}
+
+func (f facts) fold() uint64 {
 	length := uint64(0)
-	if len(resp.TransferEncoding) > 0 {
+	if f.chunked {
 		length = 1 << 40
-	} else if resp.ContentLength >= 0 {
-		length = uint64(resp.ContentLength)
+	} else if f.length >= 0 {
+		length = uint64(f.length)
 	}
 	keepAlive := uint64(0)
-	if !resp.Close {
+	if f.keepAlive {
 		keepAlive = 1
 	}
-	return uint64(resp.StatusCode) + uint64(headLen) + length + keepAlive
+	return uint64(f.status) + uint64(f.headLen) + length + keepAlive
+}
+
+// parse is the timed path: one complete head in, the facts out.
+func (p *parser) parse(head []byte) facts {
+	resp, headLen := p.read(head)
+	return facts{
+		status:    resp.StatusCode,
+		headLen:   headLen,
+		chunked:   len(resp.TransferEncoding) > 0,
+		length:    resp.ContentLength,
+		keepAlive: !resp.Close,
+	}
 }
 
 func fail(msg string) {
@@ -81,6 +100,9 @@ func splitHeads(b []byte) [][]byte {
 		heads = append(heads, b[:end+4])
 		b = b[end+4:]
 	}
+	if len(heads) == 0 {
+		fail("empty workload")
+	}
 	return heads
 }
 
@@ -89,20 +111,30 @@ func check(heads [][]byte) {
 	out := bufio.NewWriter(os.Stdout)
 	defer out.Flush()
 	for _, head := range heads {
-		resp, headLen := p.read(head)
+		f := p.parse(head)
+		resp, _ := p.read(head)
 		length := "-"
-		if resp.ContentLength >= 0 {
-			length = strconv.FormatInt(resp.ContentLength, 10)
+		if f.chunked {
+			length = "chunked"
+		} else if f.length >= 0 {
+			length = strconv.FormatInt(f.length, 10)
 		}
+		// ReadResponse consumes Transfer-Encoding (into resp.TransferEncoding) and Connection: close (into
+		// resp.Close) and deletes them from the map; the gate checks those through the head line instead.
+		fields := resp.Header
 		// The Header map has no order: names are printed sorted, values in arrival order per name.
-		names := slices.Sorted(maps.Keys(resp.Header))
+		names := slices.Sorted(maps.Keys(fields))
 		count := 0
-		for _, values := range resp.Header {
+		for _, values := range fields {
 			count += len(values)
 		}
-		fmt.Fprintf(out, "head %d %d %s %d\n", resp.StatusCode, headLen, length, count)
+		keepAlive := 0
+		if f.keepAlive {
+			keepAlive = 1
+		}
+		fmt.Fprintf(out, "head %d %d %s %d %d\n", f.status, f.headLen, length, keepAlive, count)
 		for _, name := range names {
-			for _, value := range resp.Header[name] {
+			for _, value := range fields[name] {
 				fmt.Fprintf(out, "field %s %s\n", hex.EncodeToString([]byte(name)), hex.EncodeToString([]byte(value)))
 			}
 		}
@@ -119,8 +151,10 @@ func check(heads [][]byte) {
 func runBlock(p *parser, heads [][]byte, next *int) uint64 {
 	sink := uint64(0)
 	for range block {
-		sink += p.parse(heads[*next])
-		*next = (*next + 1) % len(heads)
+		sink += p.parse(heads[*next]).fold()
+		if *next++; *next == len(heads) {
+			*next = 0
+		}
 	}
 	return sink
 }
@@ -167,11 +201,12 @@ func main() {
 	modes := map[string]func(){
 		"check": func() { check(heads) },
 		"time": func() {
-			ms := 300
+			ms := 0
 			if len(os.Args) > 4 {
-				if ms, err = strconv.Atoi(os.Args[4]); err != nil {
-					fail("run ms: " + err.Error())
-				}
+				ms, err = strconv.Atoi(os.Args[4])
+			}
+			if err != nil || ms <= 0 {
+				fail("time needs a positive integer run time in ms")
 			}
 			timeHeads(heads, time.Duration(ms)*time.Millisecond)
 		},

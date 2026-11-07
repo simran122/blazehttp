@@ -22,33 +22,36 @@ static size_t execute(llhttp_t *parser, const char *data, size_t len) {
 
 static const llhttp_settings_t timed_settings = {.on_headers_complete = pause_at_head_end};
 
-static uint64_t parse(const char *head, size_t len) {
+static facts_t parse(const char *head, size_t len) {
     llhttp_t parser;
     llhttp_init(&parser, HTTP_RESPONSE, &timed_settings);
     size_t head_len = execute(&parser, head, len);
     if (head_len == 0) die("llhttp did not complete the head");
-    uint64_t length = (parser.flags & F_CHUNKED) ? 1ull << 40
-                      : (parser.flags & F_CONTENT_LENGTH) ? parser.content_length
-                                                          : 0;
-    return (uint64_t)llhttp_get_status_code(&parser) + head_len + length + (uint64_t)llhttp_should_keep_alive(&parser);
+    length_kind_t kind = (parser.flags & F_CHUNKED)          ? LENGTH_CHUNKED
+                         : (parser.flags & F_CONTENT_LENGTH) ? LENGTH_BYTES
+                                                             : LENGTH_UNKNOWN;
+    return (facts_t){llhttp_get_status_code(&parser), head_len, kind, kind == LENGTH_BYTES ? parser.content_length : 0,
+                     llhttp_should_keep_alive(&parser) != 0};
 }
+
+ENGINE_TIMER(time_parse, parse)
 
 /* Field spans of one contiguous head (each callback gets the whole span; consecutive calls extend it). */
 static int on_field(llhttp_t *parser, const char *at, size_t len) {
-    description_t *d = parser->data;
-    field_t *last = d->num_fields > 0 ? &d->fields[d->num_fields - 1] : NULL;
+    field_list_t *list = parser->data;
+    field_t *last = list->count > 0 ? &list->fields[list->count - 1] : NULL;
     if (last != NULL && last->value == NULL) {
         last->name_len += len;
         return 0;
     }
-    if (d->num_fields == MAX_FIELDS) return -1;
-    d->fields[d->num_fields++] = (field_t){at, len, NULL, 0};
+    if (list->count == MAX_FIELDS) return -1;
+    list->fields[list->count++] = (field_t){at, len, NULL, 0};
     return 0;
 }
 
 static int on_value(llhttp_t *parser, const char *at, size_t len) {
-    description_t *d = parser->data;
-    field_t *last = &d->fields[d->num_fields - 1];
+    field_list_t *list = parser->data;
+    field_t *last = &list->fields[list->count - 1];
     if (last->value == NULL) last->value = at;
     last->value_len += len;
     return 0;
@@ -56,28 +59,33 @@ static int on_value(llhttp_t *parser, const char *at, size_t len) {
 
 /* Closes a field whose value is empty (no on_header_value call), so the next on_field starts a new field. */
 static int on_value_complete(llhttp_t *parser) {
-    description_t *d = parser->data;
-    field_t *last = &d->fields[d->num_fields - 1];
+    field_list_t *list = parser->data;
+    field_t *last = &list->fields[list->count - 1];
     if (last->value == NULL) last->value = "";
     return 0;
 }
 
-static const llhttp_settings_t describe_settings = {
+static const llhttp_settings_t field_settings = {
     .on_header_field = on_field,
     .on_header_value = on_value,
     .on_header_value_complete = on_value_complete,
     .on_headers_complete = pause_at_head_end,
 };
 
-static void describe(const char *head, size_t len, description_t *out) {
+static void fields(const char *head, size_t len, field_list_t *out) {
     llhttp_t parser;
-    llhttp_init(&parser, HTTP_RESPONSE, &describe_settings);
-    out->num_fields = 0;
+    llhttp_init(&parser, HTTP_RESPONSE, &field_settings);
+    out->count = 0;
     parser.data = out;
-    out->head_len = execute(&parser, head, len);
-    if (out->head_len == 0) die("llhttp did not complete the head");
-    out->status = llhttp_get_status_code(&parser);
-    out->content_length = (parser.flags & F_CONTENT_LENGTH) ? (int64_t)parser.content_length : -1;
+    if (execute(&parser, head, len) == 0) die("llhttp did not complete the head");
+    /* llhttp hands a value with its trailing OWS (found by the gate's `gate-framing` head); RFC 9112 §5 excludes OWS
+     * from the field value, so a consumer trims it, and the field view does too (outside the timed path). */
+    for (size_t i = 0; i < out->count; i++) {
+        field_t *f = &out->fields[i];
+        while (f->value_len > 0 && (f->value[f->value_len - 1] == ' ' || f->value[f->value_len - 1] == '\t')) {
+            f->value_len--;
+        }
+    }
 }
 
 /* Resumable: each call continues from the parser's saved state. */
@@ -92,4 +100,4 @@ static const char *feed(const char *input, size_t len, size_t *head_len) {
     return "incremental";
 }
 
-const engine_t llhttp_engine = {"llhttp", parse, describe, feed};
+const engine_t llhttp_engine = {"llhttp", parse, time_parse, fields, feed};

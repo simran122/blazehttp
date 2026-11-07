@@ -17,8 +17,11 @@ const VARYING: readonly (readonly [string, number])[] = [
 
 export interface Workload {
   readonly name: string;
-  /** `timed`: parsed whole, many times; `feed`: one head fed one byte per call. */
-  readonly kind: 'timed' | 'feed';
+  /**
+   * `timed`: parsed whole, many times; `feed`: one head fed one byte per call; `gate`: checked by the differential
+   * gate only (framing and field shapes the timed fixtures do not cover).
+   */
+  readonly kind: 'timed' | 'feed' | 'gate';
   readonly heads: readonly Buffer[];
 }
 
@@ -75,6 +78,12 @@ export function feedInputs(): Workload[] {
   return inputs.map(([name, text]) => ({ name, kind: 'feed', heads: [Buffer.from(text, 'latin1')] }));
 }
 
+/** Heads for the gate only: chunked framing, `Connection: close`, trailing OWS, an empty value, mixed-case names. */
+const GATE_HEADS: readonly string[] = [
+  'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\nX-Trail: value \t\r\n\r\n',
+  'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\nEmpty:\r\nCache-Control: no-cache\r\n\r\n',
+];
+
 /** Every workload, read from the shared fixture directory (`tests/fixtures/h1-heads`). */
 export function workloads(fixtureDir: string): Workload[] {
   const read = (name: string): Buffer => readFileSync(join(fixtureDir, name));
@@ -82,8 +91,12 @@ export function workloads(fixtureDir: string): Workload[] {
   const all: Workload[] = [
     { name: '1k-3-headers', kind: 'timed', heads: [h3] },
     { name: '1k-20-headers', kind: 'timed', heads: [h20] },
-    { name: 'rotated-64', kind: 'timed', heads: rotated([h3, h20, synthetic]) },
+    // The 64 same-length variants of each fixture, as crates/engine-core/examples/h1_parse_bench.rs times them.
+    { name: '1k-3-headers-x64', kind: 'timed', heads: variants(h3) },
+    { name: '1k-20-headers-x64', kind: 'timed', heads: variants(h20) },
+    { name: 'mixed-64', kind: 'timed', heads: rotated([h3, h20, synthetic]) },
     ...feedInputs(),
+    { name: 'gate-framing', kind: 'gate', heads: GATE_HEADS.map((head) => Buffer.from(head, 'latin1')) },
   ];
   for (const workload of all) workload.heads.forEach(assertHead);
   return all;
