@@ -3,6 +3,7 @@
 
 mod support {
     pub mod fixtures;
+    pub mod response_vectors;
     pub mod vectors;
 }
 
@@ -11,7 +12,8 @@ use engine_core::generated::spec::{
 };
 use engine_core::h1::{Framing, HttpVersion, ParseStatus, ResponseHead, ResponseParser};
 use support::fixtures;
-use support::vectors::{Case, Expect, load_suite};
+use support::response_vectors::{Case, Expect};
+use support::vectors::load_suite;
 
 const SUITE: &str = "engine-core:h1_response";
 const MALFORMED: ErrorCode = ErrorCode::Protocol(ProtocolDetail::MalformedResponse);
@@ -138,7 +140,7 @@ fn parse_byte_by_byte(case: &Case) -> Outcome {
 
 #[test]
 fn all_h1_response_vectors() {
-    for (file, case) in load_suite(SUITE) {
+    for (file, case) in load_suite::<Case>(SUITE) {
         assert_eq!(
             parse_whole(&case).to_expect(),
             case.expect,
@@ -150,7 +152,7 @@ fn all_h1_response_vectors() {
 
 #[test]
 fn every_vector_is_split_invariant() {
-    for (file, case) in load_suite(SUITE) {
+    for (file, case) in load_suite::<Case>(SUITE) {
         let whole = parse_whole(&case);
         for split in 1..case.input.len() {
             assert_eq!(
@@ -174,7 +176,7 @@ fn every_vector_is_split_invariant() {
 #[test]
 fn every_error_is_a_payload_free_code() {
     let mut errors = 0;
-    for (file, case) in load_suite(SUITE) {
+    for (file, case) in load_suite::<Case>(SUITE) {
         if let Outcome::Error(e) = parse_whole(&case) {
             errors += 1;
             assert!(
