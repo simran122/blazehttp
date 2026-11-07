@@ -31,7 +31,8 @@ or through the same extraction pass (`rust/src/engines.rs`, `c/pico.c`). Version
 
 ## Fairness rules
 
-- Same machine, one container per invocation, `docker run --cpus=1 --network=none`, the same workload files.
+- Same machine, one container per invocation, `docker run --cpus=1 --network=none`, the same workload files. The
+  runner refuses to start while any other container is running (it never stops one).
 - Same CPU baseline everywhere: generic Armv8-A on arm64 (Rust `-C target-cpu=generic`, C/C++ `-march=armv8-a`, Zig
   `-mcpu=baseline`, Go `GOARM64=v8.0`). Nobody gets `native`. x64 (x86-64-v2 or v3) is decided with the x64 host.
 - Release flags per design §16.2: Rust release, fat LTO, `codegen-units = 1`; C/C++ `-O3 -flto`; Zig
