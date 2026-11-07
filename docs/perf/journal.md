@@ -113,3 +113,16 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** budget met on the Linux reference container.
 - **Commit:** fix round 1 (`p0/parser`).
 
+
+### 2026-11-07: bench-server runtime: multi-thread vs per-core `current_thread` + `SO_REUSEPORT`
+
+- **Idea:** one tokio multi-thread runtime (design A) vs one `current_thread` runtime and one `SO_REUSEPORT` listener
+  per core (design B). Detail: `docs/notes/bench-server.md` §4, §7.
+- **Hypothesis:** B costs less server CPU per request (no cross-thread wakes or work stealing).
+- **Method:** Linux arm64, Docker Desktop on the owner's M2 (8 CPUs), server `--cpus=4 --threads 4`, wrk 4.1.0
+  `--cpus=3 -t3 -c50` in the server's network namespace, `GET /1k`, 5 s warm-up + 20 s, server CPU from its cgroup
+  `cpu.stat`; A and B alternated, 3 rounds each. Host **not idle** (load average 14–28 from other work), so dev only.
+- **Numbers (no CI, n = 3):** server CPU per request A 10.17 / 9.74 / 10.64 µs (median 10.17), B 11.05 / 10.13 /
+  13.67 µs (median 11.05); 85–87% of it is kernel time in both.
+- **Kept / dropped:** A kept (simpler, no measured loss); B dropped.
+- **Commit:** see the PR that adds `crates/bench-server`.
