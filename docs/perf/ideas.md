@@ -58,3 +58,25 @@ re-run in the Linux reference container (nightly window) and on the x64 VM first
 | Benchmark parser with a varied-head ring, not only one repeated head | repeated head lets the predictor memorise exits | Task 4 bench / P1a criterion / G0 report | Dev: same scalar code 186 ns repeated vs 436–585 ns varied; proposed rule |
 | SWAR `[A-Za-z0-9-]` name fast path, `table8` names | fewer branches than per-byte table | same | Dev: slower than the table in the chain (321 / — vs 186 ns); drop |
 | Avoid `pcmpestri`/`pcmpistri` | 8 µops, 12–17-cycle latency (uops.info) vs `pshufb` 1 µop | — | Verified (uops.info); no SSE4.2 string ops in `engine-simd` |
+
+## Request writer (Task 5 research, 2026-11-07; detail in `docs/notes/request-writer.md`)
+
+Dev measurements in a Linux arm64 container (`--cpus=1`) on the owner's M2 while other agents' containers ran (load
+13–31); ratios within a run are the usable signal. Not yet in `journal.md`.
+
+| Idea | Hypothesis | How to measure | Status |
+|---|---|---|---|
+| Classify the whole per-request delta block with P1a `engine-simd` stage 1, then walk masks | delta is contiguous; removes the per-line SWAR loop | `h1_write_bench` `post1k`/`varied`, writer/floor ratio, arm64 + x64 | Unverified; target validation overhead ≤ 50 ns on `post1k` |
+| `memchr` for each line's CR + branch-free fold over the value (V3) | vectorised CR search beats SWAR on short values | scratch `writer-bench` | Dev: 7–18% **slower** than SWAR `value_len` (119 vs 111 ns `post1k`, 130 vs 110 ns `varied`); drop |
+| Fold `" HTTP/1.1\r\n"` into the template bytes and keep a static `"GET "`-style prefix per method | 2 fewer `extend_from_slice` calls per request | `h1_write_bench` `get` | Unverified (expected ≤ 2–3 ns) |
+| Integer formatting: jeaiii / Lemire SIMD instead of `u64::format_into` | faster `Content-Length` | scratch `writer-bench` int | Dev: `format_into`, `itoa` 1.0.18 and a safe pair table within noise (12.7–13.5 ns for 0–10⁴); `core::fmt` ≈ 2×; gains in the literature are for ≥ 8 digits → not worth a dependency; drop |
+| `write_head` + `writev([head, body])` above a body threshold (plaintext only) | avoids the body copy for large bodies | scratch `sys` (loopback, writer-thread CPU) on the reference host + x64 VM | Dev: copy ≈ `writev` ≤ 4 KiB; `writev` wins from 16 KiB (2 of 3 runs), 1.6–3.3× at 64 KiB; threshold to set in 4–16 KiB |
+| Never `writev` under TLS | rustls 0.23.46 `write_vectored` collects a `Vec<&[u8]>` per call (verified in source) | allocation counter around a TLS write | Verified (source); keep the single buffer |
+| Skip-mask on the template for per-request overrides | avoids template churn when a request overrides a default | P2 template registry stats (overrides per request) | Unverified; only if P2 measures churn |
+| `io_uring` send with a registered buffer for the head | one fewer copy into the kernel, fewer syscalls under load | research backlog (design §7) | Unverified |
+
+Reference notes: hyper 1.12 formats the target through `Display` (own `TODO`), needs a `HeaderMap` per request and
+`writev`s head + body; Go 1.27.3 `fmt.Fprintf` + sorted header keys + 4 KiB `bufio` (5–10 allocations per request);
+curl 8.23.0 builds the head in a `dynbuf` with its own printf and copies head + body into a 64 KiB `sendbuf`; undici
+8.12.4 concatenates strings and `cork`s head + body into one `writev`; Bun 1.4.4 copies head + body into a per-request
+`Vec`; Boost.Beast pre-encodes each field at insertion and `writev`s one buffer per field (no CR/LF check).
