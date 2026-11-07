@@ -37,6 +37,7 @@ describe('renderNotices', () => {
     };
     expect(renderNotices([{ path: 'h1/go.json', source: go }])).toContain('Neither the name of Google LLC');
     expect(licenceText(go)).toContain('Google LLC');
+    expect(licenceText({ ...go, project: 'golang.org/x/net' })).toBe(licenceText(go));
     expect(() => licenceText({ ...go, project: 'other' })).toThrow(/no licence text for BSD-3-Clause \(other\)/);
     expect(licenceText({ ...go, licence: 'MIT' })).toContain('Permission is hereby granted');
     for (const name of ['constructor', 'toString', '__proto__']) {

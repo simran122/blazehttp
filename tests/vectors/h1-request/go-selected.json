@@ -1,0 +1,310 @@
+{
+  "source": {
+    "project": "go",
+    "url": "https://github.com/golang/go/tree/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/src/net/http",
+    "tag": "go1.27.3",
+    "commit": "2aae1000ea1d4b28923b96db28acf4e3b99d6aff",
+    "licence": "BSD-3-Clause",
+    "copyright": "Copyright 2009 The Go Authors."
+  },
+  "cases": [
+    {
+      "name": "requestwrite 0 / keep-alive and proxy-connection",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "www.techcrunch.com",
+        "templateFields": "",
+        "headers": "Accept: text/html\r\nKeep-Alive: 300\r\nProxy-Connection: keep-alive\r\nUser-Agent: Fake\r\n",
+        "headerLines": 4,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 0 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 3 / POST with a known length",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/search",
+        "templateHost": "www.google.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": "abcdef"
+      },
+      "expect": {
+        "bytes": "POST /search HTTP/1.1\r\nhost: www.google.com\r\ncontent-length: 6\r\n\r\nabcdef",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 3 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 4 / user content-length rejected, not ignored",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "example.com",
+        "templateFields": "",
+        "headers": "Content-Length: 10\r\n",
+        "headerLines": 1,
+        "body": "abcdef"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 4 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 5 / GET",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/search",
+        "templateHost": "www.google.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /search HTTP/1.1\r\nhost: www.google.com\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 5 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 7 / POST without body sends zero",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "example.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "POST / HTTP/1.1\r\nhost: example.com\r\ncontent-length: 0\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 7 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 8 / POST with one byte",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "example.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": "x"
+      },
+      "expect": {
+        "bytes": "POST / HTTP/1.1\r\nhost: example.com\r\ncontent-length: 1\r\n\r\nx",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 8 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 15 / empty host rejected",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/search",
+        "templateHost": "",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 15 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 16 / opaque path",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/%2F/%2F/",
+        "templateHost": "www.google.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /%2F/%2F/ HTTP/1.1\r\nhost: www.google.com\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 16 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 18 / name case kept",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "www.google.com",
+        "templateFields": "",
+        "headers": "ALL-CAPS: x\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET / HTTP/1.1\r\nhost: www.google.com\r\nALL-CAPS: x\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 18 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 19 / ipv6 zone rejected",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "[fe80::1%en0]",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 19 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 20 / ipv6 zone with port rejected",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "[fe80::1%en0]:8080",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 20 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 25 / control character in query",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/?new\nline",
+        "templateHost": "www.example.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 25 @ go1.27.3"
+    },
+    {
+      "name": "requestwrite 26 / PATCH without body sends zero",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "PATCH",
+        "target": "/",
+        "templateHost": "example.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "PATCH / HTTP/1.1\r\nhost: example.com\r\ncontent-length: 0\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWrite case 26 @ go1.27.3"
+    },
+    {
+      "name": "requestwritetransport / GET without body",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "example.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET / HTTP/1.1\r\nhost: example.com\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWriteTransport @ go1.27.3"
+    },
+    {
+      "name": "requestwritetransport / GET with a 7-byte body closes",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "example.com",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": "foobody"
+      },
+      "expect": {
+        "bytes": "GET / HTTP/1.1\r\nhost: example.com\r\ncontent-length: 7\r\nconnection: close\r\n\r\nfoobody",
+        "reuse": "closeAfterExchange"
+      },
+      "derivedFrom": "src/net/http/requestwrite_test.go:TestRequestWriteTransport @ go1.27.3"
+    },
+    {
+      "name": "request / bad host header",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/after",
+        "templateHost": "foo.com\nnewline",
+        "templateFields": "",
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/request_test.go:TestRequestBadHostHeader @ go1.27.3"
+    },
+    {
+      "name": "request / bad user-agent",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/after",
+        "templateHost": "foo",
+        "templateFields": "",
+        "headers": "User-Agent: evil\r\nX-Evil: evil\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "src/net/http/request_test.go:TestRequestBadUserAgent @ go1.27.3"
+    }
+  ]
+}

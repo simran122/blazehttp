@@ -1,4 +1,9 @@
 {
+  "h1-request/blazehttp-rules.json": ["engine-core:h1_writer"],
+  "h1-request/go-selected.json": ["engine-core:h1_writer"],
+  "h1-request/httpguts-selected.json": ["engine-core:h1_writer"],
+  "h1-request/hyper-selected.json": ["engine-core:h1_writer"],
+  "h1-request/undici-selected.json": ["engine-core:h1_writer"],
   "h1-response/blazehttp-rules.json": ["engine-core:h1_response"],
   "h1-response/curl-selected.json": ["engine-core:h1_response"],
   "h1-response/go-selected.json": ["engine-core:h1_response"],
