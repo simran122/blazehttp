@@ -90,4 +90,7 @@ fn h1_limits_match_design() {
     assert_eq!(H1_LIMITS.max_status_line_bytes, 8_192);
     assert_eq!(H1_LIMITS.max_header_fields, 100);
     assert_eq!(H1_LIMITS.max_interim_responses, 10);
+    assert_eq!(H1_LIMITS.max_request_target_bytes, 16_384);
+    assert_eq!(H1_LIMITS.max_request_fields_bytes, 65_536);
+    assert_eq!(H1_LIMITS.max_copied_body_bytes, 65_536);
 }

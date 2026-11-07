@@ -155,6 +155,9 @@ export const H1_LIMITS = {
   maxStatusLineBytes: 8192,
   maxHeaderFields: 100,
   maxInterimResponses: 10,
+  maxRequestTargetBytes: 16384,
+  maxRequestFieldsBytes: 65536,
+  maxCopiedBodyBytes: 65536,
 } as const;
 
 export const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'QUERY'] as const;

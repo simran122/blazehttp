@@ -52,6 +52,9 @@ describe('generated spec', () => {
       maxStatusLineBytes: 8192,
       maxHeaderFields: 100,
       maxInterimResponses: 10,
+      maxRequestTargetBytes: 16384,
+      maxRequestFieldsBytes: 65536,
+      maxCopiedBodyBytes: 65536,
     });
     const methods: Method[] = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'QUERY'];
     expect(methods).toHaveLength(8);
