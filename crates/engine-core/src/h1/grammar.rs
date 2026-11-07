@@ -66,28 +66,42 @@ pub(crate) fn token_len(s: &[u8]) -> usize {
 const LANES: u64 = 0x0101_0101_0101_0101;
 const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
 
-/// Whether a little-endian word may hold a byte below 0x20 or equal to 0x7F (SWAR "has less" / "has zero" tests;
-/// exact for "no such byte", so a clean word is skipped; HTAB and obs-text can give false positives, which the
-/// per-byte table check then clears).
+/// SWAR flags of a little-endian word: the high bit of each byte that may be below 0x20 or equal to 0x7F ("has less"
+/// / "has zero" tests). Zero exactly when the word has no such byte, so a clean word is skipped. Borrows only
+/// propagate upward from a truly flagged byte, so the **lowest** flag is exact; flags above it may be false (borrow
+/// propagation), and an exact flag may still be HTAB (below 0x20 but field content). Obs-text (≥ 0x80) never sets a
+/// flag: `!x` clears its high bit.
 #[inline]
-fn may_hold_non_field_content(x: u64) -> bool {
+fn non_field_content_flags(x: u64) -> u64 {
     let below_space = x.wrapping_sub(LANES.wrapping_mul(0x20)) & !x & HIGH_BITS;
     let del = x ^ LANES.wrapping_mul(0x7F);
     let is_del = del.wrapping_sub(LANES) & !del & HIGH_BITS;
-    below_space | is_del != 0
+    below_space | is_del
 }
 
-/// Length of the leading `FIELD_CONTENT` run of `s`, eight bytes per step.
+/// Length of the leading `FIELD_CONTENT` run of `s`, eight bytes per step. A flagged word jumps straight to its lowest
+/// (exact) flag with `trailing_zeros`; only when that byte is HTAB does the rest of the word go through the table.
 #[inline]
 pub(crate) fn value_len(s: &[u8]) -> usize {
     let (words, tail) = s.as_chunks::<8>();
-    // `scanned` ≤ s.len() ≤ isize::MAX, so the wrapping additions below never wrap.
+    // `scanned` ≤ s.len() ≤ isize::MAX and every offset below is < 8, so the wrapping additions never wrap.
     let mut scanned: usize = 0;
     for word in words {
-        if may_hold_non_field_content(u64::from_le_bytes(*word))
-            && let Some(i) = word.iter().position(|&b| !class(&FIELD_CONTENT, b))
-        {
-            return scanned.wrapping_add(i);
+        let flags = non_field_content_flags(u64::from_le_bytes(*word));
+        if flags != 0 {
+            // `trailing_zeros` < 64, so the lane index is < 8 and fits any `usize`.
+            let lane = (flags.trailing_zeros() / 8) as usize;
+            let stop = if word.get(lane) == Some(&b'\t') {
+                word.iter()
+                    .skip(lane.wrapping_add(1))
+                    .position(|&b| !class(&FIELD_CONTENT, b))
+                    .map(|p| lane.wrapping_add(1).wrapping_add(p))
+            } else {
+                Some(lane)
+            };
+            if let Some(stop) = stop {
+                return scanned.wrapping_add(stop);
+            }
         }
         scanned = scanned.wrapping_add(8);
     }
