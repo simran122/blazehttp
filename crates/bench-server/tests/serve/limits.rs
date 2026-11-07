@@ -59,6 +59,20 @@ async fn an_unfinished_head_is_closed_after_the_head_timeout() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_idle_connection_outlives_the_head_timeout() {
+    let server = start(ServerConfig {
+        head_timeout: SHORT,
+        ..config(false)
+    })
+    .await;
+    let cell = &cells()[0];
+    let mut stream = connect(server.bound.plain).await;
+    tokio::time::sleep(SHORT * 2).await;
+    let response = exchange(&mut stream, &get(cell.path), cell.response.len()).await;
+    assert_eq!(response, cell.response);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_silent_tls_client_is_closed_after_the_handshake_timeout() {
     let server = start(ServerConfig {
         head_timeout: SHORT,

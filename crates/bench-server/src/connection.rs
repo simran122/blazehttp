@@ -454,12 +454,25 @@ mod tests {
         let mut script = Script::<true>::new(get("/1k").repeat(count).into_bytes(), Vec::new());
         serve(&mut script);
         assert!(script.output == one.repeat(count), "batched output differs");
+        // 64 KiB spelled out, so the test also pins the constant: every full batch holds as many 1 KiB responses as fit.
+        let full_batch = 65_536 / one.len() * one.len();
+        assert_eq!(script.writes[0], full_batch, "{:?}", script.writes);
         assert!(script.writes.len() >= 2, "{:?}", script.writes);
         assert!(
             script.writes.iter().all(|&n| n <= BATCH_BYTES),
             "{:?}",
             script.writes
         );
+    }
+
+    #[test]
+    fn head_just_under_the_buffer_is_answered() {
+        // 16 KiB spelled out, so the test also pins the buffer size.
+        let filler = "a".repeat(16 * 1024 - 100);
+        let input = format!("GET /1k HTTP/1.1\r\nx-big: {filler}\r\n\r\n");
+        let mut script = Script::<true>::new(input.into_bytes(), Vec::new());
+        serve(&mut script);
+        assert_eq!(script.output, response_for(b"/1k", false));
     }
 
     #[test]
