@@ -439,6 +439,23 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
 6. **Generated code is isolated** in `generated/` directories, never edited by hand, and checked for drift in CI.
 7. **One-way dependencies.** `engine-simd` ← `engine-core` ← {`node-binding`, `engine-bench`}; `bench-server` is standalone. The core never depends on Node, napi or benchmark code. In TypeScript: `client/` → `transports/` → `native/`, with no cycles. CI enforces it: `cargo tree` crate directions, and a lint for import cycles and cross-feature internal imports.
 8. **The same rules apply in TypeScript:** `packages/blazehttp/src/<feature>/` (`client/`, `transports/<name>/`, `native/`, `errors/`, `generated/`), each with an `index.ts` entry.
+9. **One function, one job** (owner rule). Each function does exactly one thing and its name says what; if the honest name needs "and", split it. Functions stay short, and CI enforces the limits:
+   - **Rust** (`clippy.toml` at the repo root, read by both workspaces): `too_many_lines` with `too-many-lines-threshold = 60` (the lint is in `clippy::pedantic`, already denied); `too_many_arguments` with `too-many-arguments-threshold = 4` (Rust counts `self`). Clippy counts only lines with code: blank and comment-only lines are skipped, and closures count toward their enclosing function.
+   - **TypeScript/JS** (`eslint.config.js`, all `.ts` and `.js` files, tests included): `max-lines-per-function` 60 with `skipBlankLines` and `skipComments` (nested callbacks count toward the outer function, the same as clippy), `complexity` ≤ 10, `max-depth` ≤ 4, and `@typescript-eslint/max-params` ≤ 4 (the typescript-eslint extension of `max-params`, which ignores a `this: void` parameter). Pass an object when there are more parameters.
+   - **Tests get no higher limit.** Table-driven tests keep their tables and fixtures in module-level constants and helpers, never inside a test body. `describe` blocks group by topic and stay within the limit. Large golden outputs live in fixture files (`toMatchFileSnapshot`), not inline snapshots.
+   - **Exceptions** are allowed only with `#[expect(clippy::too_many_lines, reason = "…")]` (never `allow`, because `expect` fails once the exception is no longer needed) or an `// eslint-disable-next-line <rule> -- <reason>`, and a reviewer must approve each one. A hot-path exception needs a parser-bench measurement (§8) showing that splitting the function costs more than 2 %, recorded in `docs/perf/journal.md`.
+   - Reviewers also check single responsibility by hand: no linter can tell whether a name is honest.
+
+   *Research (2026-11-07).*
+   - **Lint sources.** Clippy lint docs for the locked 1.99 toolchain (`cargo clippy --explain too_many_lines`; https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_lines) give the default of 100 lines and the config key, and the lint source (`clippy_lints/src/functions/too_many_lines.rs`) shows how lines are counted.
+   - **No `cognitive_complexity`.** Clippy keeps it in `restriction` because "the true Cognitive Complexity of a method is not something we can calculate" (rust-clippy#3793), and its docs recommend `too_many_lines` and `excessive_nesting` instead. We also skip `excessive_nesting`: it counts module and `impl` blocks, so its numbers do not match ESLint `max-depth`, and nesting in Rust is left to review.
+   - **ESLint rules.** ESLint docs: https://eslint.org/docs/latest/rules/max-lines-per-function (default 50, no skip options), https://eslint.org/docs/latest/rules/complexity (classic McCabe, default 20; optional chaining, default parameters and logical assignment add paths), https://eslint.org/docs/latest/rules/max-depth (default 4) and https://eslint.org/docs/latest/rules/max-params (default 3). typescript-eslint docs: https://typescript-eslint.io/rules/max-params.
+   - **Thresholds.** Complexity 10 is McCabe's original ceiling (NIST SP 500-235). 60 lines is stricter than clippy's 100 and slightly looser than ESLint's 50, which counts blank and comment lines.
+   - **Mature projects** (checked on their default branches, 2026-11-07). None of them enforces a function-size limit; they rely on review alone. This rule is deliberately stricter and is measured by machine.
+     - hyper's `Cargo.toml` turns on `clippy::pedantic` but allows `too_many_lines` ("reconsider someday?") and `cognitive_complexity` ("is this ever useful?").
+     - tokio has no `clippy.toml` and no clippy lint table.
+     - rust-clippy's own `clippy.toml` sets no thresholds.
+     - typescript-eslint's `eslint.config.mjs` uses none of these rules.
 
 ## 14. Tech decisions
 | Decision | Choice | Rejected | Why |

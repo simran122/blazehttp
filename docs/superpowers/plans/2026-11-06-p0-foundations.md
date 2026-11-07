@@ -71,6 +71,7 @@ These apply to every task from Task 4 on and override anything above that confli
 - **Agents** run on Opus at high effort.
 - **Upstream test vectors** come from the latest published, non-prerelease release **source** tag. The exact commit is recorded, and `--refresh` re-imports at the start of each phase.
 - **Code structure:** every task follows design §13.1, "production-grade code structure", the owner rule: organise by component; one responsibility per file, split past about 500 lines; narrow public APIs; unit tests with their code; matching component names across tests, fuzz, bench, vectors and notes; fixed top level; one-way dependencies. Reviewers check it as part of the maintainability category.
+- **One function, one job** (design §13.1 rule 9): each function does one thing that its name states, in at most 60 lines. CI enforces this through clippy `too_many_lines`/`too_many_arguments` (`clippy.toml`) and ESLint `max-lines-per-function`/`complexity`/`max-depth`/`max-params`. Any exception needs a reviewed `#[expect]` or `eslint-disable-next-line` with a reason.
 - **Owner decisions applied to the design:**
   - the HTTP `QUERY` method is wire id 7, and is safe and idempotent (§5.1, §9.3, §21);
   - a status line with no reason phrase is accepted (§5.2);
@@ -81,7 +82,7 @@ These apply to every task from Task 4 on and override anything above that confli
 ## Repository layout after P0
 
 ```
-Cargo.toml  rust-toolchain.toml  rustfmt.toml  deny.toml
+Cargo.toml  rust-toolchain.toml  rustfmt.toml  clippy.toml  deny.toml
 package.json  pnpm-workspace.yaml  tsconfig.base.json  eslint.config.js  .prettierrc.json  knip.json  vitest.config.ts
 LICENSE-MIT  LICENSE-APACHE  THIRD_PARTY_NOTICES  README.md
 policy/spec.json                          shared data (§9.2), single source of truth

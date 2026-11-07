@@ -1,0 +1,3 @@
+# One function, one job (design §13.1 rule 9). Read by the main workspace and the fuzz workspace.
+too-many-lines-threshold = 60
+too-many-arguments-threshold = 4
