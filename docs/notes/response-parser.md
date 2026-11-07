@@ -198,7 +198,8 @@ This section supersedes the Task 4 brief's Step 5 hints ("`memchr` for CR", "`co
 `memchr`, and the tables are `static [bool; 256]` built by a `const fn`.
 
 ### 6.1 Files (Task 4 scope)
-- `crates/engine-core/src/h1/mod.rs` (`pub mod parser; pub(crate) mod grammar;` and re-exports of the public types).
+- `crates/engine-core/src/h1/mod.rs` (`mod parser; pub(crate) mod grammar;` and `pub use` of the public types: one
+  public path, design §13.1 rule 3).
 - `crates/engine-core/src/h1/grammar.rs`: the `TCHAR` and `FIELD_CONTENT` tables and the scan primitives (§6.2).
   Task 5 reuses it.
 - `crates/engine-core/src/h1/parser/mod.rs`: the public types and `ResponseParser` (the resumable scan, §6.3), and
@@ -234,10 +235,16 @@ This section supersedes the Task 4 brief's Step 5 hints ("`memchr` for CR", "`co
 - `fn value_len(s: &[u8]) -> usize`: length of the leading `FIELD_CONTENT` run. `let (words, tail) =
   s.as_chunks::<8>()`; per word `x = u64::from_le_bytes(*w)`; `lt20 = x.wrapping_sub(0x2020…20) & !x & 0x8080…80`
   (some byte < 0x20, exact for bytes < 0x80); `eq7f`: `d = x ^ 0x7F7F…7F; d.wrapping_sub(0x0101…01) & !d &
-  0x8080…80`. If `lt20 | eq7f == 0` the word is clean (advance 8); otherwise find the first byte of that word outside
-  the class, and if there is none (HTAB or obs-text false positive) advance 8. The `tail` uses the table. The table is
-  the only source of truth (unit tests in §9.6).
-- P1a: `engine-simd` exports the same signatures (safe API, `unsafe` inside); `grammar.rs` forwards to it.
+  0x8080…80`. If `lt20 | eq7f == 0` the word is clean (advance 8). **As built (fix round 1, measured):** borrows only
+  propagate upward from a truly flagged byte, so the lowest flag is exact: `lane = flags.trailing_zeros() / 8` jumps
+  straight to the stop byte; only when that byte is HTAB (field content below 0x20) does the rest of the word go
+  through the table (flags above it may be borrow-propagation false positives). Obs-text never sets a flag (`!x`
+  clears its high bit). The `tail` uses the table. The table is the only source of truth (exhaustive unit tests in
+  §9.6). Measured: ≈ 18% less time on a varied-head ring, neutral on `1k`/`1k-h20` (§8.2, journal).
+- P1a: `engine-simd` exports the same signatures (safe API, `unsafe` inside); `grammar.rs` forwards to it. The
+  `(window, pos) -> end` seam (`token_end`/`value_end`, `docs/notes/simd-scanning-research.md` §7 item 3) was tried in
+  fix round 1 and **dropped**: ≈ 3% slower on `1k-h20` in a same-container A/B; P1a adds it with the bitmaps if their
+  shape needs it.
 
 ### 6.3 State and algorithm (`parser.rs`)
 
@@ -284,9 +291,12 @@ pos` (`colon` is stale in every other phase); `interim_bytes ≤ max_head_bytes`
      reply (a TLS record `\x16\x03…`, HTML, HTTP/0.9) fails at its first wrong byte, never waiting for an LF. This
      re-checks ≤ 12 bytes per call (O(1)). Fewer than 12 bytes → **more**. Otherwise: version from byte 7; status
      from the digits (`wrapping_sub(b'0')` after the DIGIT check); outside 100–599 or `101` → `Malformed`; 1xx and
-     `interim_count == max_interim_responses` → `Malformed`; `pos = 12`; `phase = StatusReason`.
+     `interim_count == max_interim_responses` → `Malformed`; `pos = 12`; `phase = StatusReason`. As built, the
+     per-position grammar is one function (`status_prefix_byte`) used for both the partial prefix and the complete
+     12-byte prefix (checked as a fixed-size array, which the compiler unrolls); decoding reads the validated array.
    - `StatusReason`: the line must end with CRLF within `limit = line_start + max_status_line_bytes` (8,192, CRLF
-     included); bytes at or after `limit` are never examined. At `pos == 12`: `[b' ', ..]` → `pos = 13`;
+     included); bytes at or after `limit` are never examined. At `pos == 12` (a `buf` shorter than 12 bytes here is a
+     contract violation → `Engine(Internal)`): `[b' ', ..]` → `pos = 13`;
      `[b'\r', ..]` → empty reason, go to the CRLF check; `[]` → **more**; anything else → `Malformed`. Then
      `e = pos + value_len(window.get(pos..limit.min(len))?)`; `match window.get(e..limit.min(len))`: `[b'\r', b'\n', ..]` →
      `headers_start = pos = line_start = e + 2`, `phase = LineStart`; `[] | [b'\r']` → if `window.len() >= limit`
@@ -352,6 +362,13 @@ Final head:
   `CloseDelimited`; then `false` if `status ∈ {204, 304} && !head_request && (framing_fact == Chunked ||
   framing_fact == Length(n > 0))` — such a response is accepted without a body, but a server that announces a body it does not send
   may still send one, so the connection is not reused (design §5.2 Bodies, **[author's call]**).
+
+  **304 with `Content-Length` > 0 (review ruling, fix round 1):** RFC 9110 §8.6 permits `Content-Length` on a 304 (the
+  size the selected representation would have had in a 200), so a compliant server can send it with nothing following.
+  We still do not reuse that connection: undici does not reuse it either (§11 D7, parity), and until Task 6 adds
+  idle-byte detection (§12) a server that does send the announced bytes would leave them to answer the next request
+  (client-side desync). The cost is one reconnect per such revalidation. Revisit with Task 6 data (idle detection in
+  place, frequency of 304 + CL > 0 in practice).
 
 ### 6.6 Interface (kept, with clarifications)
 - Types exactly as in the brief. Derives: `HttpVersion`, `Framing`: `Clone, Copy, Debug, PartialEq, Eq`;
@@ -453,7 +470,9 @@ engine-core --example h1_parse_bench`; replaced by the criterion bench `benches/
   `synthetic-h20.http` (993 B, the 17 `x-bench-header-NN` fields above).
 - Rotation: 64 variants per fixture, generated deterministically at start-up with the same length (date seconds,
   `x-request-id` and `traceparent` hex digits, `etag` hex, three-digit `content-length` values), cycled per
-  iteration so no single head trains the predictor; 100 ms warm-up per design before timing.
+  iteration so no single head trains the predictor; 100 ms warm-up per design before timing. Fix round 1 added a
+  **varied ring** (`docs/notes/simd-scanning-research.md` §7 item 1): 256 heads from `1k-h20.http` with shuffled
+  field order and value lengths scaled 0.5–1.5× (fixed xorshift seed).
 - Statistic: N ≥ 5 runs; each run times both parsers interleaved and records the ratio ours/httparse; the budget is
   checked on the **median ratio**; absolute ns are advisory. Output: one table (median ns, median ratio, min/max).
 - 1-byte feeds (each ≤ 1 ms): (a) one 60,000-byte value; (b) 99 fields × 600 B; (c) one 60,000-byte name
@@ -755,16 +774,19 @@ none does in llhttp v9.4.3).
 |---|---|---|---|---|---|
 | `go-selected.json` | Go | `go1.27.3` | `2aae1000ea1d4b28923b96db28acf4e3b99d6aff` | BSD-3-Clause ([LICENSE](https://github.com/golang/go/blob/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/LICENSE)) | `Copyright 2009 The Go Authors.` |
 | `hyper-selected.json` | hyper | `v1.12.0` | `7f67699ce32d717081deb7018b4da7d679277ac0` | MIT ([LICENSE](https://github.com/hyperium/hyper/blob/7f67699ce32d717081deb7018b4da7d679277ac0/LICENSE)) | `Copyright (c) 2014-2026 Sean McArthur` |
-| `httparse-selected.json` | httparse | `v1.10.1` | `9f29e79f9832dbd0ae5220acb17c1866745bdecd` | MIT OR Apache-2.0 (MIT taken; [LICENSE-MIT](https://github.com/seanmonstar/httparse/blob/9f29e79f9832dbd0ae5220acb17c1866745bdecd/LICENSE-MIT)) | `Copyright (c) 2015-2025 Sean McArthur` |
+| `httparse-selected.json` | httparse | `v1.10.1` | `9f29e79f9832dbd0ae5220acb17c1866745bdecd` | MIT (upstream is MIT OR Apache-2.0; the file declares MIT, [LICENSE-MIT](https://github.com/seanmonstar/httparse/blob/9f29e79f9832dbd0ae5220acb17c1866745bdecd/LICENSE-MIT)) | `Copyright (c) 2015-2025 Sean McArthur` |
 | `curl-selected.json` | curl | `curl-8_23_0` | `3163ec065643ba20709f190111f42c3e1fe95273` | curl ([COPYING](https://github.com/curl/curl/blob/3163ec065643ba20709f190111f42c3e1fe95273/COPYING)) | `Copyright (c) 1996 - 2026, Daniel Stenberg, <daniel@haxx.se>, and many contributors, see the THANKS file.` (first line verified; the implementer copies the full sentence from the file) |
 
 Each file is registered in `tests/vectors/index.json` for `engine-core:h1_response`, and `pnpm vectors:notices`
 regenerates `THIRD_PARTY_NOTICES`. Tags are the latest published releases on 2026-11-06; P1b's full port (design §15)
 extends the same files after `--refresh`-style re-resolution of the latest release.
 
-**Counts as built (Task 4):** `blazehttp-rules.json` 136 (every §9.1 rule with its accepting neighbours, the §9.2
-classes and the limit boundaries), `go-selected.json` 13, `hyper-selected.json` 1, `httparse-selected.json` 8,
-`curl-selected.json` 4: **162** new vectors, plus the two imported 304 cases flipped (§9.4).
+**Counts as built (Task 4):** `blazehttp-rules.json` 144 (every §9.1 rule with its accepting neighbours, the §9.2
+classes and the limit boundaries; fix round 1 added `connection-close-then-keep-alive-11`,
+`connection-close-keep-alive-10`, `te-on-103`, `cl-5-on-100`, `connection-htab-ows`, `name-every-tchar-special`,
+`fields-101-in-103`, `cl-not-digits-in-103`), `go-selected.json` 13, `hyper-selected.json` 1,
+`httparse-selected.json` 8, `curl-selected.json` 4: **170** new vectors, plus the two imported 304 cases flipped
+(§9.4). Each fix-round vector was shown failing against an injected mutant before it was kept.
 
 **Counts planned in the note.** First completion: 46 new vectors (§9.2: 20; §9.3: 26 = go 13, hyper 1, httparse 8, curl 4). Review
 round 1 adds **21** vectors to §9.1 (`garbage-no-lf`; 3 status boundaries; `cl-dup-case`; 2 two-field TE;
@@ -775,7 +797,12 @@ new vectors in total, beyond the first draft's §9.1 rule groups.
 ### 9.6 Unit tests (not vectors)
 - Contract violations return `Engine(Internal)`: `parse` after `Complete`; `parse` after an error (the `Failed`
   phase); a `buf` shorter than `pos`: feed `HTTP/1.1 200 OK\r\nFoo` (20 bytes → phase `Name`, `pos == 20`), then only
-  its first 15 bytes. (A shorter buffer during `StatusPrefix` is re-validated, not an error: §6.6.)
+  its first 15 bytes; and in `StatusReason`: `HTTP/1.1 200` (`Partial`, `pos == 12`) then `HTTP/` (fix round 1: this
+  used to blame the peer with `Malformed`). (A shorter buffer during `StatusPrefix` is re-validated, not an error:
+  §6.6.)
+- Framing as built (the vector format drops `framing`): a `GET` with `Transfer-Encoding: chunked` → `Chunked`,
+  keep-alive (`te_on_get_framing`; the test helper reports a chunked body as an explicit outcome until P1a decodes
+  it); 204, 304 and `HEAD` → `Empty`, with keep-alive per §6.5.
 - `value_len` equals the table-based `position` for every byte value at every lane and in the tail, and for every
   adjacent pair (256 × 256) at lanes 0/1, 6/7 and 7/tail.
 - `reset` after `Complete`; a 64 KiB head fed 1 byte at a time completes; every sub-state boundary (a split after
@@ -783,16 +810,36 @@ new vectors in total, beyond the first draft's §9.1 rule groups.
 - **Error payloads:** the brief's `errors_never_contain_header_bytes` is replaced by "every error is a payload-free
   code: `ErrorCode::ALL_SAMPLES.contains(&e)`" for every error the corpus produces (the substring form fails: `Debug`
   of `Protocol(MalformedResponse)` shares "Protocol" with the imported "Switching Protocols", and limit filler would
-  match `TOO_LARGE/headers`).
+  match `TOO_LARGE/headers`). It holds by construction today (no `ErrorCode` variant carries bytes) and is kept as a
+  tripwire for the day a variant gains a payload.
+- **Split test cost:** every split point of every vector stays (the brief's property); the workspace sets
+  `[profile.test] opt-level = 1` so the O(n²) sweep over the 64 KiB vectors takes ≈ 6 s instead of ≈ 57 s, with debug
+  assertions and overflow checks still on.
 
 ### 9.7 Fuzz (`h1_response`)
-- The brief's split-equality property, over **multi-message inputs**: 0–11 interim heads plus a final head, random
-  `head_request`, splits anywhere including across interim boundaries.
+- The brief's split-equality property, over **multi-message inputs**: 0–12 interim heads plus a final head, random
+  `head_request`, whole input = arbitrary reads = 1-byte reads, splits anywhere including across interim boundaries.
+- **Structure-aware inputs (fix round 1, F1/F4/M2):** field names from the framing-relevant set in several cases
+  (`Content-Length`, `cOnTeNt-LeNgTh`, `TRANSFER-ENCODING`, `CONNECTION`, `Proxy-Connection`, …); values are
+  `Chunked { case mask, OWS }`, `Conn` (comma lists of `close`/`keep-alive`/`upgrade`/`closed`/empty with OWS),
+  `Digits { leading zeros, n }`, `u64::MAX + 1` or raw bytes; status lines with a phrase, an empty reason or a reason
+  glued to the code; `Filler { count, len }` lines up to 70,000 bytes; `Boundary` exchanges a few bytes either side of
+  each limit (64 KiB head, interim + final 64 KiB, 8 KiB status line, 100 fields, 10 interim heads) — the
+  structure-aware form of seeding with the `head-65537`, `interim-plus-final-65537` and `status-line-8193` vectors;
+  optional byte mutations; raw bytes. Dictionary `fuzz/h1_response.dict`; runs use `-use_value_profile=1`.
 - Differential oracle with httparse (fuzz-crate dependency only): accept ⇒ httparse (default strict config) accepts
-  with the same status, version, field list and head length.
-- **Framing/keep-alive model:** a ~40-line reference model of RFC 9112 §6.3 plus our §5.2 over httparse's field list:
-  accept ⇒ `model(fields, status, method, version) == (framing, keep_alive)`; model rejects ⇒ we reject.
-- Built with debug assertions (arithmetic overflow traps).
+  with the same status, version, field list and head length; httparse completes a head ⇒ we accept or reject it.
+- **Framing/keep-alive model** (reference model of RFC 9112 §6.3 plus our §5.2 over httparse's field list, in field
+  order, limits from `H1_LIMITS`, returning the error class): accept ⇒ same `(framing, keep_alive)`; reject ⇒ our
+  error equals the model's class or is `Malformed` (a byte rule httparse does not check), `TooLarge` only past a limit,
+  and `SmugglingRisk` never where the model accepts.
+- **Over-strictness:** an unmutated structured exchange whose bytes are all valid, which the model accepts and which
+  fits the limits, must be accepted.
+- Built with debug assertions and overflow checks.
+- **Mutation check (fix round 1, from an empty corpus, dictionary + value profile, macOS arm64):**
+  `FramingFact::Chunked => Framing::CloseDelimited` (the llhttp #876 class) crashed the target after 19,298 runs
+  (≈ 36 s); dropping `&& self.connection != ConnectionOption::Close` after 111,927 runs (≈ 125 s). Both had survived
+  the first harness (114k and 611k runs).
 
 ### 9.8 Port in P1b (design §15 "ported corpora")
 
@@ -802,7 +849,7 @@ The full suites become vector files in P1b, extending §9.5's files:
 |---|---|---|---|---|
 | Go `net/http` | `go1.27.3` | `2aae1000ea1d4b28923b96db28acf4e3b99d6aff` | [`response_test.go`](https://github.com/golang/go/blob/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/src/net/http/response_test.go) (`respTests`, `TestReadResponseErrors`), [`transfer_test.go`](https://github.com/golang/go/blob/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/src/net/http/transfer_test.go) (`TestParseTransferEncoding`, `TestParseContentLength`), [`internal/chunked_test.go`](https://github.com/golang/go/blob/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/src/net/http/internal/chunked_test.go) (chunked: P1a) | BSD-3-Clause |
 | hyper | `v1.12.0` | `7f67699ce32d717081deb7018b4da7d679277ac0` | [`src/proto/h1/role.rs`](https://github.com/hyperium/hyper/blob/7f67699ce32d717081deb7018b4da7d679277ac0/src/proto/h1/role.rs) tests: `test_parse_response*`, `test_decoder_response`, `test_parse_response_multiple_connection_headers`, `parse_header_htabs`, `test_client_obs_fold_line`, `test_parse_accepts_lf_crlf_terminator`, `parse_too_large_headers`, `test_h1_client_max_header_size` | MIT |
-| httparse | `v1.10.1` | `9f29e79f9832dbd0ae5220acb17c1866745bdecd` | [`src/lib.rs`](https://github.com/seanmonstar/httparse/blob/9f29e79f9832dbd0ae5220acb17c1866745bdecd/src/lib.rs) `mod tests`: `test_response_*`, `RESPONSE_*` statics and their `test_forbid_*`/`test_allow_*` pairs (strict expectations only) | MIT OR Apache-2.0 |
+| httparse | `v1.10.1` | `9f29e79f9832dbd0ae5220acb17c1866745bdecd` | [`src/lib.rs`](https://github.com/seanmonstar/httparse/blob/9f29e79f9832dbd0ae5220acb17c1866745bdecd/src/lib.rs) `mod tests`: `test_response_*`, `RESPONSE_*` statics and their `test_forbid_*`/`test_allow_*` pairs (strict expectations only) | MIT (chosen from upstream MIT OR Apache-2.0, as `httparse-selected.json` declares) |
 | curl | `curl-8_23_0` | `3163ec065643ba20709f190111f42c3e1fe95273` | [`tests/data`](https://github.com/curl/curl/tree/3163ec065643ba20709f190111f42c3e1fe95273/tests/data) `test{178,249,262,282,1033,1115,1144,1154,1266,1274,1432,1433,1466,1473,1479,1482,1483,1493,1494,1495,1546,1665,1722,1723,2105,2107,2119,2918}`; chunked (P1a): `test{207,266,1416,1417,1499,2106}` | curl (MIT-style) |
 | HTTP Garden | none | `b417e806c1b15e8ea0b9312f81a91fbdcbc7a83e` | **Do not port** (GPL-3.0): classes re-derived in §9.2 | GPL-3.0 |
 
@@ -861,6 +908,12 @@ undici `DispatchHook` re-check, **enforced in P4**; "table" means listed as a di
 | D13 | `Proxy-Connection: close` | keepAlive true (ignored) | honoured | table |
 | D14 | any 1xx except 101 with TE or CL ≠ 0 | smuggling-risk (S16) | no body read (undici never reads a 1xx body) | table |
 | D15 | trailing OWS / obs-text values | byte-exact, ASCII OWS only | — | verify parity through the JS surface (design §9.3, `obs-text-value-preserved`) |
+| D16 | head between 16 and 64 KiB | accepted (64 KiB limit) | undici `maxHeaderSize` defaults to 16 KiB | **verify in P4:** pass `maxHeaderSize: 65536`, map `UND_ERR_HEADERS_OVERFLOW` to `TOO_LARGE/headers`, check how undici counts (status line, CRLF, interim heads) |
+| D17 | more than 100 fields | `PROTOCOL/malformed-response` | no field-count limit | **verify in P4:** the hook counts fields per head |
+| D18 | reason / status line over 8 KiB | `TOO_LARGE/headers` | bounded only by `maxHeaderSize` | **verify in P4:** whether `statusText` counts toward undici's limit; the hook bounds `statusMessage` |
+| D19 | HEAD/204/304 with an unknown `Transfer-Encoding`, or HTTP/1.0 HEAD with TE | `PROTOCOL/smuggling-risk` (TE grammar checked in every head) | succeeds (no body read) | **verify in P4:** the hook applies the TE value rule to bodiless responses too |
+| D20 | `Connection: close` in a 1xx head | sticky: final keepAlive false | only the final head's `Connection` counts | **verify in P4:** whether the hook sees 1xx heads (see item (b) below) |
+| D21 | DEL (0x7F) in field values | `PROTOCOL/malformed-response` | llhttp strict mode: to check | **verify in P4:** llhttp's value-byte table in strict mode |
 
 Vectors with an undici expectation now: `te-trailing-htab` only (`expect.undici: "PROTOCOL/smuggling-risk"`). P4
 adds `interim-11` and `interim-flood-timer` on undici.

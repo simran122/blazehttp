@@ -180,7 +180,7 @@ The client parser is strict; every rule has test vectors from the reference corp
 - **Interim (1xx) heads** **[author's call]**: the `Content-Length`/`Transfer-Encoding` grammar and conflict rules apply to every head, 1xx included; a 1xx head carrying `Transfer-Encoding` or a `Content-Length` other than `0` → `PROTOCOL/smuggling-risk`; `Connection: close` in a 1xx head makes the connection non-reusable after the exchange.
 - **`Transfer-Encoding`:** only the value `chunked`, compared ASCII case-insensitively after OWS (SP, HTAB) trimming **[author's call]** (no other codings are implemented); with `Content-Length` present, or on an HTTP/1.0 response → rejected.
 - **Chunked:** chunk size `1*HEXDIG` (≤ 16 digits including leading zeros; no `0x`, no sign, no whitespace except optional BWS before `;`); every chunk-size line, chunk extension and trailer line ends in CRLF only — a bare CR or LF anywhere in them is rejected **[author's call]**; chunk extensions bounded (≤ 4 KiB per message), validated as RFC 9112 §7.1.1 `chunk-ext` (no control characters except HTAB) and then ignored **[author's call]**; exactly CRLF after each chunk's data, nothing else; trailers bounded (≤ 16 KiB, ≤ 100 fields) and discarded.
-- **Bodies:** none for `HEAD`, 1xx, 204, 304 regardless of headers (a 1xx carrying framing headers is rejected, see Interim heads); a 204 or 304 response carrying `Transfer-Encoding` or a `Content-Length` other than 0 is accepted without a body and its connection is not reused (`HEAD` excluded) **[author's call]**; a close-delimited body over TLS that ends without `close_notify` → `PROTOCOL/truncated`.
+- **Bodies:** none for `HEAD`, 1xx, 204, 304 regardless of headers (a 1xx carrying framing headers is rejected, see Interim heads); a 204 or 304 response carrying `Transfer-Encoding` or a `Content-Length` other than 0 is accepted without a body and its connection is not reused (`HEAD` excluded) **[author's call]** — RFC 9110 §8.6 permits `Content-Length` on a 304, but we keep the no-reuse rule for undici parity and as a client-side-desync defence until the Task 6 idle-byte detection exists, and revisit it with Task 6 data (`docs/notes/response-parser.md` §6.5); a close-delimited body over TLS that ends without `close_notify` → `PROTOCOL/truncated`.
 - **EOF before the final head** **[author's call]**: `NETWORK/closed-before-response` only when zero bytes of this exchange's response were received (interim heads included); otherwise `PROTOCOL/malformed-response`.
 - **Repeated fields:** more than one `Transfer-Encoding` field → rejected; DEL (0x7F) treated as a control character everywhere.
 - **Outgoing request target:** validated after `paramsSerializer` runs — no SP, control characters or non-ASCII (percent-encoded by the URL layer or rejected).
@@ -431,7 +431,7 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
    - `crates/` holds Rust crates.
    - `packages/` holds npm packages and `npm/<target>/` the platform binaries.
    - `tools/` holds dev scripts and `bench/` the benchmark harness.
-   - `tests/vectors/` holds shared test data.
+   - `tests/vectors/` holds shared test data and `tests/fixtures/` shared byte fixtures (e.g. `tests/fixtures/h1-heads/`, read by tests, benchmarks and `bench-server`).
    - `docs/notes/` holds one note per component and `docs/perf/` the speed programme.
    - `policy/` holds `spec.json`.
 
