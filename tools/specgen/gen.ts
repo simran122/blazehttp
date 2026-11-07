@@ -26,9 +26,15 @@ const snake = (s: string): string => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCas
 const variantOf = (code: string): string => pascal(code.toLowerCase());
 const isEnum = (t: FieldType): t is readonly string[] => typeof t !== 'string';
 
+/** Named fields of a code, in spec order; empty for detail codes. */
+const fieldsOf = (e: ErrorSpec): [string, FieldType][] => Object.entries(e.fields ?? {});
+
 /** The enum field of a code (name and ordered values), if it has one. */
 const enumEntryOf = (e: ErrorSpec): readonly [string, readonly string[]] | undefined =>
-  Object.entries(e.fields ?? {}).find((entry): entry is [string, readonly string[]] => isEnum(entry[1]));
+  fieldsOf(e).find((entry): entry is [string, readonly string[]] => isEnum(entry[1]));
+
+/** Name of the code's `u32` field, if it has one. */
+const numberFieldOf = (e: ErrorSpec): string | undefined => fieldsOf(e).find(([, t]) => t === 'u32')?.[0];
 
 /** Rust type behind the detail id: `<Variant>Detail` for detail lists, else the enum field's type. */
 const valueTypeOf = (e: ErrorSpec, variant: string, enumField: string | undefined): string =>
@@ -44,7 +50,7 @@ const toWireCode = (e: ErrorSpec, id: number): WireCode => {
     values: e.details ?? enumEntry?.[1],
     valueType: valueTypeOf(e, variant, enumEntry?.[0]),
     enumField: enumEntry?.[0],
-    numberField: Object.entries(e.fields ?? {}).find(([, t]) => t === 'u32')?.[0],
+    numberField: numberFieldOf(e),
   };
 };
 
@@ -59,21 +65,20 @@ const tsFieldType = (t: FieldType): string => (isEnum(t) ? t.map(q).join(' | ') 
 const tsDetail = (e: ErrorSpec): string =>
   e.details
     ? e.details.map(q).join(' | ')
-    : `{ ${Object.entries(e.fields ?? {})
+    : `{ ${fieldsOf(e)
         .map(([name, t]) => `${name}: ${tsFieldType(t)}`)
         .join('; ')} }`;
 
 /** Display form: `CODE/detail` for detail codes and enum fields, bare `CODE` otherwise. */
 const tsFormatter = (e: ErrorSpec): string => {
-  const enumField = Object.entries(e.fields ?? {}).find(([, t]) => isEnum(t))?.[0];
+  const enumField = enumEntryOf(e)?.[0];
   if (e.details) return `(detail) => \`${e.code}/\${detail}\``;
   if (enumField !== undefined) return `(detail) => \`${e.code}/\${detail.${enumField}}\``;
   return `() => ${q(e.code)}`;
 };
 
 const tsWireEntry = (e: ErrorSpec): string => {
-  const enumValues = Object.values(e.fields ?? {}).find(isEnum);
-  const details = e.details ?? enumValues;
+  const details = e.details ?? enumEntryOf(e)?.[1];
   const list = (v: readonly string[] | undefined): string => (v ? `[${v.map(q).join(', ')}]` : 'undefined');
   const fields = e.fields ? Object.keys(e.fields) : undefined;
   return `  { code: ${q(e.code)}, details: ${list(details)}, fields: ${list(fields)} },`;
@@ -311,7 +316,7 @@ const generateRust = (spec: Spec): string => {
   const enums = codes.flatMap((c) => (c.values ? [rustEnum(c.valueType, c.values, pascal)] : []));
   return `// ${HEADER}
 
-${enums.join('\n')}${rustEnum('Method', spec.methods, variantOf)}
+${[...enums, rustEnum('Method', spec.methods, variantOf)].join('\n')}
 ${rustErrorCode(codes)}
 ${rustLimits(Object.entries(spec.limits.h1))}`;
 };
