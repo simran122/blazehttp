@@ -3,7 +3,7 @@
   "workspaces": {
     ".": {
       "entry": ["tools/policy-check/{check,npm-deprecated}.ts", "tools/vectors/{check-index,notices,import-llhttp}.ts"],
-      "project": ["*.{ts,js}", "tools/**/*.ts"]
+      "project": ["*.{ts,js}", "tools/**/*.ts", "bench/**/*.ts"]
     },
     "packages/blazehttp": {
       "entry": ["src/index.ts", "test/**/*.test.ts"],

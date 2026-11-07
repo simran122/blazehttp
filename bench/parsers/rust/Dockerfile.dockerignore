@@ -1,0 +1,6 @@
+*
+!Cargo.toml
+!crates/engine-core/Cargo.toml
+!crates/engine-core/src
+!bench/parsers/rust
+bench/parsers/rust/target
