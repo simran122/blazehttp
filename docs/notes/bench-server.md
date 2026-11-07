@@ -21,6 +21,11 @@ secondary source, not checked.
   refused (connection closed) instead of being mis-framed.
 - TLS: rustls 0.23 with the **ring** provider (as the Rust competitors use, §16.2), a self-signed certificate generated
   by rcgen at start-up, ALPN `http/1.1`. The same connection code serves both ports (generic over the stream type).
+- Interface (two changes from the plan's sketch, both for correctness): `serve(cfg, ready)` sends a `Bound` (the
+  addresses actually bound and the TLS certificate) instead of `()`, so tests bind port 0 with no free-port race and
+  a TLS client can verify the self-signed certificate; the thread count is a binary flag (`--threads`, it sizes the
+  runtime `main` builds), not a `ServerConfig` field `serve` would ignore. The binary prints
+  `ready plain=<addr> [tls=<addr>]` when it accepts connections.
 - Verification that the server is not the bottleneck: §7 (dev, Docker on the owner's Mac, `--cpus=4`, wrk at c = 50),
   and in every harness run the server container's cgroup `cpu.stat` (§6).
 
