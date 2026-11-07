@@ -18,7 +18,8 @@
     "npm-deprecated": "node tools/policy-check/npm-deprecated.ts",
     "vectors:index": "node tools/vectors/check-index.ts",
     "vectors:notices": "node tools/vectors/notices.ts",
-    "vectors:import-llhttp": "node tools/vectors/import-llhttp.ts"
+    "vectors:import-llhttp": "node tools/vectors/import-llhttp.ts",
+    "bench:parsers": "node bench/parsers/run.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
