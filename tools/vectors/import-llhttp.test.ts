@@ -304,22 +304,47 @@ describe('importLlhttp', () => {
     expect(short.file.cases[0]?.expect.native).toMatchObject({ ok: { keepAlive: true } });
   });
 
-  it('refuses an interim head with framing or Connection fields', () => {
-    const interim = mdCase(
-      'Interim CL',
+  /** A one-field interim head (`status`), the way llhttp logs it, followed by a final head or llhttp's upgrade pause. */
+  const interimWithField = (status: string, name: string, value: string, after: string[]): string => {
+    const statusLine = `HTTP/1.1 ${status}\r\n`;
+    const nameOff = statusLine.length;
+    const valueOff = nameOff + name.length + 2;
+    const end = valueOff + value.length + 2;
+    const code = status.slice(0, 3);
+    return mdCase(
+      `${code} ${name}`,
       RESPONSE,
-      'HTTP/1.1 103 Early Hints\nContent-Length: 0\n\nHTTP/1.1 200 OK\n\n',
+      `HTTP/1.1 ${status}\n${name}: ${value}\n\n`,
       [
         'off=0 message begin',
         'off=0 len=4 span[protocol]="HTTP"',
-        'off=26 len=14 span[header_field]="Content-Length"',
-        'off=42 len=1 span[header_value]="0"',
-        'off=45 header_value complete',
-        'off=47 headers complete status=103 v=1/1 flags=20 content_length=0',
-        'off=47 message complete',
+        `off=${String(nameOff)} len=${String(name.length)} span[header_field]="${name}"`,
+        `off=${String(valueOff)} len=${String(value.length)} span[header_value]="${value}"`,
+        `off=${String(end - 2)} header_value complete`,
+        `off=${String(end)} headers complete status=${code} v=1/1 flags=0 content_length=0`,
+        `off=${String(end)} message complete`,
+        ...after.map((line) => line.replace('END', String(end))),
       ].join('\n'),
     );
-    expect(() => runOne(interim)).toThrow(/Interim CL: cannot model framing or Connection in a 1xx head/);
+  };
+
+  it.each([
+    ['Content-Length', '0'],
+    ['Transfer-Encoding', 'chunked'],
+    ['Connection', 'close'],
+  ])('refuses an interim head with %s (§5.2 Interim heads)', (name, value) => {
+    expect(() => runOne(interimWithField('103 Early Hints', name, value, []))).toThrow(
+      /cannot model framing or Connection in a 1xx head/,
+    );
+  });
+
+  it('does not refuse a 101 with Connection: upgrade (not interim; the upgrade pause decides)', () => {
+    const upgrade = runOne(
+      interimWithField('101 Switching Protocols', 'Connection', 'upgrade', [
+        'off=END error code=8 reason="Pause on CONNECT/Upgrade"',
+      ]),
+    );
+    expect(upgrade.file.cases[0]?.expect.native).toEqual(MALFORMED);
   });
 
   it.each([

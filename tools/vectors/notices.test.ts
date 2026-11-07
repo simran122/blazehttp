@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderNotices } from './notices.ts';
+import { licenceText, renderNotices } from './notices.ts';
 import type { VectorSource } from './schema.ts';
 
 const llhttp = (file: string): VectorSource => ({
@@ -26,6 +26,19 @@ describe('renderNotices', () => {
     expect(text).not.toContain('own.json');
     expect(text.indexOf('llhttp-a.json')).toBeLessThan(text.indexOf('llhttp-b.json'));
     expect(text).toContain('Permission is hereby granted');
+  });
+
+  it('uses a project-specific text only for its own project and licence', () => {
+    const go: VectorSource = {
+      ...llhttp('g'),
+      project: 'go',
+      licence: 'BSD-3-Clause',
+      copyright: 'Copyright 2009 The Go Authors.',
+    };
+    expect(renderNotices([{ path: 'h1/go.json', source: go }])).toContain('Neither the name of Google LLC');
+    expect(licenceText(go)).toContain('Google LLC');
+    expect(() => licenceText({ ...go, project: 'other' })).toThrow(/no licence text for BSD-3-Clause \(other\)/);
+    expect(licenceText({ ...go, licence: 'MIT' })).toContain('Permission is hereby granted');
   });
 
   it('rejects a licence without a known text', () => {
