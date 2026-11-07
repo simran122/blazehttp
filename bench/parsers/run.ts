@@ -230,9 +230,9 @@ function main(): void {
   const out =
     values.out ?? join(ROOT, 'bench/results', `${date}-${arch === 'aarch64' ? 'arm64' : arch}-dev-parsers.jsonl`);
 
-  process.stderr.write(
-    `running containers before the run:\n${run('docker', ['ps', '--format', '{{.Names}} {{.Image}}'])}\n`,
-  );
+  // Benchmark host rule: never share the CPUs with containers this run did not start (and never stop them).
+  const running = run('docker', ['ps', '--format', '{{.Names}} {{.Image}}']).trim();
+  if (running !== '') throw new Error(`containers this run did not start are running; stop them first:\n${running}`);
   if (!values['no-build']) for (const h of new Set(PARSERS.map((p) => p.harness))) build(h);
 
   const workDir = mkdtempSync(join(tmpdir(), 'blazehttp-parsers-'));
