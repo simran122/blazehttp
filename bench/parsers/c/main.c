@@ -11,6 +11,8 @@
 
 #define ALLOC_SAMPLE 10000
 #define MAX_HEADS 256
+/* One hour: keeps ms * 1e6 far below 2^64. */
+#define MAX_RUN_MS 3600000ull
 
 /* Allocation counter: the build links with -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc, so every call made by
  * the harness and both parsers lands here. */
@@ -107,12 +109,12 @@ static void feed(const engine_t *engine, const head_t *heads, size_t count) {
 }
 
 static unsigned long long run_ms(int argc, char **argv) {
-    if (argc < 5) die("time needs a positive integer run time in ms");
+    if (argc < 5) die("time needs a run time in ms from 1 to 3600000");
     char *end = NULL;
     errno = 0;
     unsigned long long ms = strtoull(argv[4], &end, 10);
-    if (errno != 0 || end == argv[4] || *end != '\0' || ms == 0 || argv[4][0] == '-') {
-        die("time needs a positive integer run time in ms");
+    if (errno != 0 || end == argv[4] || *end != '\0' || ms == 0 || ms > MAX_RUN_MS || argv[4][0] == '-') {
+        die("time needs a run time in ms from 1 to 3600000");
     }
     return ms;
 }

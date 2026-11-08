@@ -65,8 +65,8 @@ describe('workloads', () => {
     expect(all.map((w) => [w.name, w.kind, w.heads.length])).toEqual([
       ['1k-3-headers', 'timed', 1],
       ['1k-20-headers', 'timed', 1],
-      ['1k-3-headers-x64', 'timed', 64],
-      ['1k-20-headers-x64', 'timed', 64],
+      ['1k-3-headers-ring64', 'timed', 64],
+      ['1k-20-headers-ring64', 'timed', 64],
       ['mixed-64', 'timed', 64],
       ['feed-a-60k-value', 'feed', 1],
       ['feed-b-99x600', 'feed', 1],

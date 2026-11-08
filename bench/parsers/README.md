@@ -41,7 +41,8 @@ only needs the framing facts.
 "Framing facts" are the length (`Content-Length`, chunked, or neither), and keep-alive: every parser produces them,
 natively or through the same extraction pass (`rust/src/engines.rs`, `c/pico.c`). Versions are pinned in each
 Dockerfile: base images by digest; Zig, picohttpparser, llhttp and Boost downloads by SHA-256 (with the llhttp and
-Boost tag commits recorded); the Rust crates by `Cargo.lock`; the GCC package by its Debian version. Each image
+Boost tag commits recorded); the Rust crates by `Cargo.lock`; the GCC package by its Debian version (not by a snapshot.debian.org date: if that version leaves the mirror, the
+build fails loudly instead of drifting; a snapshot pin needs a verified build and is left for a quiet host). Each image
 records its versions and flags in `/versions.txt`, copied into the run's `meta` line.
 
 ## Fairness rules
@@ -86,8 +87,8 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
 
 `workloads.ts` builds them from `tests/fixtures/h1-heads/` at start-up:
 
-- timed: `1k-3-headers` (109 B) and `1k-20-headers` (779 B), each one head repeated; `1k-3-headers-x64` and
-  `1k-20-headers-x64`, the 64 same-length variants of each that `crates/engine-core/examples/h1_parse_bench.rs` times
+- timed: `1k-3-headers` (109 B) and `1k-20-headers` (779 B), each one head repeated; `1k-3-headers-ring64` and
+  `1k-20-headers-ring64`, the 64 same-length variants of each that `crates/engine-core/examples/h1_parse_bench.rs` times
   (digits varied so no single head trains the branch predictor); `mixed-64` (64 heads cycling over the three
   fixtures, digits varied the same way);
 - feed: the four 1-byte feed inputs;

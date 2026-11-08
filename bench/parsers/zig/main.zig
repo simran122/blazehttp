@@ -10,6 +10,8 @@ const Head = std.http.Client.Response.Head;
 
 const warm_up_ns = 100 * std.time.ns_per_ms;
 const block = 1000;
+/// One hour: keeps `ms * ns_per_ms` far below 2^64.
+const max_run_ms = 3_600_000;
 
 fn fail(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("error: " ++ fmt ++ "\n", args);
@@ -155,7 +157,7 @@ pub fn main(init: std.process.Init) !void {
         try check(w, heads);
     } else if (std.mem.eql(u8, mode, "time")) {
         const ms = if (args.len > 4) std.fmt.parseInt(u64, args[4], 10) catch 0 else 0;
-        if (ms == 0) fail("time needs a positive integer run time in ms", .{});
+        if (ms == 0 or ms > max_run_ms) fail("time needs a run time in ms from 1 to 3600000", .{});
         try time(io, w, heads, ms * std.time.ns_per_ms);
     } else if (std.mem.eql(u8, mode, "feed")) {
         try feed(io, w, heads);

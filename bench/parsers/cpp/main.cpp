@@ -11,6 +11,7 @@
 #include <boost/beast/core/error.hpp>
 #include <boost/beast/http.hpp>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -33,6 +34,8 @@ constexpr std::uint32_t header_limit = 1u << 20;
 constexpr auto warm_up = std::chrono::milliseconds(100);
 constexpr int block = 1000;
 constexpr int alloc_sample = 10000;
+// One hour: keeps the run time far inside every clock's range.
+constexpr unsigned long long max_run_ms = 3600000;
 
 unsigned long long allocations = 0;
 
@@ -247,11 +250,14 @@ void feed(std::vector<std::string_view> const& heads) {
 }
 
 std::chrono::milliseconds run_ms(int argc, char** argv) {
-    if (argc < 5) die("time needs a positive integer run time in ms");
+    if (argc < 5) die("time needs a run time in ms from 1 to 3600000");
     std::string_view text = argv[4];
     char* end = nullptr;
+    errno = 0;
     unsigned long long ms = std::strtoull(argv[4], &end, 10);
-    if (text.empty() || text.front() == '-' || *end != '\0' || ms == 0) die("time needs a positive integer run time in ms");
+    if (text.empty() || text.front() == '-' || *end != '\0' || errno != 0 || ms == 0 || ms > max_run_ms) {
+        die("time needs a run time in ms from 1 to 3600000");
+    }
     return std::chrono::milliseconds(ms);
 }
 

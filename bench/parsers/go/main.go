@@ -25,6 +25,8 @@ const (
 	warmUp      = 100 * time.Millisecond
 	block       = 1000
 	allocSample = 10000
+	// One hour: keeps the run time far inside time.Duration's range.
+	maxRunMs = 3_600_000
 )
 
 // parser reuses one bufio.Reader and one bytes.Reader across heads, as a keep-alive connection does.
@@ -205,8 +207,8 @@ func main() {
 			if len(os.Args) > 4 {
 				ms, err = strconv.Atoi(os.Args[4])
 			}
-			if err != nil || ms <= 0 {
-				fail("time needs a positive integer run time in ms")
+			if err != nil || ms <= 0 || ms > maxRunMs {
+				fail("time needs a run time in ms from 1 to 3600000")
 			}
 			timeHeads(heads, time.Duration(ms)*time.Millisecond)
 		},

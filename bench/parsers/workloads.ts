@@ -92,8 +92,8 @@ export function workloads(fixtureDir: string): Workload[] {
     { name: '1k-3-headers', kind: 'timed', heads: [h3] },
     { name: '1k-20-headers', kind: 'timed', heads: [h20] },
     // The 64 same-length variants of each fixture, as crates/engine-core/examples/h1_parse_bench.rs times them.
-    { name: '1k-3-headers-x64', kind: 'timed', heads: variants(h3) },
-    { name: '1k-20-headers-x64', kind: 'timed', heads: variants(h20) },
+    { name: '1k-3-headers-ring64', kind: 'timed', heads: variants(h3) },
+    { name: '1k-20-headers-ring64', kind: 'timed', heads: variants(h20) },
     { name: 'mixed-64', kind: 'timed', heads: rotated([h3, h20, synthetic]) },
     ...feedInputs(),
     { name: 'gate-framing', kind: 'gate', heads: GATE_HEADS.map((head) => Buffer.from(head, 'latin1')) },

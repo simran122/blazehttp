@@ -15,6 +15,8 @@ use engines::{Engine, Facts, Length};
 const WARM_UP: Duration = Duration::from_millis(100);
 const BLOCK: usize = 1_000;
 const ALLOC_SAMPLE: usize = 10_000;
+/// One hour: the same run-time bound as every other harness.
+const MAX_RUN_MS: u64 = 3_600_000;
 
 /// Counts allocations so `check` can report allocations per head (design §16.2 "allocations per request").
 struct CountingAlloc;
@@ -166,8 +168,8 @@ fn run(
             let ms = args
                 .get(3)
                 .and_then(|v| v.parse::<u64>().ok())
-                .filter(|&ms| ms > 0)
-                .ok_or("time needs a positive integer run time in ms")?;
+                .filter(|ms| (1..=MAX_RUN_MS).contains(ms))
+                .ok_or("time needs a run time in ms from 1 to 3600000")?;
             time(heads, Duration::from_millis(ms), parse);
         }
         Some("feed") => feed(engine, heads)?,

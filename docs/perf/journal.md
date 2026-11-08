@@ -194,7 +194,10 @@ Record every measured idea. Keep only measured wins.
   | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.21 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
   | Go `net/http` | 0.08 / 0.10 / 0.07 / 0.11 / 0.10 | 0.04 / 0.06 / 0.04 / 0.05 / 0.07 |
 
-  **Fix round 2 correction:** the llhttp and Beast `basic_parser` rows above are superseded. Their timed paths
+  **Fix round 2 notes:** the split helper is plain scalar code (`memchr` for each line's CR, then `.position()` for
+  the colon and a scalar OWS trim), so "the split costs as much as the parse" partly measures this helper, not only
+  the second pass itself. The workloads written `1k` × 64 / `1k-h20` × 64 here are the `*-ring64` workloads (the
+  JSONL of this run still names them `*-x64`). The llhttp and Beast `basic_parser` rows above are superseded. Their timed paths
   delivered no fields (llhttp registered no field callbacks; Beast's callback recorded nothing), so those ratios
   compare unequal work. Both now record name/value spans on the timed path; their numbers wait for the re-run.
   The split itself costs as much as the parse: plain / with-fields = 0.50–0.63. Allocations per head: 0 for every
