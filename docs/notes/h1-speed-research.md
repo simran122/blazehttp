@@ -66,9 +66,9 @@ Each is applied by the task that builds it, in the same PR as the code:
 4. P2 wire format: optional per-line layout hints next to the delta (W-B, §6.3); interned name ids in
    `policy/spec.json` (W-C, §6.4).
 5. Design §16: a parser micro-gate row and a writer micro-gate row with the statistic of §0.1 (Task 4c / 5c docs PR).
-7. The `[bool; 256]` class tables move from `engine-core`'s `grammar.rs` into `engine-simd` (the lower crate), and
+6. The `[bool; 256]` class tables move from `engine-core`'s `grammar.rs` into `engine-simd` (the lower crate), and
    `engine-core` re-exports them, so the scalar and SIMD kernels share one source of truth (§5.5; P1a).
-6. Plan: Tasks 4c, 5b and 5c are tracked in the controller's progress log; `bench/writer/` is replaced by the Task 5c
+7. Plan: Tasks 4c, 5b and 5c are tracked in the controller's progress log; `bench/writer/` is replaced by the Task 5c
    harness; W-D moves from 5b to P1a.
 
 ## 1. References (pinned)
