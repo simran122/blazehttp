@@ -101,18 +101,21 @@ pub fn get(path: &str) -> Vec<u8> {
     format!("GET {path} HTTP/1.1\r\nhost: bench\r\n\r\n").into_bytes()
 }
 
-/// Writes `request` and reads exactly `expected_len` response bytes within [`CLOSE_WITHIN`].
+/// Writes `request` and reads exactly `expected_len` response bytes, both within [`CLOSE_WITHIN`].
 pub async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     request: &[u8],
     expected_len: usize,
 ) -> Vec<u8> {
-    stream.write_all(request).await.expect("write");
     let mut response = vec![0; expected_len];
-    timeout(CLOSE_WITHIN, stream.read_exact(&mut response))
+    let answered = async {
+        stream.write_all(request).await?;
+        stream.read_exact(&mut response).await
+    };
+    timeout(CLOSE_WITHIN, answered)
         .await
         .expect("server answered in time")
-        .expect("read");
+        .expect("write and read");
     response
 }
 
@@ -122,11 +125,14 @@ pub async fn until_close<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     request: &[u8],
 ) -> Vec<u8> {
-    stream.write_all(request).await.expect("write");
-    timeout(CLOSE_WITHIN, read_to_close(stream))
+    let closed = async {
+        stream.write_all(request).await?;
+        read_to_close(stream).await
+    };
+    timeout(CLOSE_WITHIN, closed)
         .await
         .expect("server closed the connection in time")
-        .expect("read to a clean end of stream")
+        .expect("write, then read to a clean end of stream")
 }
 
 /// The most a test reads before end of stream: a server that never stops writing fails the test here, quickly and in

@@ -248,8 +248,9 @@ pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     use std::sync::LazyLock;
+    use std::time::{Duration, Instant};
 
     use flate2::read::GzDecoder;
 
@@ -430,11 +431,18 @@ mod tests {
         }
     }
 
+    /// Set by [`prebuild_builds_the_catalog_in_a_fresh_process`] for the child it starts.
+    const FRESH_PROCESS: &str = "BENCH_SERVER_FRESH_PROCESS";
+
     /// Must run alone in a fresh process (other tests build the catalog as a side effect), so it is ignored here and
-    /// run by [`prebuild_builds_the_catalog_in_a_fresh_process`].
+    /// run by [`prebuild_builds_the_catalog_in_a_fresh_process`]. Run any other way (`--include-ignored` in the
+    /// shared process), it checks nothing instead of failing at random.
     #[test]
     #[ignore = "run in a fresh process by prebuild_builds_the_catalog_in_a_fresh_process"]
     fn prebuild_builds_the_catalog() {
+        if std::env::var_os(FRESH_PROCESS).is_none() {
+            return;
+        }
         assert!(
             LazyLock::get(&CATALOG).is_none(),
             "nothing built the catalog yet"
@@ -446,14 +454,29 @@ mod tests {
         );
     }
 
+    /// How long the child test process may take.
+    const CHILD_WITHIN: Duration = Duration::from_secs(30);
+
     #[test]
     fn prebuild_builds_the_catalog_in_a_fresh_process() {
         let exe = std::env::current_exe().expect("test binary");
         let name = "cells::tests::prebuild_builds_the_catalog";
-        let run = Command::new(exe)
+        let mut child = Command::new(exe)
             .args(["--exact", name, "--ignored", "--test-threads", "1"])
-            .output()
-            .expect("run the test binary");
+            .env(FRESH_PROCESS, "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start the test binary");
+        let started = Instant::now();
+        while child.try_wait().expect("child status").is_none() {
+            if started.elapsed() > CHILD_WITHIN {
+                let _ = child.kill();
+                panic!("the fresh-process test ran past {CHILD_WITHIN:?}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let run = child.wait_with_output().expect("child output");
         let stdout = String::from_utf8_lossy(&run.stdout);
         assert!(
             run.status.success(),

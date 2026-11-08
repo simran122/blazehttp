@@ -212,3 +212,19 @@ async fn exchange_fails_fast_when_the_server_never_answers() {
     let mut stream = connect(server.bound.plain).await;
     exchange(&mut stream, &get("/1k"), 10).await;
 }
+
+/// The helpers' guard on writes: a server that stops reading fails `exchange` instead of hanging the test.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(expected = "answered in time")]
+async fn exchange_fails_fast_when_the_server_never_reads() {
+    let server = start(ServerConfig {
+        max_connections: 1,
+        ..config(false)
+    })
+    .await;
+    let _first = connect(server.bound.plain).await;
+    let mut queued = connect(server.bound.plain).await;
+    // Far more than the kernel buffers for a connection nobody accepts yet.
+    let request = vec![b'x'; 64 << 20];
+    exchange(&mut queued, &request, 1).await;
+}
