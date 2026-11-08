@@ -184,6 +184,10 @@ async fn invalid_limits_are_refused_before_binding() {
             request_timeout: std::time::Duration::ZERO,
             ..config(false)
         },
+        ServerConfig {
+            request_timeout: std::time::Duration::MAX,
+            ..config(false)
+        },
     ];
     for cfg in invalid {
         let (ready, _bound) = tokio::sync::oneshot::channel();

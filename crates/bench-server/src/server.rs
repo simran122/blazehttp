@@ -40,6 +40,9 @@ pub struct ServerConfig {
     pub request_timeout: Duration,
 }
 
+/// The longest `request_timeout` `serve` accepts.
+pub const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(3600);
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -86,8 +89,8 @@ struct TlsPort {
 ///
 /// # Errors
 ///
-/// `InvalidInput` when `max_connections` is not in `1..=Semaphore::MAX_PERMITS` or `request_timeout` is zero (checked
-/// before binding); binding a listener, generating the TLS identity, or an accept error that is not transient.
+/// `InvalidInput` when `max_connections` is not in `1..=Semaphore::MAX_PERMITS` or `request_timeout` is zero or above
+/// [`MAX_REQUEST_TIMEOUT`] (checked before binding); binding a listener, generating the TLS identity, or an accept error that is not transient.
 pub async fn serve(
     cfg: ServerConfig,
     ready: oneshot::Sender<Bound>,
@@ -142,8 +145,9 @@ impl TlsPort {
 }
 
 impl ServerConfig {
-    /// The limits `serve` relies on: at least one connection and at most what a semaphore holds, and a non-zero
-    /// request timeout (zero would time out every request and write).
+    /// The limits `serve` relies on: at least one connection and at most what a semaphore holds, and a request timeout
+    /// above zero (zero would time out every request and write) and at most [`MAX_REQUEST_TIMEOUT`] (deadlines are
+    /// `now + request_timeout`, which must not overflow).
     fn check(&self) -> io::Result<()> {
         let invalid = |message: String| Err(io::Error::new(io::ErrorKind::InvalidInput, message));
         if !(1..=Semaphore::MAX_PERMITS).contains(&self.max_connections) {
@@ -153,8 +157,10 @@ impl ServerConfig {
                 self.max_connections
             ));
         }
-        if self.request_timeout.is_zero() {
-            return invalid("request_timeout must be above zero".to_owned());
+        if self.request_timeout.is_zero() || self.request_timeout > MAX_REQUEST_TIMEOUT {
+            return invalid(format!(
+                "request_timeout must be above zero and at most {MAX_REQUEST_TIMEOUT:?}"
+            ));
         }
         Ok(())
     }

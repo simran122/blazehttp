@@ -12,5 +12,5 @@ mod tls;
 
 pub use cells::{Cell, CloseDelimited, cells};
 pub use manifest::cells_json;
-pub use server::{Bound, ServerConfig, TlsBound, serve};
+pub use server::{Bound, MAX_REQUEST_TIMEOUT, ServerConfig, TlsBound, serve};
 pub use tls::benchmark_crypto_provider;
