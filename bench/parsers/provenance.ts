@@ -25,6 +25,14 @@ export function dirtyDigest(diff: string, untracked: readonly UntrackedFile[]): 
   return hash.digest('hex');
 }
 
+/**
+ * Untracked file paths from `git ls-files -z --others --exclude-standard`: NUL-separated, so names with any bytes
+ * survive unquoted; an entry ending in `/` is a nested repository (not a file) and is skipped.
+ */
+export function untrackedPaths(output: string): string[] {
+  return output.split('\0').filter((path) => path !== '' && !path.endsWith('/'));
+}
+
 /** The revision an image is stamped with (`org.opencontainers.image.revision`): the commit, marked when dirty. */
 export function revision(tree: TreeState): string {
   return tree.dirtySha256 === null ? tree.commit : `${tree.commit}+dirty.${tree.dirtySha256.slice(0, 12)}`;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { dirtyDigest, revision } from './provenance.ts';
+import { dirtyDigest, revision, untrackedPaths } from './provenance.ts';
 
 const file = (path: string, content: string): { path: string; content: Buffer } => ({
   path,
@@ -27,5 +27,15 @@ describe('revision', () => {
     expect(revision({ commit: 'abc', dirtyFiles: ['?? x'], dirtySha256: '0123456789abcdef' })).toBe(
       'abc+dirty.0123456789ab',
     );
+  });
+});
+
+describe('untrackedPaths', () => {
+  it('keeps names with any bytes and skips nested repositories', () => {
+    expect(untrackedPaths('naïve résumé.txt\0dir/with space.ts\0vendored-repo/\0')).toEqual([
+      'naïve résumé.txt',
+      'dir/with space.ts',
+    ]);
+    expect(untrackedPaths('')).toEqual([]);
   });
 });

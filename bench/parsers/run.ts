@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
-import { dirtyDigest, revision } from './provenance.ts';
+import { dirtyDigest, revision, untrackedPaths } from './provenance.ts';
 import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
 import type { CheckReport, FeedMode } from './protocol.ts';
@@ -282,17 +282,17 @@ function versions(options: Options): Record<string, string> {
   );
 }
 
-/** The working tree's state, so results from uncommitted code can be traced. */
 /** The working tree's state, taken before any image is built, so results from uncommitted code can be traced. */
 function tree(): TreeState {
-  const lines = (text: string): string[] => text.split('\n').filter((line) => line !== '');
-  const untracked = lines(run('git', ['ls-files', '--others', '--exclude-standard'])).map((path) => ({
+  const untracked = untrackedPaths(run('git', ['ls-files', '-z', '--others', '--exclude-standard'])).map((path) => ({
     path,
     content: readFileSync(join(ROOT, path)),
   }));
   return {
     commit: run('git', ['rev-parse', 'HEAD']).trim(),
-    dirtyFiles: lines(run('git', ['status', '--porcelain'])),
+    dirtyFiles: run('git', ['status', '--porcelain'])
+      .split('\n')
+      .filter((line) => line !== ''),
     dirtySha256: dirtyDigest(run('git', ['diff', 'HEAD']), untracked),
   };
 }
