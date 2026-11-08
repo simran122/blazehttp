@@ -17,6 +17,10 @@ deprecated = "deny"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }
+await_holding_refcell_ref = "deny"
+# Exceptions are `#[expect(lint, reason = "…")]` only (design §13.1 rule 9): `expect` fails once it is no longer needed.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
 
 [workspace]
 

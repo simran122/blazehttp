@@ -326,7 +326,8 @@ const eslintDirective: Rule = (path, content) => {
 };
 
 const CRATE_MANIFEST = /^crates\/[^/]+\/Cargo\.toml$/;
-const FUZZ_MANIFEST = /^crates\/[^/]+\/fuzz\/Cargo\.toml$/;
+/** Crates that are their own workspace (outside the root one): fuzz targets and benchmark harnesses. */
+const STANDALONE_MANIFEST = /^(?:crates\/[^/]+\/fuzz|bench\/(?:[^/]+\/)*[^/]+)\/Cargo\.toml$/;
 
 const isTable = (value: TomlValue | undefined): value is TomlTable =>
   typeof value === 'object' && !Array.isArray(value) && !(value instanceof TomlDate);
@@ -358,16 +359,17 @@ const lintName = (key: string): string => {
   return dot === -1 ? `[lints] ${key}` : `[lints.${key.slice(0, dot)}] ${key.slice(dot + 1)}`;
 };
 
-/** How a fuzz crate's lint settings differ from the workspace's: missing, changed or extra keys. */
+/** How a standalone crate's lint settings differ from the workspace's: missing, changed or extra keys. */
 const lintDifferences = (workspace: LintSettings, own: LintSettings): string[] => {
   const keys = new Set([...workspace.keys(), ...own.keys()]);
   return [...keys].flatMap((key) => {
     const expected = workspace.get(key);
     const actual = own.get(key);
     if (expected === actual) return [];
-    if (actual === undefined) return [`fuzz crate lacks workspace lint ${lintName(key)} = ${String(expected)}`];
-    if (expected === undefined) return [`fuzz crate sets ${lintName(key)} = ${actual}, which the workspace does not`];
-    return [`fuzz crate sets ${lintName(key)} = ${actual}; the workspace sets ${expected}`];
+    if (actual === undefined) return [`standalone crate lacks workspace lint ${lintName(key)} = ${String(expected)}`];
+    if (expected === undefined)
+      return [`standalone crate sets ${lintName(key)} = ${actual}, which the workspace does not`];
+    return [`standalone crate sets ${lintName(key)} = ${actual}; the workspace sets ${expected}`];
   });
 };
 
@@ -388,12 +390,13 @@ export const workspaceLintSettings = (path: string, toml: string): { readonly se
 };
 
 /**
- * Every crate inherits the workspace lints (`[lints] workspace = true`). A fuzz crate is its own workspace, so its
- * `[lints.<tool>]` tables must equal the workspace settings: none missing, loosened or added.
+ * Every crate inherits the workspace lints (`[lints] workspace = true`). A standalone crate (fuzz targets, bench
+ * harnesses) is its own workspace, so its `[lints.<tool>]` tables must equal the workspace settings: none missing,
+ * loosened or added.
  */
 const crateLints: Rule = (path, content, ctx) => {
   const crate = CRATE_MANIFEST.test(path);
-  if (!crate && !FUZZ_MANIFEST.test(path)) return [];
+  if (!crate && !STANDALONE_MANIFEST.test(path)) return [];
   const read = parseManifest(path, content);
   if ('rule' in read) return [read];
   const lints = field(read.manifest, 'lints');

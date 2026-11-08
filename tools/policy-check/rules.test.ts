@@ -228,15 +228,15 @@ test('a fuzz crate repeats every workspace lint in its own tables', () => {
     '[lints.rust]\ndeprecated = "deny"\n\n[lints.clippy]\npedantic = { level = "deny", priority = -1 }\nallow_attributes = "deny"\n';
   expect(fuzz(full)).toEqual([]);
   expect(fuzz(full.replace('allow_attributes = "deny"\n', ''))).toEqual([
-    'fuzz crate lacks workspace lint [lints.clippy] allow_attributes = "deny"',
+    'standalone crate lacks workspace lint [lints.clippy] allow_attributes = "deny"',
   ]);
   expect(
     fuzz(
       '[lints.clippy]\ndeprecated = "deny"\npedantic = { level = "deny", priority = -1 }\nallow_attributes = "deny"\n',
     ),
   ).toEqual([
-    'fuzz crate lacks workspace lint [lints.rust] deprecated = "deny"',
-    'fuzz crate sets [lints.clippy] deprecated = "deny", which the workspace does not',
+    'standalone crate lacks workspace lint [lints.rust] deprecated = "deny"',
+    'standalone crate sets [lints.clippy] deprecated = "deny", which the workspace does not',
   ]);
 });
 test('a fuzz crate lint table equals the workspace: no extra or loosened lints', () => {
@@ -245,16 +245,16 @@ test('a fuzz crate lint table equals the workspace: no extra or loosened lints',
     '[lints.rust]\ndeprecated = "deny"\n\n[lints.clippy]\npedantic = {level="deny",priority=-1}\nallow_attributes = "deny"\n';
   expect(fuzz(full)).toEqual([]);
   expect(fuzz(`${full}too_many_lines = "allow"\n`)).toEqual([
-    'fuzz crate sets [lints.clippy] too_many_lines = "allow", which the workspace does not',
+    'standalone crate sets [lints.clippy] too_many_lines = "allow", which the workspace does not',
   ]);
   expect(fuzz(full.replace('allow_attributes = "deny"', 'allow_attributes = "warn"'))).toEqual([
-    'fuzz crate sets [lints.clippy] allow_attributes = "warn"; the workspace sets "deny"',
+    'standalone crate sets [lints.clippy] allow_attributes = "warn"; the workspace sets "deny"',
   ]);
   expect(fuzz(`${full}# see """\ntoo_many_lines = "allow"\n# """\n`)).toEqual([
-    'fuzz crate sets [lints.clippy] too_many_lines = "allow", which the workspace does not',
+    'standalone crate sets [lints.clippy] too_many_lines = "allow", which the workspace does not',
   ]);
   expect(fuzz(`lints.workspace = true\n${full}`)).toEqual([
-    'fuzz crate sets [lints] workspace = true, which the workspace does not',
+    'standalone crate sets [lints] workspace = true, which the workspace does not',
   ]);
   expect(
     fuzz(
@@ -269,12 +269,21 @@ test('manifests are read by a real TOML parser: quotes in comments and literal k
   expect(broken.map((x) => [x.rule, x.line])).toEqual([['crate-lints', 2]]);
   expect(broken[0]?.message).toMatch(/^cannot parse TOML: /);
 });
+test('a benchmark harness crate is a standalone crate too, at any depth under bench/', () => {
+  const lacks = (path: string) => checkFile(path, '[package]\nname = "b"\n', CTX).map((x) => x.message);
+  expect(lacks('bench/parsers/rust/Cargo.toml')).toContain(
+    'standalone crate lacks workspace lint [lints.rust] deprecated = "deny"',
+  );
+  expect(lacks('bench/x/Cargo.toml')).toHaveLength(lacks('crates/x/fuzz/Cargo.toml').length);
+  expect(lacks('bench/Cargo.toml')).toEqual([]);
+});
+
 test('a fuzz crate with no lint tables lacks every workspace lint', () => {
   expect(checkFile('crates/x/fuzz/Cargo.toml', '[package]\nname = "f"\n', CTX).map((x) => x.message)).toEqual([
-    'fuzz crate lacks workspace lint [lints.rust] deprecated = "deny"',
-    'fuzz crate lacks workspace lint [lints.clippy] pedantic.level = "deny"',
-    'fuzz crate lacks workspace lint [lints.clippy] pedantic.priority = -1',
-    'fuzz crate lacks workspace lint [lints.clippy] allow_attributes = "deny"',
+    'standalone crate lacks workspace lint [lints.rust] deprecated = "deny"',
+    'standalone crate lacks workspace lint [lints.clippy] pedantic.level = "deny"',
+    'standalone crate lacks workspace lint [lints.clippy] pedantic.priority = -1',
+    'standalone crate lacks workspace lint [lints.clippy] allow_attributes = "deny"',
   ]);
 });
 test('integers beyond 2^53 parse; they are compared as exact text', () => {
