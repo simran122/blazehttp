@@ -13,7 +13,7 @@ export type RuleId =
   | 'crate-lints';
 
 export type Violation = { file: string; line: number; rule: RuleId; message: string };
-/** Lint settings as `<tool>.<lint>[.<field>]` → normalised TOML value, e.g. `clippy.pedantic.level` → `"deny"`. */
+/** Lint settings as `<tool>.<lint>[.<field>]` → JSON-encoded TOML value, e.g. `clippy.pedantic.level` → `"deny"`. */
 export type LintSettings = ReadonlyMap<string, string>;
 /** `workspaceLints` are the root manifest's `[workspace.lints.*]` settings. */
 export type Context = { packageVersion: string; workspaceLints: LintSettings };
@@ -159,7 +159,8 @@ const rustAttributes = (content: string): { readonly line: number; readonly text
 
 /**
  * Lint exceptions are `#[expect(lint, reason = "…")]` only (design §13.1 rule 9). Clippy's `allow_attributes` sees
- * outer attributes only, so this rule rejects `allow(` in every attribute form: outer, inner and inside `cfg_attr`.
+ * outer attributes only, so this rule rejects `allow(` in every attribute written in the source (outer, inner, inside
+ * `cfg_attr`), read from code only. Attributes a macro builds from its arguments are left to review.
  */
 const rustAllowAttribute: Rule = (path, content) =>
   path.endsWith('.rs')
@@ -257,9 +258,15 @@ const SCRIPT_KIND: ReadonlyMap<string, ts.ScriptKind> = new Map([
   ['mjs', ts.ScriptKind.JS],
   ['cjs', ts.ScriptKind.JS],
 ]);
-/** Line comments ESLint reads as directives (`-line`, `-next-line`), plus bare `disable`/`enable`, inert but misleading. */
+/**
+ * Line comments ESLint reads as directives (`eslint-disable-line`, `eslint-disable-next-line`), plus bare
+ * `eslint-disable`/`eslint-enable`, which ESLint ignores in line comments but which read like directives.
+ */
 const LINE_DIRECTIVE = /^eslint-(?:disable|enable)(?:-line|-next-line)?(?:\s|$)/;
-/** Block comments ESLint reads as directives or inline config: `eslint`, `eslint-disable…`, `eslint-enable`, `eslint-env`, `global(s)`, `exported`. */
+/**
+ * Block comments ESLint reads as directives or inline config: `eslint`, `eslint-disable…`, `eslint-enable`,
+ * `eslint-env`, `global`, `globals` and `exported`, each followed by a space or the end.
+ */
 const BLOCK_DIRECTIVE = /^(?:eslint(?:-disable(?:-line|-next-line)?|-enable|-env)?|globals?|exported)(?:\s|$)/;
 /** The one accepted form (design §13.1 rule 9), as the whole of a line comment: named rules and a reason. */
 const ESLINT_NEXT_LINE = /^eslint-disable-next-line [@a-z][\w@/-]*(?:, ?[@a-z][\w@/-]*)* -- \S.*$/;
