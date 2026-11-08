@@ -9,7 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::support::{config, connect, exchange, get, start, until_close};
+use crate::support::{config, connect, exchange, get, read_to_close, start, until_close};
 
 const SHORT: Duration = Duration::from_millis(300);
 
@@ -80,8 +80,7 @@ async fn a_silent_tls_client_is_closed_after_the_handshake_timeout() {
     })
     .await;
     let mut stream = connect(server.bound.tls.as_ref().expect("TLS port").addr).await;
-    let mut rest = Vec::new();
-    let closed = timeout(SHORT * 10, stream.read_to_end(&mut rest)).await;
+    let closed = timeout(SHORT * 10, read_to_close(&mut stream)).await;
     assert!(closed.expect("closed by the handshake timeout").is_ok());
 }
 
@@ -91,13 +90,12 @@ async fn stop_ends_the_server_and_its_connections() {
     let mut open = connect(server.bound.plain).await;
     server.stop.send(()).expect("server running");
     server.task.await.expect("join").expect("clean stop");
-    let mut rest = Vec::new();
-    let ended = timeout(SHORT * 10, open.read_to_end(&mut rest))
+    let ended = timeout(SHORT * 10, read_to_close(&mut open))
         .await
         .expect("connection ended");
     assert!(
-        ended.is_err() || rest.is_empty(),
-        "connection still answered"
+        ended.as_ref().map_or(true, Vec::is_empty),
+        "connection still answered: {ended:?}"
     );
 }
 
@@ -137,4 +135,15 @@ async fn binary_writes_the_certificate_before_ready() {
         "{written}"
     );
     std::fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// The test reader's own guard: more than 16 MiB before end of stream fails fast.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(expected = "read cap")]
+async fn test_reader_fails_fast_past_its_cap() {
+    let server = start(config(false)).await;
+    let mut stream = connect(server.bound.plain).await;
+    let mut requests = get("/1m").repeat(17);
+    requests.extend_from_slice(b"GET /1k HTTP/1.1\r\nconnection: close\r\n\r\n");
+    until_close(&mut stream, &requests).await;
 }

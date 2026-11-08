@@ -96,10 +96,26 @@ pub async fn until_close<S: AsyncRead + AsyncWrite + Unpin>(
     request: &[u8],
 ) -> Vec<u8> {
     stream.write_all(request).await.expect("write");
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
+    read_to_close(stream)
         .await
-        .expect("read to a clean end of stream");
-    response
+        .expect("read to a clean end of stream")
+}
+
+/// The most a test reads before end of stream: a server that never stops writing fails the test here, quickly and in
+/// bounded memory, instead of growing a buffer until the machine runs out of memory.
+const READ_CAP: usize = 16 << 20;
+
+/// Reads until end of stream, at most `READ_CAP` bytes (more is a test failure).
+pub async fn read_to_close<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> {
+    let mut response = Vec::new();
+    let limit = u64::try_from(READ_CAP + 1).expect("cap fits u64");
+    (&mut *stream)
+        .take(limit)
+        .read_to_end(&mut response)
+        .await?;
+    assert!(
+        response.len() <= READ_CAP,
+        "read cap of {READ_CAP} bytes exceeded"
+    );
+    Ok(response)
 }

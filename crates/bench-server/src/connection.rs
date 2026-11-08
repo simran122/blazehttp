@@ -307,8 +307,12 @@ mod tests {
     /// Body larger than the read buffer, so skipping it spans several reads.
     const BIG_BODY: usize = BUFFER_BYTES + 3_000;
 
-    /// A scripted peer: `input` arrives in reads that never cross a cut, writes are recorded per call.
-    #[derive(Default)]
+    /// Recorded output per script. A server that answers forever (a broken boundary scan) must fail the test within
+    /// seconds and a few MiB, never grow until the machine runs out of memory.
+    const OUTPUT_CAP: usize = 64 << 20;
+
+    /// A scripted peer: `input` arrives in reads that never cross a cut, writes are recorded per call, up to `cap`
+    /// bytes in total (then it panics).
     struct Script<const GATHER: bool> {
         input: Vec<u8>,
         cuts: Vec<usize>,
@@ -316,24 +320,36 @@ mod tests {
         output: Vec<u8>,
         writes: Vec<usize>,
         shut_down: bool,
+        cap: usize,
     }
 
     impl<const GATHER: bool> Script<GATHER> {
         fn new(input: Vec<u8>, cuts: Vec<usize>) -> Self {
+            let (read, output, writes, shut_down, cap) =
+                (0, Vec::new(), Vec::new(), false, OUTPUT_CAP);
             Self {
                 input,
                 cuts,
-                ..Self::default()
+                read,
+                output,
+                writes,
+                shut_down,
+                cap,
             }
         }
 
         fn record(&mut self, bufs: &[IoSlice<'_>]) -> usize {
-            let before = self.output.len();
+            let len: usize = bufs.iter().map(|buf| buf.len()).sum();
+            assert!(
+                self.output.len() + len <= self.cap,
+                "stub output cap of {} bytes exceeded",
+                self.cap
+            );
             for buf in bufs {
                 self.output.extend_from_slice(buf);
             }
-            self.writes.push(self.output.len() - before);
-            self.output.len() - before
+            self.writes.push(len);
+            len
         }
     }
 
@@ -463,6 +479,14 @@ mod tests {
             "{:?}",
             script.writes
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "stub output cap")]
+    fn stub_fails_fast_past_its_output_cap() {
+        let mut script = Script::<true>::new(get("/1m").into_bytes(), Vec::new());
+        script.cap = 1024;
+        serve(&mut script);
     }
 
     #[test]
