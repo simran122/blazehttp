@@ -485,9 +485,14 @@ Every rule here is mandatory. Every review checks them under maintainability, an
 4. **Composition over inheritance.** No class inheritance, except `extends Error` (`HttpError`, `TransportError`) in TypeScript. Rust composes structs. Not everything is a class: plain functions are the default where no state or polymorphism is needed.
 5. **SOLID.**
    - **Single responsibility** per function (§13.1 rule 9) and per file or module (§13.1 rules 1–2).
-   - **Open/closed** applies to the genuinely open seams: new TS transports and `PlatformKit`s, interceptors and `DispatchHook`s, `ResponseDecoder`s and `BodyEncoder`s are added without editing the core.
-     - The Rust closed sets (`FramingDecoder`, `EngineCommand`, and the middleware order from `spec.json`) deliberately trade open/closed for static dispatch.
-     - When a variant is added there, the compiler's exhaustiveness check finds every place that must change.
+   - **Open/closed** applies to the genuinely open seams. These can be extended without editing the core:
+     - new TS transports and `PlatformKit`s;
+     - interceptors and `DispatchHook`s;
+     - `ResponseDecoder`s and `BodyEncoder`s;
+     - `RetryPolicy`/`BackoffStrategy` and `ParamsSerializer`, which callers may supply (`paramsSerializer` is an axios option).
+   - **Closed seams**, each for a stated reason:
+     - The `ProxyRules` matcher implements the fixed `NO_PROXY` grammar pinned by the `spec.json` vectors. Its interface exists for test fakes, not for extension.
+     - The Rust closed sets — `FramingDecoder`, `EngineCommand` (each command implementing `Execute`), and the `Exchange` middleware with its order from `spec.json` — deliberately trade open/closed for static dispatch. When a variant or layer is added, the compiler's exhaustiveness check finds every place that must change.
    - **Liskov substitution:** every trait or interface implementation honours the documented contract, and tests check it.
    - **Interface segregation:** traits and interfaces are small and focused.
    - **Dependency inversion:** see rule 2.
