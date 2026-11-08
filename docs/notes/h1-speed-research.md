@@ -494,7 +494,7 @@ The race (`bench/parsers/`) has httparse, picohttpparser, llhttp, Beast (two API
 h2o's client and Bun's client are picohttpparser (already in the race). **Among the parsers surveyed here, none
 outside the race is plausibly faster than httparse.** Not surveyed yet: the response parsers of the engines that PR
 #20 added to G0 — Jetty `HttpParser` (jetty-12.1.14), the JDK's `java.net.http` `Http1HeaderParser`, and .NET's
-`SocketsHttpHandler` `HttpConnection` header parsing — deferred to the Task 4c research step (§9.1), with fasthttp
+`SocketsHttpHandler` `HttpConnection` header parsing — deferred to the Task 4c research step (§10), with fasthttp
 and nginx added as race rows in Task 4c (fasthttp closes "every Go parser", nginx is the C server reference); Netty,
 Seastar and the JVM/.NET parsers are leaderboard rows (G8) unless the survey finds one faster than httparse.
 
@@ -523,18 +523,24 @@ and strictness. (Our lack of an OWS loop is not a lead under equal work: every r
 Same treatment as §2, one level deeper than `docs/notes/request-writer.md` §2 (branch `p0/writer`). Topics per
 writer: when validation runs (construction or write), pre-serialised blocks, integer formatting, the copy pattern,
 vectored vs copied output, word-at-a-time validation; then **what it takes to be faster than that writer with equal
-work** (equal work is defined in §3.12 and used by the race in §3.13). Our baseline (journal 2026-11-08, quiet
-round, `post1k`): full writer 74–79 ns; without name classification 58–65 ns (classification ≈ 15 ns); without any
-delta scan 44–46 ns (`token_len` + `value_len` ≈ 14–19 ns); copy floor ≈ 36 ns; the remaining ≈ 8–10 ns are the
-target check, limits, the authority compare, framing, the checked sum and `try_reserve_exact`.
+work** (equal work is defined in §3.12 and used by the race in §3.13).
 
-**Two corrections to `request-writer.md` §2** (verified at the pins):
-1. curl does **not** cut a custom header at the first newline: `Curl_add_custom_headers` uses `curlx_str_untilnl`
-   only to decide whether the value is blank (`lib/http.c` L1877) and then writes the whole original string with
-   `curlx_dyn_addf(req, "%s\r\n", origp)` (L1934). An embedded CRLF reaches the wire.
-2. http 1.5.0 has no `eq!`-macro perfect hash any more: `parse_hdr` lowercases into a 64-byte stack buffer and calls
-   `StandardHeader::from_bytes`, a `const fn` `match` on byte-string literals (`src/header/name.rs` L97–104,
-   L1073–1100).
+**Our baseline, from two different benches (journal 2026-11-08; do not mix their ratios):**
+- *Committed bench* (`h1_write_bench`, writer vs copy floor, the gated ratio): `post1k` writer 91.3–99.6 ns, floor
+  35.8–39.6 ns, ratio **2.51–2.58×** (gate ≤ 2.3×).
+- *Scratch ablation* (writer source copied per variant into one crate, so absolute numbers differ): `post1k` full
+  74–79 ns; without name classification 58–65 ns (classification ≈ 15 ns); without any delta scan 44–46 ns
+  (`token_len` + `value_len` ≈ 14–19 ns). The ablation gives the *shares* of the cost; the committed bench gives the
+  gate ratio. The remaining ≈ 8–10 ns are the target check, limits, the authority compare, framing, the checked sum
+  and `try_reserve_exact`.
+
+**One correction to `request-writer.md` §2** (verified at the pin; it lives on branch `p0/writer`, so it is handed to
+the Task 5 fix list rather than edited here, §10): curl does **not** cut a custom header at the first newline.
+`Curl_add_custom_headers` uses `curlx_str_untilnl` only to decide whether the value is blank (`lib/http.c` L1877)
+and then writes the whole original string with `curlx_dyn_addf(req, "%s\r\n", origp)` (L1934), so an embedded CRLF
+reaches the wire. (Writer note L77, L94 and L119 say otherwise.) For reference: http 1.5.0 finds standard names
+with a `const fn` `match` on byte-string literals after lowercasing into a 64-byte stack buffer
+(`src/header/name.rs` L97–104, L1073–1100).
 
 ### 3.1 hyper `v1.12.0` + http `v1.5.0`
 
@@ -548,7 +554,8 @@ target check, limits, the authority compare, framing, the checked sum and `try_r
 - **Per request at encode** (`src/proto/h1/role.rs` `Client::encode` L1215–1262): no byte validation, but 2–4 hash
   operations for framing (`content_length_parse_all`, `entry(TRANSFER_ENCODING)`, `set_content_length` inserting
   `HeaderValue::from(len)` — which **allocates a 20-byte `BytesMut` per request** and formats with `itoa`
-  (`value.rs` L401–437) — and `connection_any_close`). `dst.reserve(30 + n × 30)` is a guess (L32, L1226); the
+  (`value.rs` L401–437)); the connection layer additionally runs `connection_any_close` (a lookup plus a `to_str`
+  scan) per request (`src/proto/h1/conn.rs` L629, not inside `encode`). `dst.reserve(30 + n × 30)` is a guess (L32, L1226); the
   target goes through `write!(FastWrite(dst), "{} ", uri)` (L1231, with a `TODO … encode without std::fmt`); four
   appends per field (`write_headers` L1629–1636). `HeaderMap` iteration walks the insertion-ordered `entries`
   `Vec`, following `extra_values` only for repeated names (`src/header/map.rs` L2323–2353) — cheap. The cost is
@@ -556,11 +563,13 @@ target check, limits, the authority compare, framing, the checked sum and `try_r
   L278–316). No SIMD.
 - **To be faster than hyper with equal work.** Equal work = per request `HeaderName`/`HeaderValue::from_bytes` for
   every delta field, a `Uri` parse, a new map, then encode: an allocation per field, per map and for
-  Content-Length, and a hash per name — we already do the same validation with 0 allocations (0.38–0.41×). Against
-  hyper's **encode-only** number (pre-built map, no validation) our *validating* writer is 1.16–1.22×; the equal
-  opponent of encode-only is our copy path (EW0, §3.12), ≈ 0.5×. To beat encode-only even while validating we must
-  remove the classification and line-search cost (§6), which hyper does not pay because each name became an enum
-  once.
+  Content-Length, and a hash per name. The measured 0.38–0.41× (journal) is against hyper's *clone + encode*
+  emulation (a pre-built `HeaderMap` cloned per request, then encoded), which validates nothing per request — so it
+  is neither EW0 nor EW1; the EW1 row (§3.12) has not been measured yet. Against hyper's **encode-only** emulation
+  (pre-built map, no clone, no validation) our *validating* writer is 1.16–1.22×; the equal opponent of encode-only
+  is our copy floor (EW0), measured at ≈ 0.4–0.5× of it (journal: floor ≈ 36–40 ns vs encode-only ≈ 75–82 ns, dev).
+  To beat encode-only even while validating we must remove the classification and line-search cost (§6), which
+  hyper does not pay because each name became an enum once.
 
 ### 3.2 Go `go1.27.3` `(*Request).Write`
 
@@ -588,15 +597,21 @@ target check, limits, the authority compare, framing, the checked sum and `try_r
   decide whether to canonicalise case (an invalid name is still stored, L4085–4132). Special names are classified at
   set time (switch on `key[0] | 0x20`, then a `toLowerTable` compare, L1982–2045) into dedicated fields;
   `Transfer-Encoding` is dropped. A non-special `Set` scans the existing headers linearly (`args.go` L449–463).
-- **Serialisation:** **pre-formatted bytes**: Content-Length is formatted once when the body is set
-  (`strconv.AppendUint` into a reused slice, `http.go` L2058–2067); `AppendBytes` (L3253–3305) only appends stored
-  bytes. The head is written **straight into the socket buffer's free space** (`w.AvailableBuffer()`, then
-  `w.Write(buf)`, L3193–3203) — no intermediate copy. Requests and writers are pooled; zero allocations in steady
+- **Serialisation (corrected after review):** `(*Request).Write` (`http.go` L2058–2067) calls `SetContentLength`
+  on **every** write: `strconv.AppendUint` into a reused slice plus a linear `delAllArgs` scan that removes any
+  `Transfer-Encoding` (`header.go` L339–343). `SetBody` (`http.go` L1063–1067) formats nothing. When the Host header
+  is empty the URI is re-parsed on write (`http.go` L2006–2017). `AppendBytes` (`header.go` L3253–3305) appends the
+  stored special fields and arguments. The head is appended into the socket buffer's free space
+  (`w.AvailableBuffer()`, then `w.Write(buf)`, L3193–3203), falling back to the `bufV` scratch slice and a copy when
+  the head is larger than the free space (L3194–3196). Requests and writers are pooled; zero allocations in steady
   state; a small body leaves in the same `bufio` flush.
-- **To be faster than fasthttp with equal work.** Its write path is a pure append of cached bytes, the same as our
-  copy floor. Equal work adds `httpguts.ValidHeaderFieldName/Value` before each `Set` (EW1) — so our validation must
-  cost about what two `IndexByte` per value cost: one branch-free pass over the whole delta (§6.2) and at most one
-  word compare per name (§6.1). Our `out` already is the buffer that is sent.
+- **To be faster than fasthttp with equal work.** Its write path is *not* a pure append: per request it formats the
+  Content-Length and scans its argument list for `Transfer-Encoding`, so its EW0 (`req.Write` on a reused request
+  with Host and URI preset, §3.12) sits above our copy floor. Equal work (EW1) adds `httpguts.ValidHeaderFieldName/
+  Value` before each `Set`. Our budget therefore is: validation ≤ the EW1 checks plus its per-write `SetContentLength`
+  and `delAllArgs` scan — at least one pass over every value plus a linear argument scan; a single branch-free pass
+  over the delta (§6.3) and one word compare per name (§6.1) fit it with margin (estimate). Our `out` already is the
+  buffer that is sent.
 
 ### 3.4 undici `v8.12.4` (`writeH1`)
 
@@ -610,7 +625,7 @@ target check, limits, the authority compare, framing, the checked sum and `try_r
   'latin1')`, `write(body)`, `uncork` (L1536–1564): a latin1 encode plus one `writev`.
 - **To be faster than undici:** send bytes, not strings (the P2 layer must hand Rust one latin1 byte region);
   borrow the interning idea — known names as small integer ids that Rust expands from its own table without checks
-  (§6.3).
+  (§6.4).
 
 ### 3.5 curl `curl-8_23_0`
 
@@ -635,7 +650,7 @@ target check, limits, the authority compare, framing, the checked sum and `try_r
 - **Server, the two-pass pattern:** `flatten_headers_estimate_size` sums name + value + 4 per header plus fixed
   bounds (L944–954), one pool allocation (L1090–1092), `flatten_headers` copies unchecked (L956–999). Token lookup:
   switch on length, then the **last byte**, then `memcmp` (`token_table.h` L273+).
-- **To be faster than h2o:** without validation its copy equals our floor. Take the tokens (§6.3) and the
+- **To be faster than h2o:** without validation its copy equals our floor. Take the tokens (§6.4) and the
   last-byte discriminator (at length 10, `connection`/`keep-alive`/`user-agent` end in `n`/`e`/`t`).
 
 ### 3.7 Boost.Beast `boost-1.92.0` serializer
@@ -704,64 +719,105 @@ target check, limits, the authority compare, framing, the checked sum and `try_r
 
 ### 3.12 Equal work for writers (definitions)
 
-| Tier | Work per request | Ours | Others, lifted with their own code |
+| Tier | Work per request | Ours |
+|---|---|---|
+| **EW0** serialise only | request line, headers, framing, one buffer; every input object pre-built and reused | the copy floor |
+| **EW1** Go-level checks | EW0 + token names, field-content values (reject CTLs except HTAB, and DEL), target CTL/SP check on every per-request field; inputs built per request from bytes | — |
+| **EW2** ours | EW1 + forbidden names, singleton names, line count, authority binding, reject (never repair) | `write_request` |
+
+**One definition per rival** (the timed call is in §3.13):
+
+| Rival | EW0 | EW1 lift (their own code, run per request) | EW2 lift |
 |---|---|---|---|
-| **EW0** serialise only | request line, headers, framing, one buffer | copy floor | encode with pre-built, reused objects (hyper encode-only, fasthttp `AppendBytes`, Netty encode, h2o `build_request`, Beast `buffer_copy`, Zig ReleaseFast); Go has no EW0 (it cannot skip its checks) |
-| **EW1** Go-level checks | EW0 + token names, field-content values (reject CTL except HTAB, DEL), target CTL/SP check, on every per-request field | — | hyper: `from_bytes` + `Uri` parse + new map; Go: native (`validateHeaders` + `Write`); fasthttp: `httpguts` checks before `Set`; undici: `new Request`; Netty: default validating headers; cpp-httplib: native; h2o, Beast, Zig, curl: a Go-equivalent byte loop + tchar table in their language |
-| **EW2** ours | EW1 + forbidden names, singleton names, line count, authority binding, no repair | `write_request` | EW1 + their own classifier (Netty `isConnectionHeader`, fasthttp first-byte switch, hyper `contains_key` per forbidden name, Go `exclude` map) |
+| hyper 1.12 (+ reqwest, which serialises through hyper) | `Client::encode` of a pre-built `HeaderMap` (clone excluded; the clone is reported as its own row) | `HeaderName::from_bytes` + `HeaderValue::from_bytes` per delta field, `Uri` parse, new map, `encode` | + `contains_key` per forbidden name |
+| ureq 3.5 (`ureq-proto` 0.7.1) | `Flow` prelude write of a pre-built `http::Request` | `http::Request` built from bytes (`HeaderName`/`HeaderValue::from_bytes`) + prelude write | + forbidden-name lookups |
+| Go net/http | none (its checks cannot be skipped) | native: `validateHeaders` (copied from `roundTrip`) + `req.Write` | + `exclude`-style map lookups |
+| fasthttp | `req.Write` on a reused request with Host and URI preset (still formats Content-Length and scans for TE per write, §3.3) | + `httpguts.ValidHeaderFieldName/Value` before each `Set` | + first-byte switch it already has |
+| libcurl (+ isahc, which drives libcurl) | origin head assembly (`Curl_http`) with defaults only | + a Go-equivalent byte loop + tchar table (curl validates nothing) | + name compares |
+| h2o client | `build_request` | + Go-equivalent loop | + token flags it already has |
+| Boost.Beast | `serializer` over a pre-built message, `buffer_copy` | message built per request + Go-equivalent loop (Beast checks no CR/LF) | + name compares |
+| cpp-httplib | not separable (validates in `set_header` and again on write) | native | + name compares |
+| Zig std.http (ReleaseFast) | `sendHead` port | + Go-equivalent loop | + name compares |
+| Netty | `HttpRequestEncoder.encode` of a pre-built request with non-validating headers | default validating `DefaultHttpHeaders` built per request + `encode` | + `isConnectionHeader` it already has |
+| Jetty 12.1 | `HttpGenerator.generateRequest` of pre-built `MetaData.Request` (it *repairs* CTLs to SP while copying, `putSanitisedValue`) | validating `HttpFields` built per request + `generateRequest` | + name compares |
+| undici | advisory only in 5c (§3.13) | — | — |
 
 Report three ratios per rival: **ours@EW2 / theirs@EW1** (we do more and must still win — the headline),
-ours@EW2 / theirs@EW2, and EW0 / EW0. Allocations per request are reported beside every number.
+ours@EW2 / theirs@EW2, and ours@EW0 (copy floor) / theirs@EW0. Allocations per request are reported beside every
+number. A rival's repair (fasthttp, Go's newline-to-space, Jetty's sanitising) is recorded in the injection table,
+not lifted.
 
 ### 3.13 Task 5c — cross-language writer race
 
 **Goal:** show, per rival, that `write_request` is faster with equal work (§3.12), on arm64 and x64, as
-`bench/parsers` does for parsers. It replaces the ad-hoc `bench/writer/` comparisons with one harness.
+`bench/parsers` does for parsers. It replaces the ad-hoc `bench/writer/` comparisons (`hyper-emul/`, `go/`) with one
+harness.
 
-**Rivals and versions** (pinned at the latest release, re-baselined at P1b and each release candidate, design
-§16.2):
+**Rivals** (pinned at the latest release in §1, re-baselined at P1b and each release candidate, design §16.2). Every
+G0 engine (design §2, incl. the Java and .NET engines added on 2026-11-08) has a row or a stated mapping:
 
-| Rival | Version | Timed API (in memory, reused sink, no socket) | Sink |
-|---|---|---|---|
-| hyper encoder | v1.12.0 + http v1.5.0 | **real hyper**, not an emulation: `client::conn::http1::handshake` over an in-memory duplex that captures written bytes, `SendRequest::send_request` per request (EW1: request built from bytes per op; EW0: pre-built `HeaderMap` cloned). Keep `bench/writer/hyper-emul` only as a cross-check whose output must equal real hyper's bytes | captured `Vec` |
-| Go net/http | go1.27.3 | `validateHeaders` (copied, it lives in `roundTrip`) + `req.Write(bw)` | reused 8 KiB `bufio.Writer` over `io.Discard`, `Flush` per op |
-| fasthttp | v1.77.0 | pooled `Request`, `Reset`, `SetRequestURI`, `SetMethod`, `Set` × n, `SetBody`, `req.Write(bw)` (EW1 adds `httpguts` checks) | `bufio.Writer` over `io.Discard` |
-| libcurl | curl-8_23_0 | `Curl_h1_req_write_head` + `Curl_dynhds` in a test build (EW0/EW1); the full easy-handle path only in the G0 end-to-end race | `dynbuf`, reset not freed |
-| h2o client | master `f35c735` | `build_request` (static in `http1client.c`: compiled from a vendored copy at the pin) with a pool cleared per op; EW1 adds a validator loop | pool |
-| Boost.Beast | boost-1.92.0 | `request<string_body>` built per op + `serializer` + `buffer_copy` | reused `flat_buffer` |
-| cpp-httplib | v0.65.0 | `Request` + `set_header` × n + `detail::write_request_line` + `detail::check_and_write_headers` + body append | `BufferStream` |
-| Zig std.http | 0.17.1 | port of `sendHead` into `Writer.fixed` (`ReleaseFast`; EW1 adds a validator loop) | fixed buffer |
-| undici | v8.12.4 | `new Request(...)` (internal `lib/core/request.js`) + `writeH1` with a stub socket whose `cork`/`write`/`uncork` copy into a reused `Buffer` | reused `Buffer` |
-| Netty | 4.2.20.Final | `EmbeddedChannel(new HttpRequestEncoder())`, `writeOutbound(DefaultFullHttpRequest)`, `readOutbound` + release, under JMH | pooled `ByteBuf` |
+| Rival | Timed API (in memory, reused sink, no socket) | Runnable as specified? |
+|---|---|---|
+| hyper v1.12.0 | `role::Client::encode` is `pub(crate)`, so the harness vendors hyper at the pin with **one added `#[doc(hidden)] pub fn` that calls `Client::encode` unchanged** (the patch is a recorded diff in the bench folder; no other line changes). Sink: a reused `Vec`. **Check mode:** the bytes must equal real hyper's, captured untimed through `client::conn::http1::handshake` over an in-memory duplex with a canned response. A separate **end-to-end** row (send + canned response through the duplex) is reported as advisory: hyper writes the next head only after reading a response (`proto/h1/dispatch.rs` L356–363, L709–724), so a capture-only duplex cannot time it. Fallback if the patch does not build: `bench/writer/hyper-emul` with the same byte-equality check | yes |
+| reqwest | serialises through hyper's encoder — mapped to the hyper row (end-to-end in G0) | mapping |
+| ureq (`ureq-proto` 0.7.1) | the client `Flow` prelude write into a caller buffer (`src/client/sendreq.rs` `try_write_prelude`, `write!` per line) | yes |
+| Go net/http | `validateHeaders` (copied, it lives in `roundTrip`) + `req.Write(bw)` on a reused 8 KiB `bufio.Writer` over `io.Discard`, `Flush` per op | yes |
+| fasthttp | pooled `Request`, `Reset`, `SetRequestURI`, `SetMethod`, `Set` × n, `SetBody`, `req.Write(bw)` | yes |
+| libcurl | origin heads are built in `Curl_http` (`lib/http.c` ≈ L3082–3162) with `Curl_add_custom_headers`; timing it alone needs an easy handle and a connection with a capturing send filter, built against curl's internal headers in a test build (curl's `tests/unit` harness style). **Time-boxed to one day in 5c**; if it cannot be made to run, the curl row is end-to-end only (the G0 race, libcurl multi), with the reason recorded. `Curl_h1_req_write_head` is the CONNECT-proxy serialiser (`lib/cf-h1-proxy.c` L259 is its only caller) and is not timed | conditional |
+| isahc | drives libcurl — mapped to the curl row | mapping |
+| h2o client | `build_request` (static in `lib/common/http1client.c`: the harness compiles a vendored copy at the pin) with a pool cleared per op | yes |
+| Boost.Beast | `request<string_body>` (pre-built for EW0, built per op for EW1) + `serializer` + `buffer_copy` into a reused `flat_buffer` | yes |
+| cpp-httplib | `Request` + `set_header` × n + `detail::write_request_line` + `detail::check_and_write_headers` + body append into `BufferStream` | yes |
+| Zig std.http | port of `sendHead` into `Writer.fixed`, `ReleaseFast` | yes |
+| Netty | a harness subclass of `HttpRequestEncoder` calls the protected `encode(ctx, msg, out)` with a stub `ChannelHandlerContext` whose `alloc()` is the pooled allocator — no `EmbeddedChannel` pipeline in the timed region; JMH | yes |
+| Jetty | `HttpGenerator.generateRequest(info, header, null, content, true)` (public, `jetty-http`) into a reused `ByteBuffer`; JMH | yes |
+| `java.net.http` | its writer (`jdk.internal.net.http.Http1Request`) is internal and needs an exchange object → **end-to-end only** (G0) | mapping |
+| .NET `SocketsHttpHandler` | its writer (`HttpConnection`) is internal → **end-to-end only** (G0) | mapping |
+| undici | **advisory in 5c**: undici's timed path starts from a JS headers object (`new Request` + string concatenation + latin1 write) while ours starts from a delta already serialised by our (not yet written) P2 layer. The equal-work comparison — the same JS headers object through to bytes — moves to G1-JS once P2 exists | advisory |
 
-**Harness shape — reuse `bench/parsers` as is:** one image per language (Rust, C/C++, Go, Zig, Node, Java),
-base images by digest, rival sources by SHA-256 and tag commit, `docker run --cpus=1 --cpuset-cpus=<n>
---memory=2g --memory-swap=2g --network=none`, the runner refuses to start while another container runs, same CPU
-baseline everywhere (generic Armv8-A; the x64 baseline is decided with the x64 host), release flags per design
-§16.2 (Java: JIT after JMH warm-up, reported separately), rounds rotated by start position, median of per-round
-ratios, JSONL with provenance (`bench/results/<date>-<arch>-dev-writers.jsonl`), and `check`/`time` modes with the
-same protocol (`harness <writer> <mode> <workload> [run ms]`).
+**Forced default fields** (the gate compares field multisets, so every rival must emit the same set):
 
-**Differential gate before timing (the writer analogue of the parser gate):** in `check` mode every harness prints,
-per request, the bytes it produced; the runner parses each output with **httparse's `Request` parser as the oracle**
-(as the writer note's fuzz target does) and requires: the same method, target, Content-Length and body; the
-same field multiset (names compared case-insensitively — Go and fasthttp canonicalise case — values byte-exact);
-no `transfer-encoding`; exactly one `content-length` where §6.5 of the writer note requires one. Byte counts of the
-field section may differ only by case and order. A second gate feeds the **injection vectors**
-(`tests/vectors/h1-request/`, CR/LF/NUL/DEL in values, bad names) through each rival's EW1 path and records which
-it rejects, repairs or passes — reported as a table, never timed.
+| Rival | Field it adds on its own | Handling |
+|---|---|---|
+| undici | `connection: keep-alive` (`client-h1.js` L1351–1357) | advisory row; byte difference reported |
+| Go | `User-Agent: Go-http-client/1.1` | set `User-Agent` explicitly to the template's value |
+| fasthttp | default `Content-Type` on requests with a body (`header.go` L3270–3276) and its `User-Agent` | `SetNoDefaultContentType(true)`; set `User-Agent` |
+| Zig | default `user-agent`, `accept-encoding`, `connection` | set each to `.omit` |
+| libcurl | `Accept: */*` (unverified at the pin) | custom header `Accept:` to remove it |
+| cpp-httplib | `Accept`, `User-Agent` (unverified at the pin) | override with the template's values |
+| hyper, ureq, h2o, Beast, Netty, Jetty | none found in the paths read | the check-mode dump confirms |
+
+Fields that cannot be turned off are added to **our** template for that row, so both sides emit the same bytes.
+
+**Harness shape — reuse `bench/parsers`:** one image per language (Rust, C/C++, Go, Zig, Node, Java), base images by
+digest, rival sources by SHA-256 and tag commit, `docker run --cpus=1 --cpuset-cpus=<n> --memory=2g --memory-swap=2g
+--network=none`, the runner refuses to start while another container runs, the same CPU baseline everywhere
+(generic Armv8-A; the x64 baseline is decided with the x64 host and recorded), release flags per design §16.2 (Java:
+JMH after warm-up), rounds rotated by start position, JSONL with provenance
+(`bench/results/<date>-<arch>-dev-writers.jsonl`), and `check`/`time` modes with the same protocol (`harness
+<writer> <mode> <workload> [run ms]`).
+
+**Differential gate before timing:** in `check` mode every harness prints, per request, the bytes it produced; the
+runner parses each output with **httparse's `Request` parser as the oracle** (as the writer note's fuzz target does)
+and requires: the same method, target, Content-Length and body; the same field multiset after the forced-field
+handling above (names compared case-insensitively — Go and fasthttp canonicalise case — values byte-exact); no
+`transfer-encoding`; exactly one `content-length` where the writer note's §6.5 requires one. A second gate feeds the
+**injection vectors** (`tests/vectors/h1-request/`) through each rival's EW1 path and records reject / repair /
+pass — a table, never timed.
 
 **Workloads** (exported once as JSON by `crates/engine-core/examples/h1_write_bench.rs`'s generator so every
 language loads identical requests): `get` (`GET /data`, template only), `post1k` (`POST /data`, defaults +
 `content-type: application/json` + `x-request-id` (36-character UUID) + `authorization: Bearer` + 40 characters,
 1 KiB JSON body), `varied` (the 256-request ring, fixed xorshift seed), plus `h20` (20 per-request fields, 400–800 B
-of headers — where validation cost dominates). Per-request inputs are fresh each op (cycled from the ring), so
+of headers — where validation dominates). Per-request inputs are fresh each op (cycled from the ring), so
 construction-time validators run per request.
 
-**Metrics:** ns per request (median, min–max over rounds), ratio to our copy floor and to ours, allocations per op
-(Go `-benchmem`, JMH `gc.alloc.rate.norm`, Rust counting allocator, C `--wrap=malloc`, Node heap delta).
-**Gate for Task 5c:** ours@EW2 faster than every rival@EW1 on every workload, arm64 and x64, CI lower bound per
-design §16.4 once run on the reference host; `post1k` ≤ 2.3× floor.
+**Metrics and statistic:** ns per request (median, min–max over rounds), ratios to our copy floor and to ours,
+allocations per op (Go `-benchmem`, JMH `gc.alloc.rate.norm`, Rust counting allocator, C `--wrap=malloc`).
+**Gate (5c):** for every rival row marked "yes" and every workload, the **bootstrap 95% CI upper bound of the median
+per-round ratio ours@EW2 / theirs@EW1 is < 1.0**, 10 rounds, on the arm64 reference host (nightly window) **and**
+the x64 VM; `post1k` ≤ 2.3× floor. The bootstrap is added to the shared runner (`bench/parsers/stats.ts`, used by
+both races) in Task 4c, because the dev runner computes only medians today (its README says so).
 
 ## 4. Papers and algorithms
 
