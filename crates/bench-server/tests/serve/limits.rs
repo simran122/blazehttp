@@ -9,7 +9,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::support::{config, connect, exchange, get, read_to_close, start, until_close};
+use crate::support::{
+    CLOSE_WITHIN, config, connect, exchange, get, read_to_close, start, until_close,
+};
 
 const SHORT: Duration = Duration::from_millis(300);
 
@@ -89,7 +91,11 @@ async fn stop_ends_the_server_and_its_connections() {
     let server = start(config(false)).await;
     let mut open = connect(server.bound.plain).await;
     server.stop.send(()).expect("server running");
-    server.task.await.expect("join").expect("clean stop");
+    timeout(CLOSE_WITHIN, server.task)
+        .await
+        .expect("server stopped in time")
+        .expect("join")
+        .expect("clean stop");
     let ended = timeout(SHORT * 10, read_to_close(&mut open))
         .await
         .expect("connection ended");

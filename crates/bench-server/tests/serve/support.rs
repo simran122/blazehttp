@@ -4,12 +4,14 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bench_server::{Bound, ServerConfig, TlsBound, benchmark_crypto_provider, serve};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::pki_types::ServerName;
@@ -90,14 +92,19 @@ pub async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     response
 }
 
-/// Writes `request` and reads until the server closes the connection; a reset is a test failure.
+/// How long a test waits for the server to close a connection or stop: a server that never does fails the test.
+pub const CLOSE_WITHIN: Duration = Duration::from_secs(5);
+
+/// Writes `request` and reads until the server closes the connection; a reset, or no close within
+/// [`CLOSE_WITHIN`], is a test failure.
 pub async fn until_close<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     request: &[u8],
 ) -> Vec<u8> {
     stream.write_all(request).await.expect("write");
-    read_to_close(stream)
+    timeout(CLOSE_WITHIN, read_to_close(stream))
         .await
+        .expect("server closed the connection in time")
         .expect("read to a clean end of stream")
 }
 
