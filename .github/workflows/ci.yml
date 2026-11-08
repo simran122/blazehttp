@@ -61,6 +61,9 @@ jobs:
       - run: cargo install cargo-shear --version 1.14.0 --locked
       - run: cargo shear
         working-directory: bench/parsers/rust
+      # The writer comparison bench is its own workspace too (never an engine dependency).
+      - run: cargo fmt --check --manifest-path bench/writer/hyper-emul/Cargo.toml
+      - run: cargo clippy --locked --manifest-path bench/writer/hyper-emul/Cargo.toml --all-targets -- -D warnings
 
   # Every parser-bench harness builds in its pinned image (C/C++ with -Werror, go vet + gofmt, zig fmt), then one short
   # run proves the harness protocol and the differential gate end to end. Dev numbers only; never a gate run.
