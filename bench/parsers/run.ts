@@ -460,8 +460,9 @@ function measure(ctx: RunContext, prepared: Prepared, workDir: string): void {
     { samples, allocs },
     { ours: OURS, oursWithFields: OURS_WITH_FIELDS },
   );
-  mkdirSync(dirname(out), { recursive: true });
   const lines = [metaOf(ctx, prepared, load), ...timed, ...feeds].map((r) => JSON.stringify(r));
+  // Created only after metaOf (and its versions container) succeeded, so a failure leaves no empty directory.
+  mkdirSync(dirname(out), { recursive: true });
   // `wx`: never overwrite an earlier run's results.
   writeFileSync(out, lines.join('\n') + '\n', { flag: 'wx' });
   process.stdout.write(`${timedTable(timed)}\n\n${feedTable(feeds)}\n\nwrote ${out}\n`);

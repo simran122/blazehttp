@@ -367,8 +367,9 @@ const lintDifferences = (workspace: LintSettings, own: LintSettings): string[] =
     const actual = own.get(key);
     if (expected === actual) return [];
     if (actual === undefined) return [`standalone crate lacks workspace lint ${lintName(key)} = ${String(expected)}`];
-    if (expected === undefined)
+    if (expected === undefined) {
       return [`standalone crate sets ${lintName(key)} = ${actual}, which the workspace does not`];
+    }
     return [`standalone crate sets ${lintName(key)} = ${actual}; the workspace sets ${expected}`];
   });
 };
