@@ -173,7 +173,8 @@ function spawnBuild(args: readonly string[]): void {
 }
 
 /**
- * One harness invocation in its own named container: one CPU of quota pinned to one vCPU, no network. A container
+ * One harness invocation in its own named container: one CPU of quota pinned to one vCPU, 2 GiB of memory, no
+ * network. A container
  * that outlives the timeout is removed (it is ours) and reported.
  */
 function harnessRun(parser: Parser, options: Options, workDir: string, args: readonly string[]): string {
@@ -184,6 +185,9 @@ function harnessRun(parser: Parser, options: Options, workDir: string, args: rea
     `--name=${name}`,
     '--cpus=1',
     `--cpuset-cpus=${options.cpuset}`,
+    // Bounded memory, swap included: a harness never needs more, and the bench host must never run out.
+    '--memory=2g',
+    '--memory-swap=2g',
     '--network=none',
     '-v',
     `${workDir}:/work:ro`,
@@ -366,7 +370,7 @@ function main(): void {
         kernel: docker.KernelVersion,
         memTotal: docker.MemTotal,
       },
-      container: `--cpus=1 --cpuset-cpus=${opts.cpuset} --network=none`,
+      container: `--cpus=1 --cpuset-cpus=${opts.cpuset} --memory=2g --memory-swap=2g --network=none`,
       cc: opts.cc,
       hostLoadAverage: { before: loadBefore, after: loadAfter },
       method: { rounds: opts.rounds, runMs: opts.runMs, warmUpMs: 100, feedRounds: opts.feedRounds },

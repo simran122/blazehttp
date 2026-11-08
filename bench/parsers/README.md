@@ -42,8 +42,9 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
 
 ## Fairness rules
 
-- Same machine, one container per invocation: `docker run --cpus=1 --cpuset-cpus=<n> --network=none`, the same
-  workload files. `--cpus=1` is a CPU-time quota; `--cpuset-cpus` (default `2`, `--cpuset`) also pins the container
+- Same machine, one container per invocation:
+  `docker run --cpus=1 --cpuset-cpus=<n> --memory=2g --memory-swap=2g --network=none` (memory capped, swap included,
+  so a run can never exhaust the host), the same workload files. `--cpus=1` is a CPU-time quota; `--cpuset-cpus` (default `2`, `--cpuset`) also pins the container
   to one vCPU of the Docker VM. On Docker Desktop that vCPU is a host thread the macOS scheduler can still move
   between cores, so pinning removes in-VM migration, not host placement noise. The runner refuses to start while any
   other container is running (it never stops one).
