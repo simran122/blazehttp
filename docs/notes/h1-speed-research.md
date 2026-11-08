@@ -46,7 +46,7 @@ Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-co
   not beat httparse's NEON name scan and picohttpparser's `pcmpestri` on x64 (SSE4.2 baseline) with a CI upper bound
   < 1.0 on every cell. Task 4c's acceptance is therefore stated per cell (§5.7); any cell that misses is reported to
   the owner with data, and **P1a's P-D (bit-stream validator over `engine-simd` bitmaps, §5.5) is the step that
-  closes the gap** (estimated ≈ 0.4–0.6 cycles per byte against httparse's ≈ 1). The final gate is checked at the end
+  closes the gap** (estimated ≈ 0.4–0.6 cycles per byte against ≈ 1 for today's scalar parser). The final gate is checked at the end
   of P1a, as the owner set it.
 - **Task 5b builds W-A** (shared known-name classifier, STOP search; §6.2), and W-B (layout hints) only if the P2
   contract change is accepted. **Task 5c** builds the writer race (§3.13). **P1a** builds `classify_block`, P-D and
@@ -208,7 +208,7 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   is capped by the caller's `max_headers` (−1 when exceeded).
 - **Why it is fast, ranked:** (1) fused classify-and-stop; (2) **on arm64 it is pure scalar** — the 8× unrolled
   loop, end check per 8 bytes, branch hints and the cursor in locals passed through return values — and it still
-  beats us 1.21–1.78× with fields, so **our gap is loop structure and per-field overhead, not vector width**
+  beats us 1.19–1.42× with fields (quiet re-run), so **our gap is loop structure and per-field overhead, not vector width**
   (inference from source + parser note §8.6); (3) on x86 one `pcmpestri` per 16 B (high latency, 8 µops, but one
   instruction); (4) no EOF checks inside the up-front-checked status prefix; (5) four stores per field.
 - **To be faster than picohttpparser with equal work.** Its per-field path on arm64: scalar name loop (`:`, table,
@@ -900,7 +900,7 @@ differential risk (SIMD note §3.9) shrinks to "the fast path accepts only what 
 - Hyperscan/Vectorscan SHENG (`src/nfa/sheng_impl.h` at `vectorscan/5.4.13`, L55–94): a ≤ 16-state DFA whose
   transition is `cur_state = pshufb(shuffle_mask[c], cur_state)` per byte — a **dependent** shuffle chain, ≈ 1–2
   cycles per byte of latency.
-- Our scalar parser already runs ≈ 1 cycle per byte; bitmaps run ≈ 0.3–0.5 (§5). Neither FSM form wins for a
+- Our scalar parser already runs ≈ 1 cycle per byte; P-D is estimated at ≈ 0.4–0.6 (§5.5). Neither FSM form wins for a
   grammar this regular. (Teddy/shufti/truffle match literal sets and byte classes — the classification side, already
   covered by the nibble LUT.)
 
