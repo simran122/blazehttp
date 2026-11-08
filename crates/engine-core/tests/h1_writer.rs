@@ -715,11 +715,13 @@ const INVALID_TARGETS: [&[u8]; 15] = [
     b"/a?q=\"",
 ];
 /// Origin-form targets, including `//` (note §6.3 decision), percent-encoded data and raw query bytes WHATWG keeps.
-const VALID_TARGETS: [&[u8]; 4] = [
+const VALID_TARGETS: [&[u8]; 5] = [
     b"//evil.example/x",
     b"/",
     b"/a%0d%0a?b=c&d=~!$'()*+,;=:@",
     b"/a?q=\\^`{|}",
+    // A second `?` stays inside the query, so the backslash after it is query data.
+    b"/a?x?\\y",
 ];
 
 #[test]
