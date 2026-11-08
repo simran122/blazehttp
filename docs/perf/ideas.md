@@ -58,3 +58,29 @@ re-run in the Linux reference container (nightly window) and on the x64 VM first
 | Benchmark parser with a varied-head ring, not only one repeated head | repeated head lets the predictor memorise exits | Task 4 bench / P1a criterion / G0 report | Dev: same scalar code 186 ns repeated vs 436–585 ns varied; proposed rule |
 | SWAR `[A-Za-z0-9-]` name fast path, `table8` names | fewer branches than per-byte table | same | Dev: slower than the table in the chain (321 / — vs 186 ns); drop |
 | Avoid `pcmpestri`/`pcmpistri` | 8 µops, 12–17-cycle latency (uops.info) vs `pshufb` 1 µop | — | Verified (uops.info); no SSE4.2 string ops in `engine-simd` |
+
+## HTTP/1.1 parser and writer speed (survey 2026-11-08; detail in `docs/notes/h1-speed-research.md`)
+
+Every row is unverified: nothing here was benchmarked. Candidates and their measurement plan are in the note (§5–§7).
+
+| Idea | Hypothesis | How to measure | Status |
+|---|---|---|---|
+| P-A: emit `FieldSpan` (u16 × 4) at the confirmed CRLF in `value()` | removes the bench's second pass; with-fields ratio vs httparse ≈ 0.74–1.13 (projection from plain ratios × 1.05) | `h1_parse_bench` A/B + `bench/parsers` | Unverified; Task 4c |
+| P-B: one loop body per field line on locals, state written back only on `Partial` | −15–25% scalar (the references all do this; our `step()` dispatches 3× per field with large `Result` returns) | same; `--emit asm` for memory round trips | Unverified; Task 4c |
+| STOP-set name search (first byte ≤ 0x20, ≥ 0x7F or `:`; SWAR, lowest flag exact) + branch-free tchar fold off the critical path | names at ≈ 1 branch per 8 B instead of 1 per byte | same | Unverified; Task 4c |
+| `u64` + `u32` compare for the complete 12-byte status prefix (httparse's version trick) | fewer branches on every head | same | Unverified |
+| Padded read buffer (≥ 8 initialised slack bytes + sentinel CR; uWS fence, safe form) | no scalar tails in SWAR loops | same | Unverified; API change |
+| Known-name classifier: length switch → last byte → 1–3 OR-0x20 `u64` word compares (shared parser/writer) | writer classification ≈ 15 → ≈ 3–5 ns on `post1k` | `h1_write_bench` ablation | Unverified; Task 5b |
+| Writer layout hints from JS (`[u16; 2]` per line) + one vectorisable fold counting CR/LF | delta scan ≈ 14–19 → ≈ 5 ns; injection-exact (CR/LF only where the layout says) | same + fuzz vs `scan_fields` | Unverified; P2 contract change |
+| Interned name ids from JS for known names (undici record, h2o tokens) | known names cost ≈ 0 in Rust | same | Unverified; P2 |
+| Authority binding by an integer id at checkout instead of a byte compare per request | −2–4 ns per request | same | Unverified; Task 6 |
+| P-D: ScanThru bit-stream validator over `engine-simd` block bitmaps + simdjson-style index flatten | ≈ 0.4–0.6 cycles per byte, predictor-independent; ≤ 0.85× httparse | P1a criterion, varied-256 + ring64 | Algorithm verified (Python differential, 200k heads); speed unverified |
+| SIMD fast path accepts only; any anomaly re-runs the block on the scalar parser (simdutf "locate on error") | keeps one error semantics; no SIMD/scalar differential on errors | fuzz SIMD vs scalar | Unverified |
+| Fused copy + classify for the writer delta (`engine-simd::copy_classified`) | one load per byte | P1a criterion | Unverified; likely small (delta in L1) |
+| Spans as a `Uint16Array` to JS | JS builds headers without rescanning bytes | G1 cells, P2 | Unverified |
+| SWAR 8-digit parse for Content-Length (Muła/Lemire) | fewer branches than the digit loop | criterion | Unverified; values are 1–7 digits, probably noise |
+| Hex table for chunk sizes | cheaper than range compares | criterion | Unverified; P1a chunked |
+| nginx's "bytes still needed" hint from the chunked decoder | better read sizing | G0 chunked cells | Unverified; P1a |
+| Real hyper (in-memory duplex) instead of the hyper emulation in the writer bench | equal-work fidelity | Task 5c differential gate | Unverified |
+| Prior-art SIMD parsers to study later: cursed-http, simdhttp, xocomil, simdzone (DNS zone files) | may hold further tricks | read at a pinned release | Unverified (names from a search survey only) |
+| QUICHE Balsa (Envoy) HTTP/1 parser | not vectorised (survey) — no gain expected | — | Unverified |

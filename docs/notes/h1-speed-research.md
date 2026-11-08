@@ -664,8 +664,8 @@ ratios, JSONL with provenance (`bench/results/<date>-<arch>-dev-writers.jsonl`),
 same protocol (`harness <writer> <mode> <workload> [run ms]`).
 
 **Differential gate before timing (the writer analogue of the parser gate):** in `check` mode every harness prints,
-per request, the bytes it produced; the runner parses each output with **our `ResponseParser`'s request twin, or
-httparse's `Request` parser, as the oracle** and requires: the same method, target, Content-Length and body; the
+per request, the bytes it produced; the runner parses each output with **httparse's `Request` parser as the oracle**
+(as the writer note's fuzz target does) and requires: the same method, target, Content-Length and body; the
 same field multiset (names compared case-insensitively — Go and fasthttp canonicalise case — values byte-exact);
 no `transfer-encoding`; exactly one `content-length` where §6.5 of the writer note requires one. Byte counts of the
 field section may differ only by case and order. A second gate feeds the **injection vectors**
@@ -715,7 +715,7 @@ our design. Status per source in §9.
 - **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` compiles on stable 1.99.1 under
   `#![forbid(unsafe_code)]` (compile-only check, 2026-11-08; the papers survey reports it stable since 1.91.0,
   unverified against the release notes). Only the **classification** (bytes → bitmaps) needs SIMD: rustc 1.99.1 does
-  not auto-vectorise a safe 64-byte compare-to-bitmask loop on aarch64 or x86_64 (§5.5), and exact SWAR costs ≈ 76
+  not auto-vectorise a safe 64-byte compare-to-bitmask loop on aarch64 or x86_64 (§5.0), and exact SWAR costs ≈ 76
   (aarch64) / 110 (x86_64) instructions per class per 64 B. So: **classification in `engine-simd`, validation and
   span extraction in safe `engine-core`.**
 - **Resumability:** every check is causal (a bit depends only on bytes at or before it, plus the one-byte CR→LF
@@ -1090,14 +1090,70 @@ safe Rust it would need `set_len`, which is `unsafe`, or a per-word `extend_from
 - **Gates:** `post1k` ≤ 2.3× floor (provisional, writer note §8.4); 0 allocations (`tests/h1_writer_alloc.rs`);
   faster than every rival@EW1 on every workload.
 
-## 7. Measurement plan
+## 7. Measurement plan (summary)
 
-_(in progress)_
+| What | Where | Workloads | Arches | Method |
+|---|---|---|---|---|
+| Parser candidates P-A/P-B | `h1_parse_bench` example (A/B), then `bench/parsers` | 1k, 1k-h20, ring64, mixed, trickle, + varied-256 | arm64 ref (nightly window), x64 VM | §5.7 |
+| Parser P-C/P-D | P1a criterion, then `bench/parsers` | same | both | §5.7 |
+| Writer W-A/W-B/W-C | `h1_write_bench` example (A/B + ablations) | get, post1k, varied, + h20 | both | §6.7 |
+| Writer W-D | P1a criterion | same | both | §6.7 |
+| Cross-language writer race | Task 5c harness (§3.13) | get, post1k, varied, h20 | both | EW0/EW1/EW2 |
+| Branch claims | `perf stat` on the x64 VM | 1k-h20, varied-256, post1k | x64 | instructions, branches, branch-misses per op |
+
+Every kept change goes to `docs/perf/journal.md` with numbers; anything not measured stays in `ideas.md`. No number
+in this note is a measurement made for it (the only runs were the compile-only asm check and the Python
+differential check).
 
 ## 8. Decision table
 
-_(in progress)_
+Ranked within each component by expected gain per risk (all gains are estimates until §7 runs).
+
+| Rank | Candidate | Component | Expected effect (unverified) | Risk | Build in |
+|---|---|---|---|---|---|
+| 1 | **P-A spans in G** | parser | removes the second pass: ratio vs httparse with fields from 1.16–2.02 to ≈ 0.74–1.13 | none new | **Task 4c** (first step) |
+| 2 | **P-B line kernel** (locals, STOP search + table fold, `u64` prefix, shared classifier) | parser | ≈ −15–25% scalar; target: beat httparse on the 20-field ring too | medium (equivalence on partial input; fuzz) | **Task 4c** (second step, kept only if measured faster) |
+| 3 | P-B padded window (fence) | parser | removes tails; small | API change (`padded_len`) | Task 4c option, measured; else P1a |
+| 4 | **P-D bit-stream validator + flatten** | parser | ≈ 0.4–0.6 cycles per byte; ≤ 0.85× httparse with margin; predictor-independent | `unsafe` only in `classify_block`; acceptance-only fast path | **P1a** (lead) |
+| 5 | P-C stage-1 + `tzcnt` walk | parser | measured 0.42× on varied heads (dev) | lower complexity than P-D | P1a (fallback / A/B baseline for P-D) |
+| 1 | **W-A known-name classifier + shared STOP search** | writer | `post1k` ≈ 1.7–1.9× floor | low | **Task 5b** |
+| 2 | **W-B layout hints + one vectorisable fold** | writer | `post1k` ≈ 1.5–1.7× floor | wire-format change (P2), hints untrusted | **Task 5b** if the P2 contract change is accepted; else P2 |
+| 3 | W-C interned name ids | writer | known names cost ≈ 0 | spec-generated table; JS/Rust drift | P2 |
+| 4 | **W-D SIMD delta validation (+ optional fused copy)** | writer | validation ≈ 5–10 ns | `unsafe` only in `engine-simd` | **P1a** |
+| — | Task 5c cross-language writer race | writer | proves "every rival" | none | **Task 5c** (after 5b) |
+| — | Add fasthttp + nginx rows to `bench/parsers` | parser race | closes "every Go / C server parser" | none | with Task 4c |
+
+**What each task builds:**
+- **Task 4c (parser, scalar, P0):** P-A first (spans in the scan, `FieldSpan` u16 ×4, OWS trimmed), then P-B
+  (one loop body per line on locals, STOP search + branch-free tchar fold, `u64` status-prefix compare, shared
+  `field_name.rs` classifier), each kept only if measured faster on the §5.7 workloads; add the `varied-256` ring and
+  the fasthttp/nginx rows to `bench/parsers`.
+- **Task 5b (writer, P0):** W-A (shared classifier, STOP search, authority by id with Task 6), and W-B if the P2
+  contract change (per-line hints) is accepted by the controller; `post1k` ≤ 2.3× floor.
+- **Task 5c:** the cross-language writer race (§3.13).
+- **P1a (SIMD):** `engine-simd::classify_block` (NEON; SSE2 + SSSE3/AVX2), then P-D for the parser (P-C as its
+  A/B baseline) and W-D for the writer, both with the scalar path as error oracle and tail handler.
 
 ## 9. Sources
 
-_(in progress)_
+All accessed 2026-11-08. Source code: verified at the commits of §1 (line numbers in §2–§3). Rust: verified by
+compile on 1.99.1.
+
+| # | Source | Link | Status |
+|---|---|---|---|
+| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014 | https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles/byte) |
+| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | (PDF fetched by the papers survey; cited in #1) | verified (primary text, abstract and shuffle mechanism) |
+| 3 | Langdale, Lemire, *Parsing Gigabytes of JSON per Second*, VLDB J. 2019 | https://arxiv.org/abs/1902.08318 | verified (SIMD note) |
+| 4 | simdjson `v5.1.1` `bitmask.h` (prefix_xor via clmul), `json_structural_indexer.h` (`bit_indexer`) | https://github.com/simdjson/simdjson/tree/40a686ab89dc5ee58ec10d0514dd5c99abbc472b | verified (source) |
+| 5 | simdutf `v9.3.3` `src/generic/ascii_validation.h` (validate, then locate on error) | https://github.com/simdutf/simdutf/blob/59589cd3df6823cbfdbd253cde3377e7c3e1fe9b/src/generic/ascii_validation.h | verified (source) |
+| 6 | Vectorscan `5.4.13` `src/nfa/sheng_impl.h` (SHENG pshufb DFA) | https://github.com/VectorCamp/vectorscan/blob/acd7363aadea43da9c5246542d9969db843dd132/src/nfa/sheng_impl.h | verified (source) |
+| 7 | Wang et al., *Hyperscan*, NSDI 2019 | https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf | verified (SIMD note) |
+| 8 | Langdale, simdcsv README | https://github.com/geofflangdale/simdcsv/blob/a9494a85c83525bb42ba368d8f9bcf3acf53a8d1/README.md | verified (text) |
+| 9 | Krasnov (Cloudflare), *Improving PicoHTTPParser further with AVX2*, 2014 | https://blog.cloudflare.com/improving-picohttpparser-further-with-avx2/ | verified (SIMD note); numbers unverified for us |
+| 10 | uops.info `PCMPESTRI`, `PSHUFB`, `PMOVMSKB` | https://uops.info/ | verified (SIMD note) |
+| 11 | Rust std 1.99.1: `u64::carrying_add`, `slice::as_chunks`, `Vec::set_len` (unsafe), `Vec::spare_capacity_mut` | https://doc.rust-lang.org/std/ | `carrying_add` and `as_chunks` verified by compile under `forbid(unsafe_code)`; `set_len` unsafe and `spare_capacity_mut` returning `MaybeUninit` from the std page index (verified) |
+| 12 | Rust Reference, `target_feature` (no inlining into callers without the feature) | https://doc.rust-lang.org/reference/attributes/codegen.html | verified (SIMD note) |
+| 13 | Compile-only asm check (scratch crate `asmcheck`, rustc 1.99.1, aarch64 generic, x86-64 baseline and v3) | session scratchpad `h1-research/asmcheck` | verified (run 2026-11-08) |
+| 14 | ScanThru differential check `tools/scanthru_check.py` (200,000 mutated heads + boundary sweep) | session scratchpad | verified (run 2026-11-08) |
+| 15 | Prior art: cursed-http, simdhttp, xocomil, simdzone (SIMD parsers); QUICHE Balsa | reported by the papers survey | unverified → `ideas.md` |
+| 16 | Every parser and writer of §1 | §1 link bases | verified (source at the pins) |
