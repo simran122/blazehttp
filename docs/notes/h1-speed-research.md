@@ -981,7 +981,114 @@ spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end
 
 ## 6. Our writer: candidates
 
-_(in progress)_
+Target: `post1k` from ≈ 75–91 ns to ≤ 2.3× the ≈ 36 ns floor (≤ 83 ns) with margin, and every rival@EW1 beaten
+(§3.12). The ablation (§3 intro) says where: name classification ≈ 15 ns, delta scan ≈ 14–19 ns, other checks
+≈ 8–10 ns.
+
+### 6.1 Building block: one known-name classifier, shared by parser and writer
+
+`h1/field_name.rs` (a shared module, design §13.1 rule 2): `enum KnownName { ContentLength, TransferEncoding,
+Connection, Host, Te, Expect, Upgrade, KeepAlive, ProxyConnection, ProxyAuthorization, Authorization, Cookie,
+ContentType, UserAgent }` and `fn classify(name: &[u8], has_underscore: bool) -> Option<(KnownName, Spelling)>`.
+- **Algorithm:** `match name.len()` (jump table) → for lengths with several candidates, one discriminating byte
+  (the last byte, h2o: at length 10 `n`/`e`/`t`; at 6 `e`/`t`) → **compare 1–3 overlapping little-endian `u64`
+  words OR-ed with `0x2020…20`** against `const` canonical words (`u64::from_le_bytes(name[..8].try_into()?)` and
+  `name[len-8..]`; names under 8 bytes zero-extended).
+- **Exactness:** names are validated tokens before classification; canonical names contain only `a–z` and `-`;
+  among tchar bytes, `|0x20` maps only `A–Z`/`a–z` into `a–z` (`^`→`~` and `_`→DEL land outside the canonical
+  bytes), so the folded compare ⇔ ASCII case-insensitive equality. Underscore spellings (writer note W10/X9) go
+  through the slow path only when the name scan saw a `_` (a flag OR-ed during the scan, as nginx hashes during its
+  scan), so the common path never pays for them.
+- **Cost:** a switch, ≤ 1 byte test, 1–3 word compares — ≈ 1–2 ns per name instead of a per-byte
+  `eq_ignore_ascii_case` per candidate. The parser uses it for its three framing names (replacing `facts.rs`'s
+  length switch + `eq_ignore_ascii_case`).
+
+### 6.2 Candidate W-A — scalar, safe Rust (Task 5b, P0)
+
+1. **Names:** the parser's STOP search + table fold (§5.3) — the same primitive in `grammar.rs` for both (DRY),
+   with the `_` flag folded into a `[u8; 256]` flags table (tchar bit, underscore bit) so the fold yields both.
+2. **Classification:** §6.1.
+3. **Values:** today's SWAR `value_len`, then `": "` before and CRLF after checked with slice patterns.
+4. **Other checks:** the authority binding by an integer id the connection receives at checkout instead of a
+   10–30-byte compare per request (Task 6 hand-off; −2–4 ns, unverified); limits checked once on the summed
+   length.
+- **Time:** O(target + delta) validation + O(head + body) copy. **Space:** 0 extra. **Branches per delta byte:**
+  ≈ 0.25 (from ≈ 0.6). **Allocations:** 0.
+- **Expected:** −8 to −12 ns (classification) and −3 to −5 ns (names) → `post1k` ≈ 60–70 ns ≈ 1.7–1.9× floor
+  (estimate, unverified).
+- **Better than hyper/Go because:** the same validation as EW1 plus our EW2 checks with no allocation, no map, no
+  `fmt`, no second pass; classification costs about one word compare per name where hyper pays a map entry and
+  Go a map hash.
+- **Risks:** classification must be exhaustively tested against the current `classify` (every special name in
+  every case and underscore spelling, every length 0–64, random tokens); the line-count check (X3) stays.
+
+### 6.3 Candidate W-B — validate against the writer's own layout (scalar; our design from the hint idea)
+
+The JS layer already knows each line's name and value length. It passes them as **untrusted hints**
+(`[u16; 2]` per line, alongside `header_lines`). Rust then needs no search at all:
+```text
+expect_cr_lf = 0; pos = 0
+for (name_len, value_len) in hints:                     // O(lines)
+    check block[pos + name_len .. +2] == ": "  and  block[pos + name_len + 2 + value_len .. +2] == "\r\n"
+    classify(block[pos .. pos + name_len])               // §6.1, names validated by the fold below
+    pos += name_len + 2 + value_len + 2
+check pos == block.len()
+one branch-free fold over the whole block:              // auto-vectorises (arithmetic compares, no table)
+    bad |= !(b ≥ 0x20 && b ≠ 0x7F || b == HTAB || b == CR || b == LF);  cr += (b == CR);  lf += (b == LF)
+accept iff bad == 0 && cr == lines && lf == lines        // CR/LF exist only at the hinted line ends
+names: tchar fold over exactly name_len bytes per line   // table, branch-free
+```
+- **Injection safety (from the papers survey, verified by reasoning):** grammar validation alone is not enough — a
+  value carrying `\r\nx-forwarded-for: 1.2.3.4` is well-formed line by line. Here every CR and LF must sit exactly
+  where the layout says (counts equal and each line end checked), and every `: ` where the layout says; a smuggled
+  line changes `cr` and fails. This is the line-count rule (X3) made exact.
+- **Time:** O(delta) with no data-dependent loop exits: one vectorisable fold (the papers survey and the writers
+  survey both note http's `try_from_generic` is written this way "so the loop vectorizes") + O(lines) constant-time
+  checks. **Branches per byte:** ≈ 0 in the fold; ≈ 6 per line. **Space:** the hints (4 B per line, ≤ 100 lines).
+- **Expected:** removes most of the 14–19 ns delta scan → `post1k` ≈ 55–60 ns ≈ 1.5–1.7× floor with W-A's
+  classification (estimate).
+- **Risks:** a wire-format change (P2 contract: hints next to the delta); hints are untrusted, so every check above
+  is mandatory (fuzz target: random hints × random blocks vs the current `scan_fields` oracle — must agree on accept
+  and on reject).
+
+### 6.4 Candidate W-C — validate-once interned names (cross-layer)
+
+As undici's lowercase record, h2o's tokens and hyper's `StandardHeader`: the JS layer sends a small integer id for
+each **known** name (the §6.1 set plus common ones such as `accept`, `content-encoding`); Rust writes the canonical
+bytes from its own static table and takes the class from it — no name scan or classification for those lines.
+Unknown names still go through W-A/W-B. Constant per-client header *sets* already ride in the template (validated
+once); this extends "validate once" to names in the per-request delta. **Risk:** the id table is part of the
+generated spec (`policy/spec.json`) so JS and Rust cannot drift; a JS bug sending `content-length` as raw bytes is
+still caught by classification.
+
+### 6.5 Candidate W-D — SIMD delta validation (P1a, `engine-simd`)
+
+The delta is contiguous: classify it with P-D's `classify_block` and validate all lines of a block with the ScanThru
+validator in the writer's stricter form (separator exactly `": "`: `N` must be a colon **and** `N << 1` a SP; values
+from `N << 2`). With W-B's layout, the check becomes bitmap equality: `cr == expected_line_ends`, `colon ==
+expected_colons` — the papers survey's injection rule in its cheapest form. Optionally **fuse the copy**: the
+`engine-simd` API `copy_classified(dst: &mut Vec<u8>, src) -> BlockMasks` loads each 64-byte block once, stores it
+into `dst` and classifies it (safe API; the uninitialised-capacity write is `unsafe` inside `engine-simd` only — in
+safe Rust it would need `set_len`, which is `unsafe`, or a per-word `extend_from_slice` with a capacity check). At
+≈ 100–400 B the delta is in L1 after the copy anyway, so fusion is measured, not assumed. **Expected:** validation
+≈ 5–10 ns for a 100–400 B delta (estimate).
+
+### 6.6 Rejected
+
+- Fused copy + validate in safe `engine-core` (needs `unsafe` `set_len` or per-word capacity checks).
+- Hashing names (a multiply chain per byte costs more than 1–3 word compares).
+- A per-client cache of validated delta blocks keyed by content (hashing ≈ the validation it saves; YAGNI).
+- `writev` of head + small body (journal: equal up to 4 KiB, worse under TLS; writer note §8.3).
+
+### 6.7 Measurement plan (writer)
+
+- **Workloads:** `get`, `post1k`, `varied` (256-ring), plus `h20` (20 per-request fields) where validation
+  dominates; arm64 and x64.
+- **A/B:** `crates/engine-core/examples/h1_write_bench.rs` (writer vs copy floor, same container, alternated
+  binaries, ≥ 4 rounds); ablations per check as in the journal (classification off, delta scan off, authority off).
+- **Race:** Task 5c (§3.13): ours@EW2 vs every rival@EW1 and @EW2, EW0 vs EW0, allocations per op.
+- **Gates:** `post1k` ≤ 2.3× floor (provisional, writer note §8.4); 0 allocations (`tests/h1_writer_alloc.rs`);
+  faster than every rival@EW1 on every workload.
 
 ## 7. Measurement plan
 
