@@ -35,8 +35,9 @@ pub struct ServerConfig {
     pub stall: bool,
     /// Open connections per port; further clients wait in the listen backlog (G6).
     pub max_connections: usize,
-    /// Time allowed for a request head once its first byte arrived, and for a TLS handshake (not in stall mode).
-    pub head_timeout: Duration,
+    /// Time allowed for a request (head and declared body) once its first byte arrived, for writing each batch of
+    /// responses, and for a TLS handshake. Not applied in stall mode, nor to an idle connection with nothing buffered.
+    pub request_timeout: Duration,
 }
 
 impl Default for ServerConfig {
@@ -46,7 +47,7 @@ impl Default for ServerConfig {
             tls: None,
             stall: false,
             max_connections: 1024,
-            head_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -138,7 +139,7 @@ impl ServerConfig {
             Mode::Stall
         } else {
             Mode::Answer {
-                head_timeout: self.head_timeout,
+                request_timeout: self.request_timeout,
             }
         }
     }
@@ -170,7 +171,7 @@ async fn serve_tls(
     };
     let mode = cfg.mode();
     let handshake_timeout = match mode {
-        Mode::Answer { head_timeout } => head_timeout,
+        Mode::Answer { request_timeout } => request_timeout,
         Mode::Stall => Duration::MAX,
     };
     let handle = |stream| {

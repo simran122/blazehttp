@@ -17,15 +17,17 @@ const BUFFER_BYTES: usize = 16 * 1024;
 const BATCH_BYTES: usize = 64 * 1024;
 /// Responses per batch, well below `IOV_MAX` (1024 on Linux and macOS) for vectored writes.
 const BATCH_RESPONSES: usize = 512;
-/// After closing the write side, unread input is drained for at most this long and this many bytes, so the kernel
-/// does not answer it with a reset that could destroy responses the client has not read yet.
+/// Closing (shutdown, `close_notify` on TLS, then draining unread input) takes at most this long, and drains at most
+/// this many bytes, so the kernel does not answer unread input with a reset that could destroy responses the client
+/// has not read yet.
 const LINGER_TIME: Duration = Duration::from_secs(1);
 const LINGER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Mode {
-    /// Answer requests; a request head must arrive within the head timeout.
-    Answer { head_timeout: Duration },
+    /// Answer requests. A request (head and declared body) must arrive, and each batch must be written, within
+    /// `request_timeout`; an idle connection with nothing buffered is not timed.
+    Answer { request_timeout: Duration },
     /// Read everything, never write (the G2 stalled-server cell).
     Stall,
 }
@@ -35,7 +37,7 @@ pub(crate) async fn run<S: AsyncRead + AsyncWrite + Unpin>(
     mode: Mode,
 ) -> io::Result<()> {
     match mode {
-        Mode::Answer { head_timeout } => Connection::new(stream, head_timeout).answer().await,
+        Mode::Answer { request_timeout } => Connection::new(stream, request_timeout).answer().await,
         Mode::Stall => drain(stream).await,
     }
 }
@@ -52,17 +54,17 @@ enum Input {
     Eof,
     /// A partial request head fills the whole buffer.
     HeadTooLarge,
-    /// A partial request head did not complete within the head timeout.
-    HeadTimeout,
+    /// A started request (head or declared body) did not complete within the request timeout.
+    RequestTimeout,
 }
 
 /// Why taking requests from the buffer stopped.
 enum Progress {
-    /// No complete request left: read more.
+    /// No complete request left (or its body is still arriving): read more.
     NeedBytes,
     /// The batch is full: write it, then keep taking from the buffer.
     BatchFull,
-    /// The last batched response ends the connection (refusal or the client's close).
+    /// The last batched response ends the connection (refusal, or the client's close once its body is read).
     Close,
 }
 
@@ -70,6 +72,21 @@ enum Progress {
 enum Next {
     Read,
     Close,
+}
+
+/// The next thing the buffered bytes ask for.
+enum Step {
+    Respond(Answer),
+    Refuse(Refusal),
+    NeedBytes,
+}
+
+/// A complete request's response and what it consumes.
+struct Answer {
+    response: &'static [u8],
+    head_len: usize,
+    body_len: u64,
+    close: bool,
 }
 
 struct Connection<S> {
@@ -82,15 +99,17 @@ struct Connection<S> {
     resume: usize,
     /// Request body bytes still to drop.
     skip: u64,
+    /// The client asked to close: close once the body still owed (`skip`) has been read.
+    closing: bool,
     batch: Vec<IoSlice<'static>>,
     batch_bytes: usize,
-    head_timeout: Duration,
-    /// When the partial request head in the buffer must be complete.
-    head_deadline: Option<Instant>,
+    request_timeout: Duration,
+    /// When the started request (head, then declared body) must be complete.
+    request_deadline: Option<Instant>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
-    fn new(stream: S, head_timeout: Duration) -> Self {
+    fn new(stream: S, request_timeout: Duration) -> Self {
         Self {
             stream,
             buf: vec![0; BUFFER_BYTES].into_boxed_slice(),
@@ -98,10 +117,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
             end: 0,
             resume: 0,
             skip: 0,
+            closing: false,
             batch: Vec::new(),
             batch_bytes: 0,
-            head_timeout,
-            head_deadline: None,
+            request_timeout,
+            request_deadline: None,
         }
     }
 
@@ -109,13 +129,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         loop {
             let next = match self.receive().await? {
                 Input::Bytes => self.answer_buffered().await?,
-                Input::Eof => return Ok(()),
+                Input::Eof | Input::RequestTimeout => Next::Close,
                 Input::HeadTooLarge => {
                     self.push(refusal(Refusal::HeadTooLarge));
                     self.write_batch().await?;
                     Next::Close
                 }
-                Input::HeadTimeout => Next::Close,
             };
             if let Next::Close = next {
                 return self.close().await;
@@ -124,25 +143,34 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         }
     }
 
-    /// Reads more bytes; a partial head in the buffer must complete before its deadline.
+    /// Reads more bytes; a started request must complete before its deadline.
     async fn receive(&mut self) -> io::Result<Input> {
         if self.end == self.buf.len() {
             return Ok(Input::HeadTooLarge);
         }
+        let deadline = self.request_started().then(|| {
+            *self
+                .request_deadline
+                .get_or_insert_with(|| Instant::now() + self.request_timeout)
+        });
         let read = self.stream.read(&mut self.buf[self.end..]);
-        let n = if self.end > self.start {
-            let deadline = *self
-                .head_deadline
-                .get_or_insert_with(|| Instant::now() + self.head_timeout);
-            match timeout_at(deadline, read).await {
+        let n = match deadline {
+            Some(deadline) => match timeout_at(deadline, read).await {
                 Ok(n) => n?,
-                Err(_) => return Ok(Input::HeadTimeout),
-            }
-        } else {
-            read.await?
+                Err(_) => return Ok(Input::RequestTimeout),
+            },
+            None => read.await?,
         };
         self.end += n;
         Ok(if n == 0 { Input::Eof } else { Input::Bytes })
+    }
+
+    /// A body is still owed, or the buffer holds part of a request head (empty lines alone do not count).
+    fn request_started(&self) -> bool {
+        self.skip > 0
+            || self.buf[self.start..self.end]
+                .iter()
+                .any(|&b| b != b'\r' && b != b'\n')
     }
 
     async fn answer_buffered(&mut self) -> io::Result<Next> {
@@ -163,40 +191,64 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
             if self.skip > 0 {
                 return Progress::NeedBytes;
             }
-            let (response, head_len, body_len, close) =
-                match scan(&self.buf[self.start..self.end], self.resume) {
-                    Scan::Complete(r) => (
-                        response_for(r.target, r.head_only),
-                        r.head_len,
-                        r.body_len,
-                        r.close,
-                    ),
-                    Scan::Partial { resume } => {
-                        self.resume = resume;
-                        return Progress::NeedBytes;
-                    }
-                    Scan::Invalid => {
-                        self.push(refusal(Refusal::BadRequest));
-                        return Progress::Close;
-                    }
-                };
-            if !self.has_room_for(response) {
-                return Progress::BatchFull;
-            }
-            self.push(response);
-            self.start += head_len;
-            (self.skip, self.resume, self.head_deadline) = (body_len, 0, None);
-            if close {
+            if self.closing {
                 return Progress::Close;
+            }
+            match self.next_step() {
+                Step::NeedBytes => return Progress::NeedBytes,
+                Step::Refuse(kind) => {
+                    let response = refusal(kind);
+                    if !self.has_room_for(response) {
+                        return Progress::BatchFull;
+                    }
+                    self.push(response);
+                    return Progress::Close;
+                }
+                Step::Respond(answer) => {
+                    if !self.has_room_for(answer.response) {
+                        return Progress::BatchFull;
+                    }
+                    self.consume(&answer);
+                }
             }
         }
     }
 
+    fn next_step(&mut self) -> Step {
+        match scan(&self.buf[self.start..self.end], self.resume) {
+            Scan::Complete(r) => Step::Respond(Answer {
+                response: response_for(r.target, r.head_only),
+                head_len: r.head_len,
+                body_len: r.body_len,
+                close: r.close,
+            }),
+            Scan::Partial { resume } => {
+                self.resume = resume;
+                Step::NeedBytes
+            }
+            Scan::Invalid => Step::Refuse(Refusal::BadRequest),
+        }
+    }
+
+    /// Batches the response and moves past the request head; its body (if any) is skipped next.
+    fn consume(&mut self, answer: &Answer) {
+        self.push(answer.response);
+        self.start += answer.head_len;
+        (self.skip, self.resume, self.closing) = (answer.body_len, 0, answer.close);
+        if answer.body_len == 0 {
+            self.request_deadline = None;
+        }
+    }
+
+    /// Drops buffered body bytes still owed; the request is complete (its deadline cleared) once the last one is gone.
     fn skip_body(&mut self) {
         let buffered = self.end - self.start;
         let dropped = usize::try_from(self.skip).map_or(buffered, |skip| skip.min(buffered));
         self.start += dropped;
         self.skip -= dropped as u64;
+        if dropped > 0 && self.skip == 0 {
+            self.request_deadline = None;
+        }
     }
 
     fn has_room_for(&self, response: &[u8]) -> bool {
@@ -210,18 +262,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         self.batch_bytes += response.len();
     }
 
+    /// Writes and flushes the batch within the request timeout (a peer that never reads cannot hold the task).
     async fn write_batch(&mut self) -> io::Result<()> {
         if self.batch.is_empty() {
             return Ok(());
         }
-        self.write_gathered().await?;
+        let limit = self.request_timeout;
+        timeout(limit, self.write_gathered())
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
         self.batch.clear();
         self.batch_bytes = 0;
-        // TLS streams may still hold ciphertext after a write (tokio-rustls); a no-op on TCP.
-        self.stream.flush().await
+        Ok(())
     }
 
-    /// One vectored write of the static responses (repeated only for a partial write).
+    /// One vectored write of the static responses (repeated only for a partial write), then a flush (TLS streams may
+    /// still hold ciphertext after a write; a no-op on TCP).
     async fn write_gathered(&mut self) -> io::Result<()> {
         let mut slices = &mut self.batch[..];
         while !slices.is_empty() {
@@ -231,31 +287,36 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
             }
             IoSlice::advance_slices(&mut slices, n);
         }
-        Ok(())
+        self.stream.flush().await
     }
 
     /// Moves a partial request to the front of the buffer.
     fn compact(&mut self) {
+        if self.start == 0 {
+            return;
+        }
         self.buf.copy_within(self.start..self.end, 0);
         self.end -= self.start;
         self.start = 0;
     }
 
-    /// Closes the write side (TLS: `close_notify`), then drains unread input for a bounded time and size.
+    /// Closes the write side (TLS: `close_notify`), then drains unread input; all of it within [`LINGER_TIME`] and
+    /// at most [`LINGER_BYTES`].
     async fn close(mut self) -> io::Result<()> {
-        self.stream.shutdown().await?;
-        let mut drained = 0;
-        let linger = async {
+        let closing = async {
+            self.stream.shutdown().await?;
+            let mut drained = 0;
             while drained < LINGER_BYTES {
-                match self.stream.read(&mut self.buf).await {
+                let room = (LINGER_BYTES - drained).min(self.buf.len());
+                match self.stream.read(&mut self.buf[..room]).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => drained += n,
                 }
             }
+            Ok(())
         };
-        // Lingering ends on EOF, on the byte limit, or here on the time limit; all three just close.
-        let _ = timeout(LINGER_TIME, linger).await;
-        Ok(())
+        // Past the time limit the connection is simply dropped.
+        timeout(LINGER_TIME, closing).await.unwrap_or(Ok(()))
     }
 }
 
@@ -267,6 +328,8 @@ mod tests {
     use std::time::Duration;
 
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+    use tokio::time::error::Elapsed;
+    use tokio::time::timeout;
 
     use super::{BATCH_BYTES, BUFFER_BYTES, Mode, run};
     use crate::cells::{Refusal, refusal, response_for};
@@ -278,8 +341,9 @@ mod tests {
     /// seconds and a few MiB, never grow until the machine runs out of memory.
     const OUTPUT_CAP: usize = 64 << 20;
 
-    /// A scripted peer: `input` arrives in reads that never cross a cut, writes are recorded per call, up to `cap`
-    /// bytes in total (then it panics).
+    /// A scripted peer: `input` arrives in reads that never cross a cut; writes are recorded per call, at most
+    /// `max_write` bytes each and `cap` bytes in total (then it panics). Reads stop for good at `stall_reads_at`, and
+    /// writes or the shutdown can be made to never complete, to test the deadlines.
     struct Script {
         input: Vec<u8>,
         cuts: Vec<usize>,
@@ -288,33 +352,43 @@ mod tests {
         writes: Vec<usize>,
         shut_down: bool,
         cap: usize,
+        max_write: usize,
+        stall_reads_at: Option<usize>,
+        stall_writes: bool,
+        stall_shutdown: bool,
     }
 
     impl Script {
         fn new(input: Vec<u8>, cuts: Vec<usize>) -> Self {
-            let (read, output, writes, shut_down, cap) =
-                (0, Vec::new(), Vec::new(), false, OUTPUT_CAP);
             Self {
                 input,
                 cuts,
-                read,
-                output,
-                writes,
-                shut_down,
-                cap,
+                read: 0,
+                output: Vec::new(),
+                writes: Vec::new(),
+                shut_down: false,
+                cap: OUTPUT_CAP,
+                max_write: usize::MAX,
+                stall_reads_at: None,
+                stall_writes: false,
+                stall_shutdown: false,
             }
         }
 
         fn record(&mut self, bufs: &[IoSlice<'_>]) -> usize {
-            let len: usize = bufs.iter().map(|buf| buf.len()).sum();
-            assert!(
-                self.output.len() + len <= self.cap,
-                "stub output cap of {} bytes exceeded",
-                self.cap
-            );
+            let mut room = self.max_write;
+            let before = self.output.len();
             for buf in bufs {
-                self.output.extend_from_slice(buf);
+                let take = buf.len().min(room);
+                assert!(
+                    self.output.len() + take <= self.cap,
+                    "stub output cap of {} bytes exceeded",
+                    self.cap
+                );
+                self.output.extend_from_slice(&buf[..take]);
+                room -= take;
             }
+            let len = self.output.len() - before;
             self.writes.push(len);
             len
         }
@@ -327,11 +401,16 @@ mod tests {
             buf: &mut ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
             let at = self.read;
+            if self.stall_reads_at == Some(at) {
+                return Poll::Pending;
+            }
             let stop = self
                 .cuts
                 .iter()
                 .copied()
-                .find(|&cut| cut > at)
+                .chain(self.stall_reads_at)
+                .filter(|&cut| cut > at)
+                .min()
                 .unwrap_or(self.input.len());
             let n = (stop - at).min(buf.remaining());
             buf.put_slice(&self.input[at..at + n]);
@@ -346,6 +425,9 @@ mod tests {
             _: &mut Context<'_>,
             buf: &[u8],
         ) -> Poll<io::Result<usize>> {
+            if self.stall_writes {
+                return Poll::Pending;
+            }
             Poll::Ready(Ok(self.record(&[IoSlice::new(buf)])))
         }
 
@@ -354,6 +436,9 @@ mod tests {
             _: &mut Context<'_>,
             bufs: &[IoSlice<'_>],
         ) -> Poll<io::Result<usize>> {
+            if self.stall_writes {
+                return Poll::Pending;
+            }
             Poll::Ready(Ok(self.record(bufs)))
         }
 
@@ -366,20 +451,33 @@ mod tests {
         }
 
         fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            if self.stall_shutdown {
+                return Poll::Pending;
+            }
             self.shut_down = true;
             Poll::Ready(Ok(()))
         }
     }
 
-    fn serve(script: &mut Script) {
+    /// The virtual-time bound on every scripted connection: a connection that never finishes fails the test at once
+    /// (the clock is paused, so waiting costs no real time).
+    const TEST_BOUND: Duration = Duration::from_secs(30);
+
+    /// Runs one connection over `script` on a paused-clock runtime, bounded by [`TEST_BOUND`].
+    fn drive(script: &mut Script, request_timeout: Duration) -> Result<io::Result<()>, Elapsed> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
+            .start_paused(true)
             .build()
             .expect("runtime");
-        let mode = Mode::Answer {
-            head_timeout: Duration::from_secs(60),
-        };
-        runtime.block_on(run(script, mode)).expect("connection");
+        let mode = Mode::Answer { request_timeout };
+        runtime.block_on(async { timeout(TEST_BOUND, run(script, mode)).await })
+    }
+
+    fn serve(script: &mut Script) {
+        drive(script, Duration::from_secs(60))
+            .expect("connection finished within the test bound")
+            .expect("connection");
     }
 
     fn get(path: &str) -> String {
@@ -520,10 +618,120 @@ mod tests {
     }
 
     #[test]
-    fn end_of_stream_without_a_request_writes_nothing() {
-        let mut script = Script::new(Vec::new(), Vec::new());
+    fn end_of_stream_closes_gracefully() {
+        let mut script = Script::new(get("/1k").into_bytes(), Vec::new());
         serve(&mut script);
-        assert_eq!(script.output, b"");
+        assert_eq!(script.output, response_for(b"/1k", false));
+        assert!(
+            script.shut_down,
+            "TLS needs close_notify on end of stream too"
+        );
+    }
+
+    #[test]
+    fn connection_close_waits_for_the_declared_body() {
+        let body_len = BUFFER_BYTES * 20;
+        let head =
+            format!("POST /1k HTTP/1.1\r\nconnection: close\r\ncontent-length: {body_len}\r\n\r\n");
+        let mut input = head.into_bytes();
+        input.resize(input.len() + body_len, b'x');
+        let mut script = Script::new(input.clone(), Vec::new());
+        serve(&mut script);
+        assert_eq!(script.output, response_for(b"/1k", false));
+        assert_eq!(
+            script.read,
+            input.len(),
+            "the whole body is read before closing"
+        );
+        assert!(script.shut_down);
+    }
+
+    #[test]
+    fn short_writes_give_the_same_output() {
+        let (input, expected) = pipelined();
+        for max_write in [1, 7, 1000] {
+            let mut script = Script::new(input.clone(), Vec::new());
+            script.max_write = max_write;
+            serve(&mut script);
+            assert!(script.output == expected, "max_write {max_write}");
+        }
+    }
+
+    #[test]
+    fn a_zero_byte_write_is_an_error() {
+        let mut script = Script::new(get("/1k").into_bytes(), Vec::new());
+        script.max_write = 0;
+        let result = drive(&mut script, Duration::from_secs(60)).expect("finished");
+        assert_eq!(
+            result.expect_err("write zero").kind(),
+            io::ErrorKind::WriteZero
+        );
+    }
+
+    #[test]
+    fn a_peer_that_never_reads_is_dropped_after_the_request_timeout() {
+        let mut script = Script::new(get("/1k").into_bytes(), Vec::new());
+        script.stall_writes = true;
+        let result =
+            drive(&mut script, Duration::from_secs(1)).expect("finished before the test bound");
+        assert_eq!(
+            result.expect_err("timed out").kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn a_shutdown_that_never_completes_is_bounded_by_the_linger_time() {
+        let mut script = Script::new(b"BROKEN\r\n\r\n".to_vec(), Vec::new());
+        script.stall_shutdown = true;
+        let result =
+            drive(&mut script, Duration::from_secs(60)).expect("finished before the test bound");
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(script.output, refusal(Refusal::BadRequest));
+    }
+
+    #[test]
+    fn a_slow_body_is_closed_after_the_request_timeout() {
+        let head = "POST /1k HTTP/1.1\r\ncontent-length: 1000\r\n\r\n";
+        let input = format!("{head}0123456789").into_bytes();
+        let mut script = Script::new(input.clone(), Vec::new());
+        script.stall_reads_at = Some(input.len());
+        let result =
+            drive(&mut script, Duration::from_secs(1)).expect("finished before the test bound");
+        assert!(result.is_ok(), "{result:?}");
+        assert!(script.shut_down);
+    }
+
+    #[test]
+    fn empty_lines_after_a_request_do_not_start_the_request_timeout() {
+        let input = format!("{}\r\n", get("/1k")).into_bytes();
+        let mut script = Script::new(input.clone(), Vec::new());
+        script.stall_reads_at = Some(input.len());
+        let still_open = drive(&mut script, Duration::from_secs(1));
+        assert!(
+            still_open.is_err(),
+            "an idle client was closed: {still_open:?}"
+        );
         assert!(!script.shut_down);
+    }
+
+    #[test]
+    fn a_refusal_respects_the_batch_response_limit() {
+        let not_found = response_for(b"/x", false);
+        let input = format!("{}BROKEN\r\n\r\n", "GET /x HTTP/1.1\r\n\r\n".repeat(512));
+        let mut script = Script::new(input.into_bytes(), Vec::new());
+        serve(&mut script);
+        let bad_request = refusal(Refusal::BadRequest);
+        assert_eq!(script.writes, [512 * not_found.len(), bad_request.len()]);
+    }
+
+    #[test]
+    fn lingering_drains_exactly_64_kib() {
+        let mut input = b"BROKEN\r\n\r\n".to_vec();
+        input.resize(BUFFER_BYTES * 20, b'x');
+        let cuts = (1..20).map(|i| BUFFER_BYTES + i * 10_000).collect();
+        let mut script = Script::new(input, cuts);
+        serve(&mut script);
+        assert_eq!(script.read, BUFFER_BYTES + 65_536);
     }
 }

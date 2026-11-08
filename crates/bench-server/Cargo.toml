@@ -21,5 +21,6 @@ libc = "0.2.191"
 [dev-dependencies]
 # Decodes the committed gzip fixture in tests; start-up never compresses.
 flate2 = "1.1.11"
-# Runs the binary in the `--cert-out` test.
-tokio = { version = "1.54.1", features = ["process"] }
+# `process` runs the binary in the `--cert-out` test; `test-util` pauses the clock so connection tests that wait on a
+# timeout finish at once in virtual time.
+tokio = { version = "1.54.1", features = ["process", "test-util"] }

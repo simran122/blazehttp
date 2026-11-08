@@ -45,9 +45,9 @@ async fn connections_past_the_cap_wait_until_one_closes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_unfinished_head_is_closed_after_the_head_timeout() {
+async fn an_unfinished_head_is_closed_after_the_request_timeout() {
     let server = start(ServerConfig {
-        head_timeout: SHORT,
+        request_timeout: SHORT,
         ..config(false)
     })
     .await;
@@ -61,9 +61,9 @@ async fn an_unfinished_head_is_closed_after_the_head_timeout() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_idle_connection_outlives_the_head_timeout() {
+async fn an_idle_connection_outlives_the_request_timeout() {
     let server = start(ServerConfig {
-        head_timeout: SHORT,
+        request_timeout: SHORT,
         ..config(false)
     })
     .await;
@@ -77,7 +77,7 @@ async fn an_idle_connection_outlives_the_head_timeout() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_silent_tls_client_is_closed_after_the_handshake_timeout() {
     let server = start(ServerConfig {
-        head_timeout: SHORT,
+        request_timeout: SHORT,
         ..config(true)
     })
     .await;
