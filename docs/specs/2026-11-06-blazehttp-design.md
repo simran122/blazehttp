@@ -446,11 +446,17 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
    - **Exceptions** to any rule-9 lint are allowed only in one of two forms, and a reviewer must approve each one.
      - **Rust: `#[expect(<lint>, reason = "…")]`.** Unlike `allow`, `expect` fails once the exception is no longer needed. CI enforces the form in three ways:
        - Clippy denies `allow_attributes`, which catches outer `#[allow]`, and `allow_attributes_without_reason`, which catches a missing `reason`. Both workspaces set these lints.
-       - Clippy's `allow_attributes` does not see inner `#![allow]`. So the `rust-allow-attribute` policy check (`pnpm policy`) rejects `allow(` in every attribute form, read bracket-balanced across lines: outer, inner, and inside `cfg_attr`.
+       - Clippy's `allow_attributes` does not see inner `#![allow]`. So the `rust-allow-attribute` policy check (`pnpm policy`) rejects `allow(` in every attribute written in the source: outer, inner (spacing such as `# ! [` included), and inside `cfg_attr`.
+         - It reads code only: comments, including doc comments, and string, byte, raw and char literals are blanked first. A literal such as `doc = "]"` therefore cannot end an attribute early, and prose that mentions `#[allow(x)]` is not flagged.
+         - Brackets are balanced across lines.
+         - It cannot see an attribute that a macro builds from its arguments; review covers that case.
        - `rust-allow-forbidden` rejects any `allow` or `expect` of `deprecated`, `dead_code` or `unused*`.
-       - `crate-lints` makes every `crates/*/Cargo.toml` inherit these lints (`[lints] workspace = true`). It also makes the fuzz crate, which is its own workspace, repeat every root `[workspace.lints]` setting.
+       - `crate-lints` makes every `crates/*/Cargo.toml` inherit these lints (`[lints] workspace = true`). It accepts every TOML form of that setting: `lints.workspace = true`, an inline table, or a `[lints]` table. It also makes the lint tables of the fuzz crate, which is its own workspace, equal the root `[workspace.lints]` settings: none missing, loosened or added.
      - **TypeScript/JS: a line comment that is exactly `// eslint-disable-next-line <rule>[, <rule>…] -- <reason>`.**
-       - The `eslint-directive` policy check takes every comment from the TypeScript parse tree, so strings, templates, regexes and JSX text are not comments. It rejects any other comment that ESLint would read as a directive or as inline config: one starting with `eslint`, `global`, `globals` or `exported`, multi-line blocks and several comments on one line included.
+       - The `eslint-directive` policy check takes every comment from the TypeScript parse tree, so strings, templates, regexes and JSX text are not comments. It follows ESLint's directive grammar and rejects every other directive:
+         - line comments that start with `eslint-disable`, `eslint-enable`, `-line` or `-next-line`. A bare `eslint-disable` line comment is inert in ESLint, but it is rejected because it reads like a directive;
+         - block comments that start with `eslint`, `eslint-disable…`, `eslint-enable`, `eslint-env`, `global`, `globals` or `exported`, followed by a space or the end, multi-line blocks included.
+         - Several comments on one line are each checked. Prose such as `// exported for tests` passes.
        - The check runs outside ESLint, so no directive can switch it off.
        - ESLint itself runs with `reportUnusedDisableDirectives: 'error'` and `--max-warnings 0`, so a disable that suppresses nothing fails.
      - **Not machine-checked:** whether a reason is good, the reviewer's approval, and rule changes in `eslint.config.js` or `clippy.toml` themselves. These are part of code review.
