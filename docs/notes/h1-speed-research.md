@@ -387,6 +387,24 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   (bench README). Our single pass must cost no more than its two; its end scan is 16 B per step, but the split
   walks every byte again.
 
+### 2.12a Boost.Beast `boost-1.92.0` `basic_parser` (C++; in the race)
+
+- `find_fast` is a **no-op** (`http/detail/basic_parser.ipp` L109–117: returns `{buf, false}`; the SSE4.2 path is
+  gone), so names are a per-byte `is_token` table loop with a `need_more` end check per byte (L507–530), and values
+  go through `parse_token_to_eol` (L208–241): one `is_print` test per byte, a second test for HTAB/DEL on
+  non-printables, CR then LF required (bare LF rejected; the `#if 0` block at L243 shows it was considered). Leading
+  OWS one byte at a time; trailing OWS via `trim_back`; one byte of lookahead after each CRLF for obs-fold, which is
+  **accepted** and unfolded into a `char_buffer` (L560–600).
+- Per field (`http/impl/basic_parser.ipp` `inner_parse_fields` L360–405): `string_to_field(name)` (a lookup of the
+  known-field enum), `do_field` (framing facts: duplicate CL, TE, Connection, Upgrade), then
+  `on_field_impl(f, name, value)` — a virtual call in the `basic_parser` subclass the bench uses, a `fields` insert
+  with an allocation in `response_parser`. A partial head returns `need_more` and the current line is re-parsed on
+  the next call (parser note §8.6: 25 ms–2.2 s on the 1-byte feeds).
+- **To be faster than Beast with equal work:** it is a scalar byte loop with an end check per byte plus a name
+  lookup and an indirect call per field; spans emitted in our scan beat it (they already do: 0.86–0.95 for
+  `basic_parser` before Beast delivered fields, 0.33–0.57 against `response_parser`, parser note §8.6). Nothing to
+  copy except the explicit enum for known names, which our length switch already matches.
+
 ### 2.13 Parsers not yet in the race
 
 The race (`bench/parsers/`) has httparse, picohttpparser, llhttp, Beast (two APIs), Zig and Go. Candidates:
