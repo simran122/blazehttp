@@ -451,10 +451,10 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
          - Brackets are balanced across lines.
          - It cannot see an attribute that a macro builds from its arguments; review covers that case.
        - `rust-allow-forbidden` rejects any `allow` or `expect` of `deprecated`, `dead_code` or `unused*`.
-       - `crate-lints` makes every `crates/*/Cargo.toml` inherit these lints (`[lints] workspace = true`). It accepts every TOML form of that setting: `lints.workspace = true`, an inline table, or a `[lints]` table. It also makes the lint tables of the fuzz crate, which is its own workspace, equal the root `[workspace.lints]` settings: none missing, loosened or added.
+       - `crate-lints` makes every `crates/*/Cargo.toml` inherit these lints (`[lints] workspace = true`). It reads manifests with `smol-toml`, so every TOML form of that setting counts, literal keys included: `lints.workspace = true`, an inline table, or a `[lints]` table. A manifest that does not parse is itself a violation. It also makes the lint tables of the fuzz crate, which is its own workspace, equal the root `[workspace.lints]` settings: none missing, loosened or added.
      - **TypeScript/JS: a line comment that is exactly `// eslint-disable-next-line <rule>[, <rule>…] -- <reason>`.**
        - The `eslint-directive` policy check takes every comment from the TypeScript parse tree, so strings, templates, regexes and JSX text are not comments. It follows ESLint's directive grammar and rejects every other directive:
-         - line comments that start with `eslint-disable`, `eslint-enable`, `-line` or `-next-line`. A bare `eslint-disable` line comment is inert in ESLint, but it is rejected because it reads like a directive;
+         - line comments `eslint-disable-line` and `eslint-disable-next-line`, and bare `eslint-disable` and `eslint-enable`. A bare line comment is inert in ESLint, but it is rejected because it reads like a directive;
          - block comments that start with `eslint`, `eslint-disable…`, `eslint-enable`, `eslint-env`, `global`, `globals` or `exported`, followed by a space or the end, multi-line blocks included.
          - Several comments on one line are each checked. Prose such as `// exported for tests` passes.
        - The check runs outside ESLint, so no directive can switch it off.
