@@ -47,6 +47,9 @@ struct Script {
     /// `(offset, wait)` in offset order: before reading at `offset`, wait `wait`.
     pauses: Vec<(usize, Duration)>,
     sleeping: Option<Pin<Box<Sleep>>>,
+    /// Each write call waits this long (virtual time) before it completes.
+    write_delay: Option<Duration>,
+    writing: Option<Pin<Box<Sleep>>>,
 }
 
 impl Script {
@@ -65,6 +68,8 @@ impl Script {
             stall_shutdown: false,
             pauses: Vec::new(),
             sleeping: None,
+            write_delay: None,
+            writing: None,
         }
     }
 
@@ -84,6 +89,21 @@ impl Script {
         }
         self.sleeping = None;
         self.pauses.remove(0);
+        Poll::Ready(())
+    }
+
+    /// Waits out the write delay, if any, before a write call completes.
+    fn poll_write_delay(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        let Some(delay) = self.write_delay else {
+            return Poll::Ready(());
+        };
+        let writing = self
+            .writing
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(delay)));
+        if writing.as_mut().poll(cx).is_pending() {
+            return Poll::Pending;
+        }
+        self.writing = None;
         Poll::Ready(())
     }
 
@@ -151,10 +171,10 @@ impl AsyncWrite for Script {
 
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
-        _: &mut Context<'_>,
+        cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        if self.stall_writes {
+        if self.stall_writes || self.poll_write_delay(cx).is_pending() {
             return Poll::Pending;
         }
         Poll::Ready(Ok(self.record(bufs)))
@@ -470,6 +490,18 @@ fn a_peer_that_never_reads_is_dropped_after_the_request_timeout() {
         result.expect_err("timed out").kind(),
         io::ErrorKind::TimedOut
     );
+}
+
+/// A slow reader that keeps taking bytes is not cut off: the deadline bounds each write call, not the whole batch.
+#[test]
+fn a_slow_but_progressing_reader_gets_the_whole_response() {
+    let mut script = Script::new(get("/1k").into_bytes(), Vec::new());
+    script.max_write = 100;
+    script.write_delay = Some(Duration::from_millis(300));
+    drive(&mut script, Duration::from_secs(1))
+        .expect("finished before the test bound")
+        .expect("no write timed out");
+    assert_eq!(script.output, wire(b"/1k", false));
 }
 
 #[test]

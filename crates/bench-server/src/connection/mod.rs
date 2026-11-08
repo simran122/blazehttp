@@ -1,7 +1,10 @@
 //! One client connection: read, answer every complete request with its pre-built bytes, one write per batch, close
 //! gracefully (design note §5). Generic over the stream, so plain TCP and TLS share the code with static dispatch.
 
+use std::future::{Future, poll_fn};
 use std::io::{self, IoSlice};
+use std::pin::pin;
+use std::task::Poll;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -46,6 +49,18 @@ async fn drain<S: AsyncRead + Unpin>(mut stream: S) -> io::Result<()> {
     let mut buf = vec![0; BUFFER_BYTES];
     while stream.read(&mut buf).await? != 0 {}
     Ok(())
+}
+
+/// Runs `op` with a deadline of `limit`, armed only when `op` does not complete on its first poll: a write that the
+/// socket takes at once (the common case) costs no timer.
+async fn within<T>(limit: Duration, op: impl Future<Output = io::Result<T>>) -> io::Result<T> {
+    let mut op = pin!(op);
+    if let Poll::Ready(done) = poll_fn(|cx| Poll::Ready(op.as_mut().poll(cx))).await {
+        return done;
+    }
+    timeout(limit, op)
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
 }
 
 /// What the last read produced.
@@ -276,27 +291,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         if self.batch.is_empty() {
             return Ok(());
         }
-        let limit = self.request_timeout;
-        timeout(limit, self.write_gathered())
-            .await
-            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        self.write_gathered().await?;
         self.batch.clear();
         self.batch_bytes = 0;
         Ok(())
     }
 
     /// One vectored write of the static responses (repeated only for a partial write), then a flush (TLS streams may
-    /// still hold ciphertext after a write; a no-op on TCP).
+    /// still hold ciphertext after a write; a no-op on TCP). Each call must make progress within the request timeout,
+    /// so a peer that stops reading cannot hold the connection while a slow but steady one is not cut off.
     async fn write_gathered(&mut self) -> io::Result<()> {
+        let limit = self.request_timeout;
         let mut slices = &mut self.batch[..];
         while !slices.is_empty() {
-            let n = self.stream.write_vectored(slices).await?;
+            let n = within(limit, self.stream.write_vectored(slices)).await?;
             if n == 0 {
                 return Err(io::ErrorKind::WriteZero.into());
             }
             IoSlice::advance_slices(&mut slices, n);
         }
-        self.stream.flush().await
+        within(limit, self.stream.flush()).await
     }
 
     /// Moves a partial request to the front of the buffer.
