@@ -66,7 +66,8 @@ These apply to every task from Task 4 on and override anything above that confli
     - the `code-review` agent, which follows `~/.claude/rules/code-review.md` and returns the coverage table;
     - the built-in `/code-review` at high effort on the task PR.
   - Tasks 4, 6, 12 and 13 also get a `security-audit` pass.
-  - All findings, minor ones included, are merged into **one** fix round, followed by a verification pass only.
+  - All findings, minor ones included, are merged into **one** fix round. After it, a verification pass checks every finding (FIXED / NOT FIXED) and applies the full checklist to the fix diff.
+  - **Review until clean:** if the verification pass finds anything, of any severity, including problems the first review missed, the implementer fixes it and another verification pass runs. A task merges only after a pass reports zero findings. If a fifth pass still finds problems, the controller reports to the owner instead of continuing silently.
   - Implementers check their own diff against the same checklist before reporting.
 - **Agents** run on Opus at high effort.
 - **Upstream test vectors** come from the latest published, non-prerelease release **source** tag. The exact commit is recorded, and `--refresh` re-imports at the start of each phase.
