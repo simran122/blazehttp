@@ -358,6 +358,8 @@ describe('importLlhttp', () => {
     expect(() => run(mdFile(shifted))).toThrow(/span at off=34/);
   });
 
+  // With the old plain-object lookup, `span[constructor]` wrote a stray property onto the message, with no visible
+  // outcome, so this test passed before the move to Maps too. It pins the contract: unmodelled spans change nothing.
   it('ignores spans it does not model, prototype names included', () => {
     const extraSpans = ['constructor', '__proto__', 'toString'].map((name) => `off=0 len=4 span[${name}]="HTTP"`);
     const withExtra = SIMPLE.replace('off=0 len=4 span[protocol]="HTTP"', (line) => [line, ...extraSpans].join('\n'));
