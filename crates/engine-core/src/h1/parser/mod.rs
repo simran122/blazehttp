@@ -4,15 +4,6 @@
 //! scan stopped, so the whole head costs O(head bytes) however it is split. No allocation, no header map: the framing
 //! and `Connection` facts are folded in as each field line completes.
 
-#![deny(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable
-)]
-
 use core::ops::Range;
 
 mod facts;

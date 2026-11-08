@@ -9,6 +9,9 @@ publish.workspace = true
 workspace = true
 
 [dev-dependencies]
+# Counts allocations of the calling thread for the zero-allocation writer test (tests/h1_writer_alloc.rs); its
+# global allocator lives in its own test binary. The unsafe code stays inside that crate.
+allocation-counter = "=0.8.1"
 # Benchmark baseline only (examples/h1_parse_bench.rs); never a dependency of the engine.
 httparse = "=1.10.1"
 serde = { version = "1.0.229", features = ["derive"] }
