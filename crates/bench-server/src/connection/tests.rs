@@ -28,7 +28,7 @@ const BIG_BODY: usize = BUFFER_BYTES + 3_000;
 const OUTPUT_CAP: usize = 64 << 20;
 const WRITES_CAP: usize = 100_000;
 
-/// A scripted peer: `input` arrives in reads that never cross a cut; writes are recorded per call, at most
+/// A scripted peer: `input` arrives in reads that never cross a cut (`cuts` sorted); writes are recorded per call, at most
 /// `max_write` bytes each and `cap` bytes in total (then it panics). Reads wait (virtual time) at each `pauses`
 /// offset and stop for good at `stall_reads_at`; writes or the shutdown can be made to never complete, to test the
 /// deadlines.
@@ -141,10 +141,13 @@ impl AsyncRead for Script {
             return Poll::Pending;
         }
         let pauses: Vec<usize> = self.pauses.iter().map(|&(offset, _)| offset).collect();
-        let stop = self
+        // `cuts` is sorted, so the next cut is a binary search (a byte-at-a-time script has one cut per byte).
+        let next_cut = self
             .cuts
-            .iter()
-            .copied()
+            .get(self.cuts.partition_point(|&cut| cut <= at))
+            .copied();
+        let stop = next_cut
+            .into_iter()
             .chain(self.stall_reads_at)
             .chain(pauses)
             .filter(|&cut| cut > at)

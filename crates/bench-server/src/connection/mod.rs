@@ -63,6 +63,11 @@ async fn within<T>(limit: Duration, op: impl Future<Output = io::Result<T>>) -> 
         .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
 }
 
+/// Bytes other than CR and LF: anything beyond empty lines starts a request head.
+fn has_content(bytes: &[u8]) -> bool {
+    bytes.iter().any(|&b| b != b'\r' && b != b'\n')
+}
+
 /// What the last read produced.
 enum Input {
     Bytes,
@@ -121,6 +126,8 @@ struct Connection<S> {
     request_timeout: Duration,
     /// When the started request (head, then declared body) must be complete.
     request_deadline: Option<Instant>,
+    /// The unconsumed bytes hold more than empty lines (CR/LF): a request head has started.
+    head_seen: bool,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
@@ -137,6 +144,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
             batch_bytes: 0,
             request_timeout,
             request_deadline: None,
+            head_seen: false,
         }
     }
 
@@ -176,16 +184,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
             },
             None => read.await?,
         };
+        self.head_seen |= has_content(&self.buf[self.end..self.end + n]);
         self.end += n;
         Ok(if n == 0 { Input::Eof } else { Input::Bytes })
     }
 
     /// A body is still owed, or the buffer holds part of a request head (empty lines alone do not count).
     fn request_started(&self) -> bool {
-        self.skip > 0
-            || self.buf[self.start..self.end]
-                .iter()
-                .any(|&b| b != b'\r' && b != b'\n')
+        self.skip > 0 || self.head_seen
+    }
+
+    /// Recomputes [`Self::head_seen`] after bytes were consumed (it stops at the first content byte, normally the next
+    /// request's first byte).
+    fn rescan_head(&mut self) {
+        self.head_seen = has_content(&self.buf[self.start..self.end]);
     }
 
     async fn answer_buffered(&mut self) -> io::Result<Next> {
@@ -258,6 +270,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
     fn consume(&mut self, answer: &Answer) {
         self.push(answer.response);
         self.start += answer.head_len;
+        self.rescan_head();
         (self.skip, self.resume, self.closing) = (answer.body_len, 0, answer.close);
         if answer.body_len == 0 {
             self.request_deadline = None;
@@ -270,6 +283,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         let dropped = usize::try_from(self.skip).map_or(buffered, |skip| skip.min(buffered));
         self.start += dropped;
         self.skip -= dropped as u64;
+        if dropped > 0 {
+            self.rescan_head();
+        }
         if dropped > 0 && self.skip == 0 {
             self.request_deadline = None;
         }
