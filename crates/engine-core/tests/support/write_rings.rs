@@ -28,27 +28,30 @@ pub struct Request {
     pub target: Vec<u8>,
     /// `("name: value\r\n")*`.
     pub headers: Vec<u8>,
+    /// The field count JS would pass, counted once here so timed loops do not re-count it.
+    pub header_lines: u16,
     pub body: Vec<u8>,
 }
 
 impl Request {
     fn new(method: Method, target: Vec<u8>, headers: Vec<u8>, body: Vec<u8>) -> Self {
+        let lines = headers.windows(2).filter(|w| w == b"\r\n").count();
         Self {
             method,
             target,
             headers,
+            header_lines: u16::try_from(lines).expect("few lines"),
             body,
         }
     }
 
-    /// The writer's view, with the line count JS would pass.
+    /// The writer's view.
     pub fn parts(&self) -> RequestParts<'_> {
-        let lines = self.headers.windows(2).filter(|w| w == b"\r\n").count();
         RequestParts {
             method: self.method,
             target: &self.target,
             headers: &self.headers,
-            header_lines: u16::try_from(lines).expect("few lines"),
+            header_lines: self.header_lines,
             body: &self.body,
         }
     }

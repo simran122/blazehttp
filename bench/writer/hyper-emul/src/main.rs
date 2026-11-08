@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use engine_core::h1::{HeaderTemplate, write_request};
-use http::header::{CONTENT_LENGTH, HeaderMap, HeaderName, HeaderValue};
+use http::header::{CONNECTION, CONTENT_LENGTH, HeaderMap, HeaderName, HeaderValue};
 use http::{Method, Uri};
 use write_rings::{DEFAULTS, HOST, Request};
 
@@ -41,6 +41,9 @@ struct Prepared {
     /// The same plus the generated `content-length` when due (the encode-only variant).
     framed: HeaderMap,
     length: Option<u64>,
+    /// Whether our writer announced `connection: close` (a body on `GET`/`DELETE`/`OPTIONS`); the emulation sends
+    /// the same field so both write identical bytes.
+    close: bool,
 }
 
 /// `(name, value)` pairs of a `("name: value\r\n")*` block.
@@ -70,16 +73,16 @@ fn prepare(ours: Request, out: &mut Vec<u8>, template: &HeaderTemplate) -> Prepa
     for (name, value) in fields(&[&host[..], DEFAULTS, &ours.headers].concat()) {
         headers.append(name, value);
     }
+    let close = out.windows(21).any(|w| w == b"\r\nconnection: close\r\n");
     let mut framed = headers.clone();
-    if let Some(length) = length {
-        framed.insert(CONTENT_LENGTH, HeaderValue::from(length));
-    }
+    add_framing(&mut framed, length, close);
     let prepared = Prepared {
         method: Method::from_bytes(ours.method.as_str().as_bytes()).expect("method"),
         uri: Uri::try_from(ours.target.as_slice()).expect("origin-form uri"),
         headers,
         framed,
         length,
+        close,
         ours,
     };
     let mut theirs = Vec::new();
@@ -115,11 +118,19 @@ fn encode(out: &mut Vec<u8>, p: &Prepared, headers: &HeaderMap) {
     out.extend_from_slice(&p.ours.body);
 }
 
-fn hyper_clone_encode(out: &mut Vec<u8>, p: &Prepared) {
-    let mut headers = p.headers.clone();
-    if let Some(length) = p.length {
+/// hyper's `set_content_length` (`HeaderValue::from(u64)`), then the caller's `connection: close` field.
+fn add_framing(headers: &mut HeaderMap, length: Option<u64>, close: bool) {
+    if let Some(length) = length {
         headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
     }
+    if close {
+        headers.insert(CONNECTION, HeaderValue::from_static("close"));
+    }
+}
+
+fn hyper_clone_encode(out: &mut Vec<u8>, p: &Prepared) {
+    let mut headers = p.headers.clone();
+    add_framing(&mut headers, p.length, p.close);
     encode(out, p, &headers);
 }
 
