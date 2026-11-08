@@ -335,12 +335,15 @@ const isTable = (value: TomlValue | undefined): value is TomlTable =>
 const field = (table: TomlValue | undefined, key: string): TomlValue | undefined =>
   isTable(table) && Object.hasOwn(table, key) ? table[key] : undefined;
 
+/** JSON replacer that writes a bigint (a TOML integer beyond 2^53) as its exact decimal text. */
+const exactBigInt = (_key: string, value: unknown): unknown => (typeof value === 'bigint' ? value.toString() : value);
+
 /** A `lints` table flattened to `<tool>.<lint>[.<field>]` → JSON value, e.g. `clippy.pedantic.level` → `"deny"`. */
 const lintSettingsOf = (lints: TomlValue | undefined): LintSettings => {
   const settings = new Map<string, string>();
   const visit = (value: TomlValue, key: string): void => {
     if (!isTable(value)) {
-      settings.set(key, JSON.stringify(value));
+      settings.set(key, JSON.stringify(value, exactBigInt));
       return;
     }
     for (const [name, inner] of Object.entries(value)) visit(inner, key === '' ? name : `${key}.${name}`);
@@ -348,10 +351,6 @@ const lintSettingsOf = (lints: TomlValue | undefined): LintSettings => {
   if (lints !== undefined) visit(lints, '');
   return settings;
 };
-
-/** The root manifest's `[workspace.lints]` settings. A manifest that does not parse throws. */
-export const workspaceLintSettings = (toml: string): LintSettings =>
-  lintSettingsOf(field(field(parse(toml), 'workspace'), 'lints'));
 
 /** `clippy.pedantic.level` → `[lints.clippy] pedantic.level`; `workspace` → `[lints] workspace`. */
 const lintName = (key: string): string => {
@@ -372,14 +371,20 @@ const lintDifferences = (workspace: LintSettings, own: LintSettings): string[] =
   });
 };
 
-/** The manifest's `lints` value, or a violation when it is not valid TOML (fail closed). */
-const manifestLints = (path: string, content: string): { lints: TomlValue | undefined } | Violation => {
+/** The parsed manifest, or a violation naming the file when it is not valid TOML (fail closed). */
+const parseManifest = (path: string, content: string): { readonly manifest: TomlTable } | Violation => {
   try {
-    return { lints: field(parse(content), 'lints') };
+    return { manifest: parse(content, { integersAsBigInt: 'asNeeded' }) };
   } catch (error) {
     if (!(error instanceof TomlError)) throw error;
     return violation(path, error.line, 'crate-lints', `cannot parse TOML: ${String(error.message.split('\n')[0])}`);
   }
+};
+
+/** The root manifest's `[workspace.lints]` settings, or a violation naming `path` when it is not valid TOML. */
+export const workspaceLintSettings = (path: string, toml: string): { readonly settings: LintSettings } | Violation => {
+  const read = parseManifest(path, toml);
+  return 'rule' in read ? read : { settings: lintSettingsOf(field(field(read.manifest, 'workspace'), 'lints')) };
 };
 
 /**
@@ -389,13 +394,14 @@ const manifestLints = (path: string, content: string): { lints: TomlValue | unde
 const crateLints: Rule = (path, content, ctx) => {
   const crate = CRATE_MANIFEST.test(path);
   if (!crate && !FUZZ_MANIFEST.test(path)) return [];
-  const read = manifestLints(path, content);
+  const read = parseManifest(path, content);
   if ('rule' in read) return [read];
+  const lints = field(read.manifest, 'lints');
   if (crate) {
-    const inherits = field(read.lints, 'workspace') === true;
+    const inherits = field(lints, 'workspace') === true;
     return inherits ? [] : [violation(path, 1, 'crate-lints', 'crate must set [lints] workspace = true')];
   }
-  return lintDifferences(ctx.workspaceLints, lintSettingsOf(read.lints)).map((message) =>
+  return lintDifferences(ctx.workspaceLints, lintSettingsOf(lints)).map((message) =>
     violation(path, 1, 'crate-lints', message),
   );
 };

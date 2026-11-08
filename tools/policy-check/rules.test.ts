@@ -9,7 +9,9 @@ deprecated = "deny"
 pedantic = { level = "deny", priority = -1 }
 allow_attributes =  "deny"
 `;
-const CTX: Context = { packageVersion: '0.0.0', workspaceLints: workspaceLintSettings(WORKSPACE_TOML) };
+const WORKSPACE = workspaceLintSettings('Cargo.toml', WORKSPACE_TOML);
+if ('rule' in WORKSPACE) throw new Error(WORKSPACE.message);
+const CTX: Context = { packageVersion: '0.0.0', workspaceLints: WORKSPACE.settings };
 
 const v = (path: string, src: string) => checkFile(path, src, CTX).map((x) => x.rule);
 /** Rules for a crate manifest that already inherits the workspace lints, so tests see only the rule under test. */
@@ -274,4 +276,24 @@ test('a fuzz crate with no lint tables lacks every workspace lint', () => {
     'fuzz crate lacks workspace lint [lints.clippy] pedantic.priority = -1',
     'fuzz crate lacks workspace lint [lints.clippy] allow_attributes = "deny"',
   ]);
+});
+test('integers beyond 2^53 parse; they are compared as exact text', () => {
+  const big = '[package.metadata.x]\nid = 9007199254740993\n';
+  expect(v('crates/x/Cargo.toml', `${big}[lints]\nworkspace = true\n`)).toEqual([]);
+  const root = workspaceLintSettings(
+    'Cargo.toml',
+    '[workspace.lints.clippy]\nx = { level = "deny", priority = 9007199254740993 }\n',
+  );
+  expect('settings' in root && [...root.settings]).toEqual([
+    ['clippy.x.level', '"deny"'],
+    ['clippy.x.priority', '"9007199254740993"'],
+  ]);
+});
+test('a root manifest that does not parse is a violation naming the file', () => {
+  expect(workspaceLintSettings('Cargo.toml', '[workspace]\nmembers = [\n')).toEqual({
+    file: 'Cargo.toml',
+    line: 3,
+    rule: 'crate-lints',
+    message: expect.stringMatching(/^cannot parse TOML: /) as string,
+  });
 });
