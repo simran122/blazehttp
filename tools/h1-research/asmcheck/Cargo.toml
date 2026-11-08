@@ -1,0 +1,25 @@
+# removal: P1a (#24)
+# Not linted on purpose: a throwaway compile-only probe outside every workspace (not in the root workspace, not
+# under bench/, so neither crate-lints nor CI clippy covers it); it is deleted with the model by #24.
+# Compile-only check for docs/notes/h1-speed-research.md §5.0: does safe Rust lower 64-byte block classification
+# to SIMD? Nothing here is run. Commands (rustc 1.99.1, CARGO_BUILD_JOBS=2):
+#   RUSTFLAGS="-C target-cpu=generic --emit asm" cargo build --release --target aarch64-apple-darwin
+#   RUSTFLAGS="--emit asm" cargo build --release --target x86_64-unknown-linux-gnu
+#   RUSTFLAGS="-C target-cpu=x86-64-v3 --emit asm" cargo build --release --target x86_64-unknown-linux-gnu
+# then read target/<triple>/release/deps/asmcheck-*.s.
+[package]
+name = "asmcheck"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+
+# Standalone: not a member of the repository workspace.
+[workspace]
