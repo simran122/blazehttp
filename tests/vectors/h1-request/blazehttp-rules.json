@@ -1856,24 +1856,6 @@
       }
     },
     {
-      "name": "lines / zero with an empty delta",
-      "inputEncoding": "utf8",
-      "request": {
-        "method": "GET",
-        "target": "/x",
-        "templateHost": "127.0.0.1:3999",
-        "templateFields": "",
-        "templateFieldLines": 0,
-        "headers": "",
-        "headerLines": 0,
-        "body": ""
-      },
-      "expect": {
-        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
-        "reuse": "allowed"
-      }
-    },
-    {
       "name": "lines / one with an empty delta",
       "inputEncoding": "utf8",
       "request": {

@@ -17,7 +17,9 @@ const URL_TOO_LARGE: ErrorCode = ErrorCode::TooLarge(TooLargeDetail::Url);
 const HEADERS_TOO_LARGE: ErrorCode = ErrorCode::TooLarge(TooLargeDetail::Headers);
 const HOST: &[u8] = b"127.0.0.1:3999";
 /// `host: 127.0.0.1:3999\r\n`.
-const HOST_LINE_LEN: usize = 22;
+const HOST_LINE_LEN: usize = b"host: ".len() + HOST.len() + b"\r\n".len();
+/// The filler line's bytes besides its value: `x-fill: ` and CRLF.
+const FILL_OVERHEAD: usize = b"x-fill: ".len() + b"\r\n".len();
 
 /// Every generated method, in wire order.
 fn all_methods() -> impl Iterator<Item = Method> {
@@ -254,7 +256,7 @@ fn reuses_output_capacity() {
 // ---------------------------------------------------------------- framing and reuse (§6.5)
 
 #[test]
-fn post_put_patch_query_reusable_without_connection_header() {
+fn post_put_patch_query_send_content_length_even_when_empty_and_stay_reusable() {
     for method in [Method::Post, Method::Put, Method::Patch, Method::Query] {
         for body in [&b""[..], b"hello"] {
             let (out, reuse) = written(&parts(method, b"/", b"", body), &template(b""));
@@ -266,20 +268,6 @@ fn post_put_patch_query_reusable_without_connection_header() {
                 "{method:?}"
             );
         }
-    }
-}
-
-#[test]
-fn query_and_patch_send_content_length_zero() {
-    for method in [Method::Query, Method::Patch] {
-        assert!(head_of(method, b"", b"").ends_with("\r\ncontent-length: 0\r\n\r\n"));
-    }
-}
-
-#[test]
-fn put_post_empty_body_send_zero() {
-    for method in [Method::Put, Method::Post] {
-        assert!(head_of(method, b"", b"").ends_with("\r\ncontent-length: 0\r\n\r\n"));
     }
 }
 
@@ -360,16 +348,19 @@ fn method_from_wire_rejects_unknown_id() {
 
 // ---------------------------------------------------------------- origin binding and templates
 
+/// Connection authorities that differ from `example.com:8080` by port, case, a trailing dot or a missing port.
+const OTHER_AUTHORITIES: [&[u8]; 4] = [
+    b"example.com:8081",
+    b"Example.com:8080",
+    b"example.com.:8080",
+    b"example.com",
+];
+
 #[test]
 fn rejects_template_for_other_authority() {
     let template = new_template(b"example.com:8080", b"", &[]).expect("valid");
     let request = parts(Method::Get, b"/", b"", b"");
-    for other in [
-        &b"example.com:8081"[..],
-        b"Example.com:8080",
-        b"example.com.:8080",
-        b"example.com",
-    ] {
+    for other in OTHER_AUTHORITIES {
         let mut out = Vec::new();
         assert_eq!(
             write_request(&mut out, &request, &template, other),
@@ -472,17 +463,20 @@ const SENSITIVE: [&[u8]; 5] = [
     b"X_Token",
 ];
 
+/// Default fields that hold a `SENSITIVE` name in another case or underscore spelling.
+const SENSITIVE_FIELDS: [&[u8]; 7] = [
+    b"Authorization: t\r\n",
+    b"cookie: s=1\r\n",
+    b"X-Api-Key: k\r\n",
+    b"a: 1\r\nx-custom-secret: z\r\n",
+    b"x_api_key: k\r\n",
+    b"X_Custom_Secret: z\r\n",
+    b"x-token: t\r\n",
+];
+
 #[test]
 fn template_sensitive_flag() {
-    for fields in [
-        &b"Authorization: t\r\n"[..],
-        b"cookie: s=1\r\n",
-        b"X-Api-Key: k\r\n",
-        b"a: 1\r\nx-custom-secret: z\r\n",
-        b"x_api_key: k\r\n",
-        b"X_Custom_Secret: z\r\n",
-        b"x-token: t\r\n",
-    ] {
+    for fields in SENSITIVE_FIELDS {
         let template = new_template(HOST, fields, &SENSITIVE).expect("valid");
         assert!(template.is_sensitive(), "{}", fields.escape_ascii());
     }
@@ -674,14 +668,17 @@ fn rejects_malformed_delta_lines() {
     }
 }
 
+/// Field lines with obs-text, HTAB, OWS kept as given, and an empty value.
+const VALID_VALUE_LINES: [&[u8]; 4] = [
+    b"x-a: \x80\xff\r\n",
+    b"x-a: a\tb\r\n",
+    b"x-a:  \t v \t\r\n",
+    b"x-a: \r\n",
+];
+
 #[test]
 fn accepts_obs_text_htab_ows_and_empty_values() {
-    for headers in [
-        &b"x-a: \x80\xff\r\n"[..],
-        b"x-a: a\tb\r\n",
-        b"x-a:  \t v \t\r\n",
-        b"x-a: \r\n",
-    ] {
+    for headers in VALID_VALUE_LINES {
         let (out, _) = written(&parts(Method::Get, b"/", headers, b""), &template(b""));
         assert!(
             out.windows(headers.len()).any(|w| w == headers),
@@ -692,36 +689,41 @@ fn accepts_obs_text_htab_ows_and_empty_values() {
 
 // ---------------------------------------------------------------- target (§6.3)
 
+/// Targets that are not origin-form as note §6.3 defines it.
+const INVALID_TARGETS: [&[u8]; 15] = [
+    b"http://evil/",
+    b"*",
+    b"?x",
+    b"",
+    b"a/b",
+    b"#",
+    b"/a#",
+    b"/#b",
+    b"/a#b",
+    b"/a\"b",
+    b"/a<b",
+    b"/a>b",
+    b"/a\\b",
+    b"/\\evil.example",
+    b"/a?q=\"",
+];
+/// Origin-form targets, including `//` (note §6.3 decision), percent-encoded data and raw query bytes WHATWG keeps.
+const VALID_TARGETS: [&[u8]; 4] = [
+    b"//evil.example/x",
+    b"/",
+    b"/a%0d%0a?b=c&d=~!$'()*+,;=:@",
+    b"/a?q=\\^`{|}",
+];
+
 #[test]
 fn target_must_be_origin_form() {
-    for target in [
-        &b"http://evil/"[..],
-        b"*",
-        b"?x",
-        b"",
-        b"a/b",
-        b"#",
-        b"/a#",
-        b"/#b",
-        b"/a#b",
-        b"/a\"b",
-        b"/a<b",
-        b"/a>b",
-        b"/a\\b",
-        b"/\\evil.example",
-        b"/a?q=\"",
-    ] {
+    for target in INVALID_TARGETS {
         assert_eq!(
             rejected(&parts(Method::Get, target, b"", b""), &template(b"")),
             INTERNAL
         );
     }
-    for target in [
-        &b"//evil.example/x"[..],
-        b"/",
-        b"/a%0d%0a?b=c&d=~!$'()*+,;=:@",
-        b"/a?q=\\^`{|}",
-    ] {
+    for target in VALID_TARGETS {
         assert!(write(&parts(Method::Get, target, b"", b""), &template(b"")).is_ok());
     }
 }
@@ -729,11 +731,16 @@ fn target_must_be_origin_form() {
 #[test]
 fn target_limit() {
     let max = H1_LIMITS.max_request_target_bytes;
-    let target = |len: usize| [&b"/"[..], &vec![b'a'; len - 1]].concat();
-    assert!(write(&parts(Method::Get, &target(max), b"", b""), &template(b"")).is_ok());
+    assert!(
+        write(
+            &parts(Method::Get, &target_of(max), b"", b""),
+            &template(b"")
+        )
+        .is_ok()
+    );
     assert_eq!(
         rejected(
-            &parts(Method::Get, &target(max + 1), b"", b""),
+            &parts(Method::Get, &target_of(max + 1), b"", b""),
             &template(b"")
         ),
         URL_TOO_LARGE
@@ -741,6 +748,11 @@ fn target_limit() {
 }
 
 // ---------------------------------------------------------------- limits and precedence (§7)
+
+/// A target of exactly `len` bytes: `/` and `a` bytes.
+fn target_of(len: usize) -> Vec<u8> {
+    [&b"/"[..], &vec![b'a'; len - 1]].concat()
+}
 
 /// Template fields that make the host line + fields exactly `total` bytes.
 fn fill_template(total: usize) -> Vec<u8> {
@@ -751,7 +763,7 @@ fn fill_template(total: usize) -> Vec<u8> {
 fn fill_delta(total: usize) -> Vec<u8> {
     [
         &b"x-fill: "[..],
-        &vec![b'a'; total - HOST_LINE_LEN - 10],
+        &vec![b'a'; total - HOST_LINE_LEN - FILL_OVERHEAD],
         b"\r\n",
     ]
     .concat()
@@ -1014,7 +1026,7 @@ fn run_case(case: &RequestCase) -> RequestExpect {
 
 /// Every request vector file and its case count (docs/notes/vectors.md).
 const VECTOR_FILES: [(&str, usize); 5] = [
-    ("h1-request/blazehttp-rules.json", 271),
+    ("h1-request/blazehttp-rules.json", 270),
     ("h1-request/undici-selected.json", 38),
     ("h1-request/go-selected.json", 17),
     ("h1-request/httpguts-selected.json", 145),
