@@ -188,8 +188,8 @@ Record every measured idea. Keep only measured wins.
   |---|---|---|
   | httparse | **1.16 / 1.64 / 1.73 / 1.96 / 2.02** | 0.70 / 0.89 / 0.87 / 1.08 / 0.86 |
   | picohttpparser | **1.21 / 1.33 / 1.78 / 1.34 / 1.57** | 0.78 / 0.74 / 0.80 / 0.71 / 0.73 |
-  | llhttp (no field delivery — superseded) | superseded: 1.27 / 1.08 / 1.13 / 1.13 / 1.54 | superseded: 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
-  | Beast `basic_parser` (no field delivery — superseded) | superseded: 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | superseded: 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
+  | llhttp (no field delivery; re-measured 2026-11-08) | 1.27 / 1.08 / 1.13 / 1.13 / 1.54 | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
+  | Beast `basic_parser` (no field delivery; re-measured 2026-11-08) | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
   | Beast `response_parser` | 0.33 / 0.35 / 0.57 / 0.42 / 0.35 | 0.23 / 0.22 / 0.30 / 0.23 / 0.19 |
   | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.21 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
   | Go `net/http` | 0.08 / 0.10 / 0.07 / 0.11 / 0.10 | 0.04 / 0.06 / 0.04 / 0.05 / 0.07 |
@@ -197,7 +197,8 @@ Record every measured idea. Keep only measured wins.
   **Fix round 2 notes:** the split helper is plain scalar code (`memchr` for each line's CR, then `.position()` for
   the colon and a scalar OWS trim), so "the split costs as much as the parse" partly measures this helper, not only
   the second pass itself. The workloads written `1k` × 64 / `1k-h20` × 64 here are the `*-ring64` workloads (the
-  JSONL of this run still names them `*-x64`). The llhttp and Beast `basic_parser` rows above are superseded. Their timed paths
+  JSONL of this run still names them `*-x64`). The llhttp and Beast `basic_parser` rows above were measured without field delivery; the 2026-11-08 entry
+  re-measures them with fields. Their timed paths
   delivered no fields (llhttp registered no field callbacks; Beast's callback recorded nothing), so both their
   ratio columns (with fields and plain) compare unequal work. Both now record name/value spans on the timed path; their numbers wait for the re-run.
   The split itself costs as much as the parse: plain / with-fields = 0.50–0.63. Allocations per head: 0 for every
@@ -209,8 +210,8 @@ Record every measured idea. Keep only measured wins.
   directions between runs).
 - **Where we win / lose (headline, `blazehttp+fields`; by median per-round ratio, unresolved at this noise until the
   quiet re-run):** **httparse is ahead on every workload** (ours+fields takes
-  1.2–2.0× its time), and so is picohttpparser (1.2–1.8×). llhttp's row delivered no fields and is superseded until
-  the re-run. We stay ahead of Beast `response_parser` (1.75–3× faster), Zig `std.http` (3.7–5.4×) and Go `net/http` (9–14×). Without the split (`blazehttp`, what the engine pays when it needs
+  1.2–2.0× its time), and so is picohttpparser (1.2–1.8×). llhttp's row delivered no fields here; see the 2026-11-08
+  entry. We stay ahead of Beast `response_parser` (1.75–3× faster), Zig `std.http` (3.7–5.4×) and Go `net/http` (9–14×). Without the split (`blazehttp`, what the engine pays when it needs
   only the framing facts) we are ahead of all of them except httparse on the 20-field ring (1.08). On 1-byte feeds we
   are linear and on par with the other resumable parsers; httparse and Beast are quadratic.
 - **What P1a must close:** the second pass. Our parser already finds every colon and line end; a span-emitting API
@@ -219,3 +220,54 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** `blazehttp+fields` kept as the headline row; runs kept in
   `bench/results/2026-11-07-arm64-dev-parsers-gcc14.jsonl` and `…-gcc12.jsonl`. Re-run both in a quiet window.
 - **Commit:** `p0/parser-bench` (fix round 1).
+
+### 2026-11-08: Cross-language parser bench re-run (every parser delivers its fields; GCC 14 and GCC 12, dev numbers)
+
+- **Idea:** re-measure after review rounds 2–2g: llhttp and Beast `basic_parser` now deliver every field on their timed
+  path, images are built at the exact commit timed (revision labels checked), containers are memory-capped.
+- **Hypothesis:** with equal work, P0 is still behind httparse and picohttpparser on 20-field heads.
+- **Method:** branch `p0/parser-bench-rerun` at `8ff4b87` (milestone/p0, clean tree). `node bench/parsers/run.ts
+  --gate-only` (images built and gate passed), then `--no-build` (GCC 14 run, 7 rounds × 300 ms, feeds 5 rounds), then
+  `--cc gcc-12 --parsers picohttpparser,llhttp,beast-response-parser,beast-basic-parser`, back to back. Linux arm64
+  Docker Desktop on the owner's M2, `--cpus=1 --cpuset-cpus=2 --memory=2g --memory-swap=2g --network=none`, no other
+  container at start; other agents' cargo builds ran on the host. Host load sampled every 5 s
+  (`…-round-load.jsonl`): GCC 14 rounds 1–4 **noisy** (1-min load max 6.9–8.6), rounds 5–7 quiet (≤ 5.6); GCC 12 run
+  noisy in all 7 rounds (8.4–10.9). A first attempt died in round 7 when the host was suspended for ≈ 18 min
+  (`spawnSync … ETIMEDOUT`, no results written) and was restarted from the gate. Absolute numbers are close to the
+  quiet Task 4 run (ours on `1k.http` 41.8 ns vs 43–45 ns), so this run is usable beyond its ratios.
+- **Numbers (GCC 14; median per-round ratio ours+fields / theirs, > 1 = theirs faster; `1k` / `1k-h20` / `1k` ring64 /
+  `1k-h20` ring64 / mixed 64):**
+
+  | vs | ours+fields / theirs | plain ours / theirs | theirs ns (1k / 1k-h20) |
+  |---|---|---|---|
+  | httparse 1.10.1 | **1.23 / 1.74 / 1.39 / 1.95 / 1.78** | 0.80 / 0.93 / 0.79 / 0.94 / 0.93 | 52 / 260 |
+  | picohttpparser `dd573d8` | **1.19 / 1.30 / 1.42 / 1.42 / 1.33** | 0.72 / 0.68 / 0.80 / 0.71 / 0.68 | 58 / 331 |
+  | llhttp 9.4.3 (fields via callbacks) | **0.81 / 1.09 / 0.85 / 1.18 / 1.11** | 0.51 / 0.55 / 0.49 / 0.56 / 0.57 | 81 / 397 |
+  | Beast `basic_parser` (spans kept) | 0.72 / 0.81 / 0.82 / 0.97 / 0.90 | 0.46 / 0.45 / 0.45 / 0.46 / 0.46 | 90 / 512 |
+  | Beast `response_parser` | 0.44 / 0.44 / 0.53 / 0.49 / 0.30 | 0.29 / 0.23 / 0.30 / 0.23 / 0.15 | 145 / 986 |
+  | Zig `std.http` (hands no fields) | 0.23 / 0.23 / 0.26 / 0.24 / 0.22 | 0.15 / 0.12 / 0.15 / 0.12 / 0.11 | 293 / 1891 |
+  | Go `net/http` | 0.08 / 0.13 / 0.11 / 0.15 / 0.13 | 0.06 / 0.07 / 0.06 / 0.07 / 0.07 | 784 / 3371 |
+
+  Ours: 41.8 / 220.3 ns plain, 64.7 / 429.5 ns with fields; the split costs as much as the parse (plain / with fields
+  = 0.48–0.65). Allocations per head: 0 for every parser except Beast `response_parser` (4 / 21 / 15.2) and Go
+  (10 / 40 / 31.7). 1-byte feeds (median ms, (a) / (b) / (c) / (d)): **ours 0.198 / 0.204 / 0.179 / 0.028** (with
+  fields 0.191 / 0.193 / 0.153 / 0.028), picohttpparser 0.302 / 0.225 / 0.238 / 0.030, llhttp 0.269 / 0.276 / 0.330 /
+  0.033, Zig 0.273 / 0.269 / 0.275 / 0.040, Go 0.661 / 0.621 / 0.706 / 0.076, httparse 74 / 90 / 87 / 48 (re-parses),
+  Beast 8.8–878 ms (re-parses the partial line). **GCC 12.2 vs 14.2** (C/C++ rows, noisy run): within ≈ ±8% (for
+  example picohttpparser on `1k-h20` 1.285 vs 1.298, llhttp 1.044 vs 1.087), no meaningful compiler effect.
+- **Where we win / lose, every rival (with fields, equal work):**
+  - **httparse: we lose everywhere** — 1.23× (3 headers) to 1.95× (20-field ring) its time.
+  - **picohttpparser: we lose everywhere** — 1.19× to 1.42×.
+  - **llhttp: mixed** — we win on 3-header heads (0.81×, 0.85×) and lose on 20-field and mixed heads (1.09–1.18×).
+  - Beast `basic_parser`: we win (0.72–0.97×; narrowest on the 20-field ring).
+  - Beast `response_parser`: we win (0.30–0.53×).
+  - Zig `std.http`: we win (0.22–0.26×; Zig hands no fields, and even the plain row is 0.11–0.15×).
+  - Go `net/http`: we win (0.08–0.15×).
+  - 1-byte feeds: we are the fastest of all nine on every input.
+  - Without the field split (plain row) we lead every parser on every workload (httparse 0.79–0.94×).
+- **What must change to beat every parser:** the split doubles our cost, so the parser must emit name/value spans
+  during its single scan (Task 4c, "spans in scan"), then P1a SIMD must take it below httparse (≤ 0.85× on `1k-h20`
+  with fields) and picohttpparser, on arm64 and x64 (x64 still unmeasured).
+- **Kept / dropped:** results `bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl`, `…-gcc12.jsonl` and their
+  `…-round-load.jsonl`. Supersede the 2026-11-07 numbers.
+- **Commit:** `p0/parser-bench-rerun`.
