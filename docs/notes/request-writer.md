@@ -30,11 +30,11 @@ standard library's `format_into` (stable since 1.98.0); head and body in one buf
   single choke point every outgoing head passes through — the JS layer (P2), redirects built in Rust (P1b) and any
   future source. undici's history (§4) is five CVEs from the same class, each a new sink that skipped validation;
   a single choke point in Rust closes the class.
-- **Measured (dev, Linux arm64 container on a loaded host, §8.2):** the chosen writer costs **≈ 28–35 ns** for a
-  template-only `GET` and **≈ 110–220 ns** for a `POST` with a 1 KiB JSON body and 3 extra headers (half to two thirds of it is
-  copying the bytes, the rest validation) — **0.18× (GET) and 0.26–0.27× (POST)** an emulation of hyper 1.12's
-  encoder with the per-request `HeaderMap` it requires, measured in the same runs, and ≈ 1.8–2.2 µs / 2.7–5.6 µs with
-  5 / 10 allocations for Go 1.27.3 `(*Request).Write`. Against the ≈ 5 µs CPU budget of a whole request (design
+- **Measured (committed benches, dev, Linux arm64 container, `docs/perf/journal.md` 2026-11-08 fix round 1):** the
+  writer costs **≈ 31–50 ns** for a template-only `GET` and **≈ 136–167 ns** for a `POST` with a 1 KiB JSON body and 3
+  extra headers — **0.21× (GET) and 0.24–0.27× (POST)** an emulation of hyper 1.12's encoder doing equal work
+  (target parsed and every per-request field validated per call, construct+encode), and ≈ 0.73–0.82 µs / 1.3–1.5 µs
+  with 5 / 8 allocations for Go 1.27.3 `(*Request).Write`. (The prototype numbers of §8.2 were 28–35 / 110–220 ns.) Against the ≈ 5 µs CPU budget of a whole request (design
   §1-F) the writer is ≈ 0.5–4%.
 
 **Interface changes to the brief** (§6.6), each justified there:
@@ -664,9 +664,10 @@ keep correct. Stability was confirmed by the review by compiling and running it 
   target).
 - Validation costs 0.5–1.5× the copy floor. That is the price of the single choke point (§1); P1a's block
   classification is the lever (§8.4).
-- hyper's own serialisation alone (encode-only, map pre-built) is already **1.33–1.59×** our full writer with
-  validation on `post1k`/`varied` and **2.69–2.72×** on `get`; the per-request `HeaderMap` its API requires adds
-  as much again.
+- *(prototype)* hyper's serialisation alone (encode-only, map pre-built, no validation) measured 1.33–1.59× our full
+  prototype writer on `post1k`/`varied`. That compares a floor with a validating writer; the committed bench compares
+  equal work instead (construct+encode vs our writer: 0.21–0.27×) and floors with floors (our copy floor / hyper
+  encode-only: 0.23–0.46×), §8.4.
 - The measured prototype did not yet include the authority, singleton, `#` and framing-predicate checks added in
   review round 1. They are O(1) per line or per request, plus one more comparison per target byte, and the
   provisional gates (§8.4) carry a 15% margin for them.
@@ -733,6 +734,10 @@ atomic block (`writev(2)`), and with `TCP_NODELAY` a second write is sent "as so
   4. A check that `out.capacity()` ≤ `MAX_P0_REQUEST_BYTES` (§6.7). Growth policy (exact reservations reallocate on
      each new high, bounded by `MAX_P0_REQUEST_BYTES`): measured and decided by Task 5b (item 31).
 
+**Measured against the gates (fix round 1, `docs/perf/journal.md`):** `get` 2.43–2.51×, `post1k` 3.01–3.07× (the
+accepted miss, owned by Task 5b), `varied` 2.58–2.63× the copy floor on Linux; ours / hyper construct+encode
+0.21–0.27×.
+
 **Ratio gates: PROVISIONAL.** They hold until 10 rounds have run on the reference host in the nightly window *and*
 on the x64 VM. After that the thresholds are reset from the median and bootstrap 95% CI (design §16.4); journal and
 note are updated in the same PR. Until then each gate is the worst dev value + 15%:
@@ -740,8 +745,9 @@ note are updated in the same PR. Until then each gate is the worst dev value + 1
 - `varied` writer/floor ≤ **2.9×** (worst dev 2.51×);
 - advisory absolute values: `get` ≤ 60 ns, `post1k` ≤ 250 ns, `varied` ≤ 300 ns (dev 28–35 / 111–220 / 110–247 ns).
 
-**Comparison targets** (reported in the PR and `journal.md`, not gated in P0): ≤ 0.5× the hyper-encoder emulation
-(dev 0.18–0.28×), with Go for context.
+**Comparison targets** (reported in the PR and `journal.md`, not gated in P0): ≤ 0.5× the hyper-encoder emulation doing
+equal work (construct+encode; dev 0.21–0.27×), with clone+encode as a lower bound on hyper's cost and Go for context.
+The owner's goal is to beat every writer; the cross-language writer race is Task 5c.
 
 **Share of a request:** ≈ 0.03–0.22 µs of ≈ 5 µs CPU (design §1-F). The parser takes ≈ 0.05–0.27 µs
 (`docs/notes/response-parser.md` §8.2) and the `write` syscall itself ≈ 1–3 µs (§8.3).

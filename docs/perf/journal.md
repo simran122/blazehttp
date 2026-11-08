@@ -377,9 +377,12 @@ Record every measured idea. Keep only measured wins.
   (2.16), 23.0 / 10.6 (2.16), 55.2 / 26.9 (2.04); `post1k` (head 335 B + 1 KiB) 91.3 / 35.8 (2.55), 99.6 / 39.6 (2.51),
   288.2 / 105.9 (2.79, loaded round); `varied` (mean head 440 B) 100.2 / 48.9 (2.04), 105.7 / 52.2 (2.05), 331.1 /
   137.8 (2.38). An earlier quiet round (2026-11-08T07:14Z): 19.1 / 83.5 / 87.8 ns, ratios 2.19 / 2.58 / 2.04.
-  **vs hyper emulation (ours / clone + encode, ours / encode-only):** `get` 0.25 / 0.51, `post1k` 0.38–0.41 /
-  1.16–1.22, `varied` 0.33–0.34 / 0.98–1.02. **Go** `(*Request).Write`: `get` 792–1,631 ns, 224 B, 5 allocations;
-  `post1k` 1,514–2,210 ns, 328 B, 10 allocations (ours: 0 allocations, `tests/h1_writer_alloc.rs`). **macOS:** ratios
+  **vs hyper emulation (ours / clone + encode, ours / encode-only):** `get` 0.22–0.25 / 0.47–0.51, `post1k`
+  0.38–0.41 / 1.16–1.22, `varied` 0.33–0.34 / 0.98–1.02 — encode-only is hyper's serialisation floor without
+  validation, cloning or `content-length` construction, so the second ratio is not equal work (superseded by the fix
+  round 1 entry below). **Go** `(*Request).Write`: `get` 792–1,631 ns, 224 B, 5 allocations; `post1k` 1,514–2,210 ns,
+  328 B, 10 allocations, 2 of them the harness's body reader (removed in fix round 1) (ours: 0 allocations,
+  `tests/h1_writer_alloc.rs`). **macOS:** ratios
   2.11–2.14 / 2.67–2.76 / 2.36–2.56; vs hyper 0.18 / 0.30–0.32 / 0.31–0.33.
 - **Kept / dropped:** kept (the design of note §1). Advisory absolute values are met (`get` ≤ 23 ns, `post1k` ≤ 100
   ns, `varied` ≤ 106 ns in the unloaded rounds) and so is the hyper target (≤ 0.41×). **Provisional gate miss:**
@@ -401,8 +404,41 @@ Record every measured idea. Keep only measured wins.
   measured with the committed bench before and after, alternated in the same minute.
 - **Numbers:** ablations (quiet round): `post1k` 74–79 ns full, 58–65 ns without classification, 44–46 ns without any
   delta scan, 76–78 ns without the target check; `varied` 87–93 / 76–85 / 49–51 / 78–80 ns. (a) committed bench `get`
-  19.1 vs 29.7–38.4 ns, `post1k` 83.3–84.9 vs 105.8–123.5 ns, `varied` 87.8–99.5 vs 118.1–136.5 ns (ratios 2.17 vs
-  3.38, 2.57 vs 2.82, 2.04–2.11 vs 2.23–2.32). (b) ±5%, mixed sign; (c) 0 to +2%; (d) 0 to −10% on `varied` only;
+  19.1 vs 29.7–38.4 ns, `post1k` 83.3–84.9 vs 105.8–123.5 ns, `varied` 87.8–99.5 vs 118.1–136.5 ns (ratios 2.17–2.20 vs
+  3.38–3.40, 2.56–2.58 vs 2.82–2.84, 2.04–2.11 vs 2.23–2.32; `logs/bench-linux-inline.log` / `bench-linux-3.log`). (b) ±5%, mixed sign; (c) 0 to +2%; (d) 0 to −10% on `varied` only;
   (e) −4% on `post1k` in 2 of 3 rounds, +33% in the third.
-- **Kept / dropped:** (a) kept (15–35% faster). (b)–(e) dropped: no win beyond noise.
+- **Kept / dropped:** (a) kept (16–50% less time: `get` 36–50%, `post1k` 21–32%, `varied` 16–35%). (b)–(e) dropped: no win beyond noise.
 - **Commit:** Task 5 PR (`p0/writer`), `#[inline]` on `write_request`.
+
+### 2026-11-08: Request writer after review fix round 1 (committed benches, dev numbers)
+
+- **Idea:** re-measure after the review fixes (template line count, OPTIONS content type, `trailer`/`http2-settings`/
+  `proxy-` names, host and target rules, sensitive-name spelling, the module split) and replace the hyper comparison
+  with equal work (construct+encode, ruling of the review); record the regression found and its fix.
+- **Hypothesis:** the added rules cost little; the ≤ 0.5× hyper target still holds with equal work.
+- **Method:** as the 2026-11-08 entry above (Linux arm64 Docker `--cpus=1`, rustc 1.99.1; macOS host; Go in
+  `golang:1.27.3-bookworm`), 3 rounds each. Regression hunt: the pre-review tree (fb80d32) and the current tree built
+  side by side and alternated in one container (`logs/bench-ab-fr1*.log`), plus a scratch crate with ablations of the
+  new writer (9 runs × 200,000 requests, median). Host load average 4–37 during the hunt (other agents' jobs); dev
+  numbers, no gate claim.
+- **Numbers.** *Regression:* the first fix build was slower than the pre-review writer — `get` 35–38 vs 27 ns,
+  `post1k` 149–154 vs 116–119 ns, `varied` 213–231 vs 128–132 ns. Ablations: the target rule's sequential
+  in-query state and its `position` pass cost ≈ 22 ns on `varied`; the `_`-folding name compare ≈ 10–15 ns on
+  `post1k`; the `proxy-` prefix check and the sensitive-name loop ≈ 0–5 ns each. *Fix:* the target bytes are one
+  vectorisable fold with no carried state and the path is searched only when the target holds a backslash; names
+  try `eq_ignore_ascii_case` before folding. *After the fix* (A/B, same container): `get` 34–42 vs 30–33 ns,
+  `post1k` 137–175 vs 132–144 ns, `varied` 160–172 vs 161–169 ns (pre-review vs current, loaded rounds).
+  *Final rounds (Linux, writer / floor ns, median ratio):* `get` 31.0 / 12.8 (2.43), 33.4 / 13.4 (2.49), 49.6 / 20.3
+  (2.51); `post1k` 151.1 / 48.1 (3.02), 135.5 / 45.2 (3.01), 166.6 / 54.5 (3.07); `varied` 166.0 / 62.7 (2.58),
+  157.9 / 60.6 (2.62), 198.5 / 71.4 (2.63). The floor itself is faster than in the earlier entry (it now takes its
+  framing from the returned `Reuse`), so the ratios are not comparable with it. *Hyper, equal work (ours /
+  construct+encode):* `get` 0.209–0.212, `post1k` 0.239–0.266, `varied` 0.215–0.223; ours / clone+encode 0.28–0.29 /
+  0.41–0.43 / 0.39–0.42; *serialisation floors* (our copy floor / hyper encode-only): 0.23 / 0.41–0.46 / 0.40–0.41.
+  *Go* `(*Request).Write`, harness allocations removed: `get` 727–817 ns, 224 B, 5 allocations; `post1k` 1,294–1,524
+  ns, 264 B, 8 allocations. *macOS:* ratios 2.36–2.37 / 3.13–3.26 / 2.92–3.06; ours / construct+encode 0.15–0.16 /
+  0.17–0.19 / 0.15–0.17.
+- **Kept / dropped:** kept (both speed fixes are measured wins). Gates: hyper ≤ 0.5× met with equal work; `varied`
+  ≤ 2.9× met on Linux (2.58–2.63), borderline on the loaded macOS host; `post1k` ≤ 2.3× missed (3.0×), an accepted
+  miss owned by Task 5b, which also decides the exact-vs-amortised reservation growth. The owner's goal is to beat
+  every writer; the cross-language writer race is Task 5c.
+- **Commit:** Task 5 PR (`p0/writer`), fix round 1.
