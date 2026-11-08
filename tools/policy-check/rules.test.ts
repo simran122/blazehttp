@@ -183,6 +183,12 @@ test('rust attributes are read from code only: comments, strings and char litera
   ])
     expect(v('a.rs', src), src).toContain('rust-allow-attribute');
 });
+test('blanked comments and literals keep line numbers; astral char literals and a trailing quote are read', () => {
+  const lines = (src: string) => checkFile('a.rs', src, CTX).map((x) => `${x.rule}@${String(x.line)}`);
+  expect(lines('/* a\n#[allow(x)]\n*/\n#[allow(y)]\nfn f() {}')).toEqual(['rust-allow-attribute@4']);
+  expect(lines("fn f() { let c = '😀'; }\n#[allow(x)]\nfn g() {}")).toEqual(['rust-allow-attribute@2']);
+  expect(lines("#[allow(x)]\nfn f<'")).toEqual(['rust-allow-attribute@1']);
+});
 test('unclosed rust comments and literals run to the end of the file', () => {
   for (const src of [
     '/* open #[allow(x)]',
@@ -260,4 +266,12 @@ test('manifests are read by a real TOML parser: quotes in comments and literal k
   const broken = checkFile('crates/x/Cargo.toml', '[package]\nname = "x\n', CTX);
   expect(broken.map((x) => [x.rule, x.line])).toEqual([['crate-lints', 2]]);
   expect(broken[0]?.message).toMatch(/^cannot parse TOML: /);
+});
+test('a fuzz crate with no lint tables lacks every workspace lint', () => {
+  expect(checkFile('crates/x/fuzz/Cargo.toml', '[package]\nname = "f"\n', CTX).map((x) => x.message)).toEqual([
+    'fuzz crate lacks workspace lint [lints.rust] deprecated = "deny"',
+    'fuzz crate lacks workspace lint [lints.clippy] pedantic.level = "deny"',
+    'fuzz crate lacks workspace lint [lints.clippy] pedantic.priority = -1',
+    'fuzz crate lacks workspace lint [lints.clippy] allow_attributes = "deny"',
+  ]);
 });
