@@ -6,7 +6,7 @@ race), `docs/notes/simd-scanning-research.md` (SIMD survey; referred to, not rep
 `docs/notes/request-writer.md` and `docs/perf/journal.md`. Access date for every link: **2026-11-08**. **Verified** =
 checked against the pinned source, the primary text of a paper, an official doc page, or a run recorded in this note
 with its command, seed and output (the two runs are the compile-only asm check and the executable model in
-`spike/h1-research/`, §4.1 and §5.0); **unverified** = everything else (unverified ideas go only to
+`tools/h1-research/`, §4.1 and §5.0); **unverified** = everything else (unverified ideas go only to
 `docs/perf/ideas.md`). No benchmark was run for this note; every speed figure for a candidate is an estimate.
 
 ## 0. Summary and decision
@@ -41,17 +41,18 @@ Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-co
   picohttpparser and llhttp (projected 0.51–0.84) but is only at parity with httparse on the three 20-field cells
   (0.98–0.99, inside the noise). It is the necessary first step, not the answer.
 - **Task 4c builds P-A + P-B** (§5.2–§5.3): spans in the scan, one loop body per line on locals, the STOP-set name
-  search with an off-critical-path tchar fold, caller-owned spans. The cycle budget in §5.3 estimates P-B at ≈ 0.6–0.8×
-  httparse on 20-field heads on arm64 and ≈ 0.7–0.9× on x64 (estimate). **Honest position:** a scalar parser may still
-  not beat httparse's NEON name scan and picohttpparser's `pcmpestri` on x64 (SSE4.2 baseline) with a CI upper bound
-  < 1.0 on every cell. Task 4c's acceptance is therefore stated per cell (§5.7); any cell that misses is reported to
+  search with an off-critical-path tchar fold, caller-owned spans. The cycle budget in §5.3 derives P-B at ≈ 0.4–0.6×
+  httparse on 20-field heads on arm64; we plan with ≈ 0.6–0.8× as the margin for an unprofiled breakdown. On x64 we
+  have **no data**: the estimate is ≈ 0.6–0.9× (§5.3). **Honest position:** a scalar parser may still not beat
+  httparse's NEON name scan on arm64, or picohttpparser's `pcmpestri` on x64 if the x64 baseline enables SSE4.2, with
+  a CI upper bound < 1.0 on every cell. Task 4c's acceptance is therefore stated per cell (§5.7); any cell that misses is reported to
   the owner with data, and **P1a's P-D (bit-stream validator over `engine-simd` bitmaps, §5.5) is the step that
   closes the gap** (estimated ≈ 0.4–0.6 cycles per byte against ≈ 1 for today's scalar parser). The final gate is checked at the end
   of P1a, as the owner set it.
 - **Task 5b builds W-A** (shared known-name classifier, STOP search; §6.2), and W-B (layout hints) only if the P2
   contract change is accepted. **Task 5c** builds the writer race (§3.13). **P1a** builds `classify_block`, P-D and
   W-D.
-- Expected x64 position of every candidate: §5.7 and §6.7.
+- Expected x64 position of every candidate: §5.2–§5.5 (parser) and §6.7 (writer).
 
 ### 0.3 Design changes proposed by this note **[author's call]**
 
@@ -65,6 +66,8 @@ Each is applied by the task that builds it, in the same PR as the code:
 4. P2 wire format: optional per-line layout hints next to the delta (W-B, §6.3); interned name ids in
    `policy/spec.json` (W-C, §6.4).
 5. Design §16: a parser micro-gate row and a writer micro-gate row with the statistic of §0.1 (Task 4c / 5c docs PR).
+7. The `[bool; 256]` class tables move from `engine-core`'s `grammar.rs` into `engine-simd` (the lower crate), and
+   `engine-core` re-exports them, so the scalar and SIMD kernels share one source of truth (§5.5; P1a).
 6. Plan: Tasks 4c, 5b and 5c are tracked in the controller's progress log; `bench/writer/` is replaced by the Task 5c
    harness; W-D moves from 5b to P1a.
 
@@ -244,7 +247,7 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   (L2743–2875); CR ends the span and LF must follow (L2219–2234, L2412–2429); obs-fold rejected unless lenient
   (L2201–2218). Trailing OWS is **not** trimmed from value spans (http.ts L672, L849).
 - **Output:** spans by callback — `span_start` records the position, `span_end` calls `cb(start, p)`, loaded through
-  `settings` with a null check and an indirect call (api.c L7–30, L407–425): up to four calls per field. An open
+  `settings` with a null check and an indirect call (`src/native/api.c` L7–30, L407–425 at the llhttp DSL pin): up to four calls per field. An open
   span is flushed at the end of each `execute` (L10266–10276), so a field split across reads arrives in two
   callbacks and the embedder must join them.
 - **Response line** (http.ts L338–428): one SP, status 000–999; the reason accepts every byte except CR/LF,
@@ -729,7 +732,7 @@ with a `const fn` `match` on byte-string literals after lowercasing into a 64-by
 
 | Rival | EW0 | EW1 lift (their own code, run per request) | EW2 lift |
 |---|---|---|---|
-| hyper 1.12 (+ reqwest, which serialises through hyper) | `Client::encode` of a pre-built `HeaderMap` (clone excluded; the clone is reported as its own row) | `HeaderName::from_bytes` + `HeaderValue::from_bytes` per delta field, `Uri` parse, new map, `encode` | + `contains_key` per forbidden name |
+| hyper 1.12 (+ reqwest, which serialises through hyper) | `Client::encode` of a pre-built `HeaderMap`. `encode` empties the map (`msg.head.headers.clear()`, `role.rs` L1260) and inserts Content-Length, so a reused map would be empty after the first op: the harness pre-clones a batch of maps **outside** the timed region (criterion `iter_batched`-style) and times only `encode` over them; the clone itself is reported as its own row | `HeaderName::from_bytes` + `HeaderValue::from_bytes` per delta field, `Uri` parse, new map, `encode` | + `contains_key` per forbidden name |
 | ureq 3.5 (`ureq-proto` 0.7.1) | `Flow` prelude write of a pre-built `http::Request` | `http::Request` built from bytes (`HeaderName`/`HeaderValue::from_bytes`) + prelude write | + forbidden-name lookups |
 | Go net/http | none (its checks cannot be skipped) | native: `validateHeaders` (copied from `roundTrip`) + `req.Write` | + `exclude`-style map lookups |
 | fasthttp | `req.Write` on a reused request with Host and URI preset (still formats Content-Length and scans for TE per write, §3.3) | + `httpguts.ValidHeaderFieldName/Value` before each `Set` | + first-byte switch it already has |
@@ -762,14 +765,14 @@ G0 engine (design §2, incl. the Java and .NET engines added on 2026-11-08) has 
 | reqwest | serialises through hyper's encoder — mapped to the hyper row (end-to-end in G0) | mapping |
 | ureq (`ureq-proto` 0.7.1) | the client `Flow` prelude write into a caller buffer (`src/client/sendreq.rs` `try_write_prelude`, `write!` per line) | yes |
 | Go net/http | `validateHeaders` (copied, it lives in `roundTrip`) + `req.Write(bw)` on a reused 8 KiB `bufio.Writer` over `io.Discard`, `Flush` per op | yes |
-| fasthttp | pooled `Request`, `Reset`, `SetRequestURI`, `SetMethod`, `Set` × n, `SetBody`, `req.Write(bw)` | yes |
-| libcurl | origin heads are built in `Curl_http` (`lib/http.c` ≈ L3082–3162) with `Curl_add_custom_headers`; timing it alone needs an easy handle and a connection with a capturing send filter, built against curl's internal headers in a test build (curl's `tests/unit` harness style). **Time-boxed to one day in 5c**; if it cannot be made to run, the curl row is end-to-end only (the G0 race, libcurl multi), with the reason recorded. `Curl_h1_req_write_head` is the CONNECT-proxy serialiser (`lib/cf-h1-proxy.c` L259 is its only caller) and is not timed | conditional |
+| fasthttp | pooled `Request`, `Reset`, then `SetNoDefaultContentType(true)` again (`Reset` clears it), `SetRequestURI`, `SetMethod`, `Set` × n, `SetBody`, `req.Write(bw)`. The URI is re-encoded on write when it was parsed; that is part of fasthttp's per-request work and is timed | yes |
+| libcurl | origin heads are built in `Curl_http` (`lib/http.c` ≈ L3082–3162) with `Curl_add_custom_headers`; timing it alone needs an easy handle and a connection with a capturing send filter, built against curl's internal headers in a test build (curl's `tests/unit` harness style). **Time-boxed to one day in 5c**; if it cannot be made to run, the curl row is end-to-end only (the G0 race, libcurl multi), with the reason recorded. `Curl_h1_req_write_head` is the CONNECT-proxy serialiser (`lib/cf-h1-proxy.c` L259 is its only caller) and is not timed | yes, once runnable (then gated like every other row; curl's per-request auth and host setup in `Curl_http` are labelled in the report) |
 | isahc | drives libcurl — mapped to the curl row | mapping |
 | h2o client | `build_request` (static in `lib/common/http1client.c`: the harness compiles a vendored copy at the pin) with a pool cleared per op | yes |
 | Boost.Beast | `request<string_body>` (pre-built for EW0, built per op for EW1) + `serializer` + `buffer_copy` into a reused `flat_buffer` | yes |
 | cpp-httplib | `Request` + `set_header` × n + `detail::write_request_line` + `detail::check_and_write_headers` + body append into `BufferStream` | yes |
 | Zig std.http | port of `sendHead` into `Writer.fixed`, `ReleaseFast` | yes |
-| Netty | a harness subclass of `HttpRequestEncoder` calls the protected `encode(ctx, msg, out)` with a stub `ChannelHandlerContext` whose `alloc()` is the pooled allocator — no `EmbeddedChannel` pipeline in the timed region; JMH | yes |
+| Netty | a harness subclass of `HttpRequestEncoder` calls the protected `encode(ctx, msg, out)` with a stub `ChannelHandlerContext` (the request's content is `retain()`ed per op, since the encoder releases it) whose `alloc()` is the pooled allocator — no `EmbeddedChannel` pipeline in the timed region; JMH | yes |
 | Jetty | `HttpGenerator.generateRequest(info, header, null, content, true)` (public, `jetty-http`) into a reused `ByteBuffer`; JMH | yes |
 | `java.net.http` | its writer (`jdk.internal.net.http.Http1Request`) is internal and needs an exchange object → **end-to-end only** (G0) | mapping |
 | .NET `SocketsHttpHandler` | its writer (`HttpConnection`) is internal → **end-to-end only** (G0) | mapping |
@@ -839,13 +842,20 @@ our design. Status per source in §9.
   lands on the byte after the name, which must be `:`; markers after the colon, `C` = field-content → lands on the
   value's end, which must be CR, followed by LF. **All lines of a 64-byte block are validated with two additions and
   a handful of AND/OR/XOR, with no per-line branch.**
-- **Verified for HTTP by an executable model (run 2026-11-08):** `spike/h1-research/scanthru_model.py` implements
+- **Verified for HTTP by an executable model (run 2026-11-08):** `tools/h1-research/scanthru_model.py` implements
   exactly the P-D pseudocode of §5.5 (six carry bits including the pending empty-line CR, the head-end limit
   `bits ≤ h + 1`, flatten inputs masked by the limit and the received length) and the W-D writer form of §6.5, and
   checks them against scalar references that emit **spans**:
-  - `python3 -I spike/h1-research/scanthru_model.py` (seed 9112) printed
-    `parser {'more': 16132, 'ok': 66481, 'err': 17387}`, `parser regressions + boundary sweep 3`,
-    `writer accepted 42052 of 100000` (≈ 12 s).
+  - `timeout 300 python3 -I tools/h1-research/scanthru_model.py` (seed 9112, one single-process run after the
+    resource preflight) printed `parser {'more': 16132, 'ok': 66481, 'err': 17387}`,
+    `parser regressions + boundary sweep + field limits 21`, `trickle bytes classified by P-D 0`,
+    `writer accepted 23730 of 100000; W-B hint checks 23730` (≈ 14 s).
+  - Field limit (review R2-2): heads with 97–102 fields, whole and split, equal the reference (the 101st field is
+    Malformed at its first byte); the model asserts that no span stream ever exceeds the 100 slots.
+  - Trickle: a 4 KB line plus 40 fields fed one byte per call; P-D classifies 0 bytes because the scalar parser owns
+    every partial line (linear by construction; §5.5).
+  - Writer: W-D and W-B (§6.3) against the W-A reference **including forbidden and singleton names** (review M2-1);
+    W-B's hint corruption and the review's tiled smuggle (R2-1) are rejected.
   - Parser: 100,000 mutated heads, each parsed whole and split at 0–3 random points through the line-start hand-off
     between P-D and the scalar parser (§5.5); result, head end, **every span** and the exact first-error offset must
     equal the reference. Plus the three review counterexamples (empty-line CR at bit 63 followed by a body line, a
@@ -853,12 +863,13 @@ our design. Status per source in §9.
     **every single split point**).
   - Writer: 100,000 mutated deltas with declared line counts off by −1/0/+1, plus the smuggling and unterminated
     deltas and empty names (§6.5).
-  - The first version of the model (an earlier survey script) checked only accept/reject and error offsets in one
-    call; it is superseded.
+  - Scope: the model does not cover the 64 KiB head limit or the status line (both unchanged scalar code). The
+    first version of the model (an earlier survey script) checked only accept/reject and error offsets in one call;
+    it is superseded.
 - **Cost:** ≈ 32 `u64` operations per 64-byte block on top of the five class bitmaps; 6 carry bits between blocks
   (parser form).
 - **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` is stable since 1.91.0 and
-  compiles on 1.99.1 under `#![forbid(unsafe_code)]` (compile-only check, `spike/h1-research/asmcheck`, function
+  compiles on 1.99.1 under `#![forbid(unsafe_code)]` (compile-only check, `tools/h1-research/asmcheck`, function
   `scan_thru`; [std docs](https://doc.rust-lang.org/1.99.1/std/primitive.u64.html#method.carrying_add)). Only the
   **classification** (bytes → bitmaps) needs SIMD: rustc 1.99.1 does not auto-vectorise a safe 64-byte
   compare-to-bitmask loop (§5.0). So: **classification in `engine-simd`, validation and span extraction in safe
@@ -943,7 +954,7 @@ by search and are dropped.
   `self.phase/pos/line_start/colon` (≈ 10–15 cycles); the name as a byte loop with one table load and branch per
   byte (≈ 14 cycles for 14 bytes); the value as 2–3 SWAR words (≈ 6–8); CRLF checks, field count and the facts
   length switch (≈ 5); ≈ 8 `checked_add`/`ok_or` branches (≈ 2–4). §5.3 attacks the first, second and last items.
-- **Safe-Rust bitmaps do not pay** (compile-only check, run 2026-11-08: `spike/h1-research/asmcheck`, rustc 1.99.1,
+- **Safe-Rust bitmaps do not pay** (compile-only check, run 2026-11-08: `tools/h1-research/asmcheck`, rustc 1.99.1,
   fat LTO, `codegen-units = 1`, commands in its `Cargo.toml`, targets `aarch64-apple-darwin -C target-cpu=generic`
   and `x86_64-unknown-linux-gnu` baseline and `x86-64-v3`): a 64-byte `fold(|m, (i, &b)| m | (u64::from(b == c) <<
   i))` stays a scalar byte loop (`ldrb`, `cmp`, `cset`, `lsl`, `orr` per byte) on every target; a 16-byte-chunk form
@@ -1049,14 +1060,19 @@ fn scan_lines(window, st) -> Outcome {           // locals in the loop; written 
 - **Optional padded window (uWS fence, safe form; measured separately, API change §0.3 item 2):** the pooled read
   buffer keeps ≥ 8 initialised slack bytes after the data, the first being CR and the second a non-LF byte, so the
   SWAR loops run over `as_chunks::<8>()` with no scalar tail. Rules: every match (STOP byte, CR, LF, `:`, end of head)
-  counts only at a position < the received length — a stop at or beyond it means `More`; the sentinel CR is never
+  counts only at a position < `min(received length, head budget)` — a stop at or beyond it means `More` (or
+  `TooLarge` at the budget, as in G); the sentinel CR is never
   followed by LF, so stale slack can never complete a line; a CR at the last received byte is `More`, a CR followed
   by a received non-LF byte is `Malformed` (uWS stalls instead; we reject).
-- **Cycle budget (arm64, estimate from §5.0):** ≈ 40 → ≈ 22–30 cycles per field (dispatch −10–15, name locate −6–8,
-  checked arithmetic −2–4, spans +3–4). **Expected position:** arm64 ≈ 0.6–0.8× httparse on 20-field heads and
-  ≈ 0.6–0.8 on 3-field heads; vs picohttpparser ≈ 0.5–0.7; vs llhttp ≈ 0.35–0.5. x64 ≈ 0.6–0.8× httparse;
-  vs picohttpparser with SSE4.2 ≈ 0.6–0.9 (its two `pcmpestri` per field cost ≈ 25+ cycles of latency); vs llhttp
-  ≈ 0.4–0.6. These are estimates; the decision is made on the §5.7 measurements.
+- **Cycle budget (arm64, estimate from §5.0):** ≈ 40 cycles per field − dispatch (10–15) − name locate (6–8) −
+  checked arithmetic (2–4) + span stores (3–4) = **≈ 16–26 cycles per field**. Scaling the plain ratio (0.93× httparse
+  on `1k-h20`) by 16–26/40 gives **≈ 0.4–0.6× httparse** on 20-field heads. Because the breakdown is read from the
+  code, not profiled, we **plan with ≈ 0.6–0.8×** on arm64 (vs picohttpparser ≈ 0.5–0.7, vs llhttp ≈ 0.35–0.5).
+- **x64 (no x64 data; estimate):** httparse's x86 names are a table loop like ours and its values stop with SSE2/AVX2
+  `tzcnt`, so P-B's position against it should be no worse than on arm64; picohttpparser on an SSE4.2 baseline spends
+  two `pcmpestri` per field (≈ 25+ cycles of latency) against P-B's ≈ 16–26 cycles; llhttp adds a second `pcmpestri`
+  per value end and indirect callbacks. **Single x64 figure: ≈ 0.6–0.9× every rival**, the upper end for
+  picohttpparser with SSE4.2. The decision is made on the §5.7 measurements.
 - **Time:** O(head bytes). **Space:** as G (+ nothing). **Branches per byte:** names ≈ 1 per 8 bytes + 1 exit,
   values ≈ 1 per 8 bytes + 1 exit, ≈ 5 per line fixed → ≈ 0.25–0.3 (from ≈ 0.6).
 - **Risks:** (1) security: STOP must contain every byte that can end a line or hide a separator (CR, LF, SP, HTAB,
@@ -1072,8 +1088,10 @@ The SIMD note's lead candidate (its §3.6, §6.1), now with spans; now the A/B b
 - **Stage 2** (safe, `engine-core`), per line: if the line's first byte is CR → end-of-head check (LF next, else
   Malformed); else `name_end = next_set(not_tchar, line_start)`, require **`name_end > line_start`** (an empty name
   `:x` is Malformed, as in G) and the colon bit at `name_end`; `value_start = next_clear(ows, colon + 1)`;
-  `value_end = next_set(not_field, colon + 1)`, require the CR bit at `value_end` and the LF bit after it; span; facts.
-  `next_set(m, p) = p + (m >> (p % 64)).trailing_zeros()` with a block refill.
+  `value_end = next_set(not_field, colon + 1)`, require the CR bit at `value_end` and the LF bit after it; trim
+  trailing OWS back from `value_end` (§5.1); check the 100-field limit at the line start; span; facts.
+  `next_set(m, p)`: `t = (m >> (p % 64)).trailing_zeros()`; `t == 64 - p % 64` or more (no bit left in this block)
+  means "refill with the next block, or `More` at the end of the received data" — never an offset.
 - **Space:** masks for the current block only (lazy, 7 × `u64`); whole-window masks would be up to 64 KiB / 64 × 7 ×
   8 B = 56 KiB per parser, so they are not used.
 - **Measured precedent (dev, SIMD note §4):** whole head 0.42× the scalar chain on varied heads, 1.04× on one
@@ -1099,7 +1117,7 @@ impl Classifier { pub fn detect() -> Self; pub fn classify(&self, block: &[u8; 6
 - **Observability:** each parser counts scalar re-runs (errors and fallbacks) per kernel; the bench records
   `kernel()` and the counter in its provenance, so a silent fallback to scalar is visible in every result file.
 
-**Validator (`engine-core`, safe `u64` code; exactly what `spike/h1-research/scanthru_model.py` executes):**
+**Validator (`engine-core`, safe `u64` code; exactly what `tools/h1-research/scanthru_model.py` executes):**
 ```text
 state: lf_in, cr_in, name_c, colon_c, value_c, head_end_pending        // 6 bits
 for each 64-B block (base), received = mask of bytes actually received in this block:
@@ -1134,15 +1152,24 @@ spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end
   the field count is exact. Trickles and short tails stay scalar (linear, cheap). The model checks this hand-off
   with 0–3 random splits on 100,000 heads and **every single split point** in the boundary sweep: spans, head end and
   error offsets equal the whole-input reference.
-- **Field limit:** `fields + popcount(S & T & limit & received) > 100` → scalar re-run (Malformed at the exact line).
+- **When P-D runs:** only when the scalar parser is in its `LineStart` phase and does not own a partial line.
+  Once the scalar parser has returned `More` inside a line it keeps that line until its CRLF, so P-D never
+  re-classifies a partial line and a 1-byte trickle stays linear (model: 0 bytes classified by P-D).
+- **Scalar re-run after an error:** from the P-D run's start `p` (a line start), with every uncommitted index
+  discarded; it reports the first error exactly, with G's semantics.
+- **Field limit (review R2-2):** before the flatten of each block,
+  `fields + flattened + popcount(S & T & limit & received) > 100` → scalar re-run from `p` (Malformed at the 101st
+  line's first byte, as G). `fields` counts committed lines, `flattened` the lines of this run not yet committed.
+  The flatten writes into four 16-entry stack buffers per block (≤ 16 lines fit in 64 bytes) and copies `count`
+  entries into `FieldSpans`, so no stepped write can ever touch slot 100 or beyond.
 - **What it validates:** token names ending at `:` (an empty name fails `S & !T`), field-content values ending at
   CR, CR always followed by LF and LF always preceded by CR (`A ⊕ LF`), no line starting with SP/HTAB (obs-fold), end
   of head at `CRLF CRLF`. The status line stays scalar.
 - **Time:** stage 1 ≈ 90–100 vector ops per 64 B; validator ≈ 32 `u64` ops per 64 B; flatten ≈ 4 × (popcount + a
   step-of-4 unrolled write) per block; per field ≈ 6 scalar ops for OWS and the span; facts by length switch.
   Estimate ≈ 0.4–0.6 cycles per byte (unverified) against plain G's ≈ 1. **Branches per byte:** ≈ 0.05. **No
-  dependent chain between lines.** **Space:** 6 carry bits; index streams are written straight into the caller's
-  `FieldSpans` slots (≤ 100 entries per stream).
+  dependent chain between lines.** **Space:** 6 carry bits; four 16-entry stack buffers per block, copied by count into the
+  caller's `FieldSpans` (≤ 100 entries per stream, checked before the flatten).
 - **Expected position (estimate):** ≈ 0.4–0.6× httparse on 20-field heads on both arches; it is the step that
   closes any cell P-B leaves open.
 - **Our own additions** beyond Parabix/simdjson: error handling by scalar re-run (§4.3), so the fast path is only an
@@ -1245,6 +1272,7 @@ for (name_len, value_len) in hints:                                   // O(lines
     sep   = block.get(pos + name_len .. +2)? == b": "
     value = block.get(pos + name_len + 2 .. + value_len)?
     crlf  = block.get(end_of_value .. +2)? == b"\r\n"
+    require sep && crlf                                                // review R2-1: both are mandatory
     require all_tchar(name) && all_field_content(value)               // field-content excludes CR and LF
     classify(name)                                                     // §6.1
     pos = end_of_value + 2
@@ -1274,7 +1302,7 @@ cannot drift; a JS bug sending `content-length` as raw bytes is still caught by 
 
 ### 6.5 Candidate W-D — SIMD delta validation (P1a, `engine-simd`)
 
-The **writer form** of the P-D validator (review R1-3, R1-4), exactly what `spike/h1-research/scanthru_model.py`
+The **writer form** of the P-D validator (review R1-3, R1-4), exactly what `tools/h1-research/scanthru_model.py`
 `wd()` executes:
 ```text
 state: lf_in = 1 (the block starts at a line start), cr_in, name_c, value_c, colon_hi (2 bits: colons at 62, 63)
@@ -1286,13 +1314,25 @@ for each 64-B block, received = bytes of the delta in this block (padding past t
     (s2, value_c) = P.carrying_add(V, value_c);        E = s2 & !V                 // byte after each value
     err = (N & !COLON) | (N1 & !SP) | (E & !CR) | (A ^ LF) | (S & !T)              // S & !T: empty name, empty line
     if err & received != 0 → reject (Engine(Internal), as today)
+    flatten(S & T & received) → name_start[];  flatten(N & received) → colon[]     // name bounds per line
     lines += popcount(LF & received); carry out lf_in, cr_in, colon_hi = N >> 62
-accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, and lines == header_lines
+accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines == header_lines,
+       and for every line k: classify(block[name_start[k] .. colon[k]]) is admitted              // review M2-1
 ```
+- **Per-line classification (review M2-1):** the bit-stream grammar alone would accept `content-length: 5\r\n` or
+  `transfer-encoding: chunked\r\n`. W-D therefore flattens the name bounds (as P-D does) and runs the §6.1
+  classifier with the singleton bits on every line, exactly as W-A: forbidden names, underscore spellings of forbidden
+  and singleton names, and repeated singletons are refused. The model's reference now carries these rules and the
+  four forbidden-name vectors (`content-length`, `Transfer-Encoding`, `content_length`, a repeated `cookie`) plus
+  `user_agent` are rejected by W-A, W-B and W-D alike.
 - **No head end in the writer form:** an empty line inside the delta (`S & CR`) is an error (`S & !T`), never an end
   marker, so `a: b\r\n\r\nGET /admin HTTP/1.1\r\nhost: internal\r\n` is rejected; the end condition (last byte LF,
   no run in flight) rejects `a: ` + 61 × `v` (64 bytes, no CRLF); empty names (`: x\r\n`) fail `S & !T`; the X3 line
-  count stays. All four are in the model's checks and pass; 100,000 mutated deltas agree with the scalar reference.
+  count stays. All are in the model's checks and pass; 100,000 mutated deltas agree with the scalar W-A reference.
+- **Engine tests (review suggestion 5):** the smuggle, unterminated, empty-name, forbidden-name and duplicate-
+  singleton deltas go into `tests/vectors/h1-request/blazehttp-rules.json` (run by `crates/engine-core/tests/
+  h1_writer.rs` `injection_vectors` on every writer path), and the writer fuzz target
+  (`crates/engine-core/fuzz/fuzz_targets/h1_writer.rs`) gains a W-D vs W-A differential when W-D lands.
 - **With W-B hints** the validator's own outputs are additionally compared with the layout: `N == hinted colons`,
   `E == hinted line ends` — **in addition to** the validator, never instead of it. (Comparing the raw `:` class
   would reject values containing `:` such as URLs and times; comparing CR alone would miss a bare LF or NUL — the
@@ -1302,10 +1342,10 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, and li
   that `dst` was reserved for `src.len()` before the loop. Because this reverses today's check-then-append, the
   writer calls `out.clear()` on every error path, so rejected bytes never stay in the buffer. Measured, not assumed:
   at 100–400 B the delta is in L1 after a plain copy anyway.
-- **Cost (re-derived from the P-D model, estimate):** ≈ 150 ops per 64-byte block → ≈ 7 ns per block; a 100-byte
-  `post1k` delta (2 blocks) ≈ 14 ns, a 400-byte delta ≈ 45–50 ns. That is no better than W-A/W-B's scalar folds on
-  small deltas; W-D pays only on large deltas (`h20`), so P1a keeps it only where it measures faster (likely
-  above ≈ 256 B).
+- **Cost (re-derived from the P-D model, estimate):** ≈ 150 ops per 64-byte block → ≈ 7 ns per block, plus the
+  §6.1 classification at ≈ 1–2 ns per line; a 100-byte `post1k` delta (2 blocks, 3 lines) ≈ 17–20 ns, a 400-byte
+  delta (7 blocks, ≈ 10 lines) ≈ 55–70 ns. That is no better than W-A/W-B's scalar folds on small deltas; W-D pays
+  only on large deltas (`h20`), so P1a keeps it only where it measures faster (likely above ≈ 256 B).
 
 ### 6.6 Rejected
 
@@ -1347,14 +1387,14 @@ Ranked within each component by expected gain per risk. Every effect is an estim
 | Rank | Candidate | Component | Expected effect (estimate) | Risk | Build in |
 |---|---|---|---|---|---|
 | 1 | **P-A spans in the scan** (caller-owned `FieldSpans`) | parser | removes the second pass: vs httparse 0.83–0.99 (parity on 20-field cells), vs pico 0.71–0.84, vs llhttp 0.51–0.60 | none new | **Task 4c**, step 1 |
-| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | ≈ 0.6–0.8× httparse on both arches; ≈ 0.6–0.9× pico with SSE4.2 | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, step 2 (kept only if faster) |
+| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | arm64: derived ≈ 0.4–0.6×, planned ≈ 0.6–0.8× httparse; x64 (no data): ≈ 0.6–0.9× every rival | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, step 2 (kept only if faster) |
 | 3 | P-B padded window (fence) | parser | removes scalar tails; small | API change; fence rules (§5.3) | Task 4c option, measured; else P1a |
 | 4 | **P-D bit-stream validator** (6-bit state, line-start hand-off, scalar error re-run) | parser | ≈ 0.4–0.6× httparse, predictor-independent; closes any cell P-B leaves | `unsafe` only in `engine-simd` kernels; acceptance-only fast path | **P1a** (lead) |
 | 5 | P-C stage-1 + `tzcnt` walk | parser | measured 0.42–0.55× on varied heads (dev) | simpler than P-D | P1a (A/B baseline for P-D) |
 | 1 | **W-A shared classifier + STOP search + authority id** | writer | `post1k` ≈ 1.9–2.1× floor | low | **Task 5b** |
 | 2 | **W-B layout hints, tiled folds** | writer | `post1k` ≈ 1.6–1.8× floor | P2 wire-format change; hints untrusted | **Task 5b** if the P2 change is accepted; else P2 |
 | 3 | W-C interned name ids | writer | known names cost ≈ 0 | generated table; JS/Rust drift | P2 |
-| 4 | W-D SIMD writer-form validator (+ optional fused copy) | writer | ≈ 14 ns at 100 B, ≈ 45–50 ns at 400 B: pays only on large deltas | `unsafe` only in `engine-simd`; `out.clear()` on errors | **P1a**, kept only where faster |
+| 4 | W-D SIMD writer-form validator with per-line classification (+ optional fused copy) | writer | ≈ 17–20 ns at 100 B, ≈ 55–70 ns at 400 B: pays only on large deltas | `unsafe` only in `engine-simd`; `out.clear()` on errors | **P1a**, kept only where faster |
 | — | Task 5c cross-language writer race (+ bootstrap CI in the shared runner) | writer | the "every writer" evidence | curl micro row time-boxed | **Task 5c** (after 5b) |
 | — | fasthttp + nginx parser rows; bootstrap CI in `bench/parsers` | parser race | the "every parser" evidence | none | **Task 4c** |
 
@@ -1376,7 +1416,7 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
 | # | Source | Link | Status |
 |---|---|---|---|
 | 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 | https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf ; https://dblp.org/rec/conf/IEEEpact/CameronSSH0HL14 | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles per byte) |
-| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | cited as [11] in #1; PDF read by the papers survey | verified (primary text: abstract and shuffle mechanism) |
+| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | https://dblp.org/search?q=Data-parallel+finite-state+machines+Mytkowicz (cited as [11] in #1; PDF read by the papers survey) | verified (primary text: abstract and shuffle mechanism) |
 | 3 | Langdale, Lemire, *Parsing Gigabytes of JSON per Second*, VLDB Journal 28(6), 2019 | https://arxiv.org/abs/1902.08318 | verified (SIMD note) |
 | 4 | simdjson `v5.1.1`: `include/simdjson/haswell/bitmask.h`, `include/simdjson/arm64/bitmask.h`, `src/generic/stage1/json_structural_indexer.h` | https://github.com/simdjson/simdjson/tree/40a686ab89dc5ee58ec10d0514dd5c99abbc472b | verified (source) |
 | 5 | simdutf `v9.3.3` `src/generic/ascii_validation.h` | https://github.com/simdutf/simdutf/blob/59589cd3df6823cbfdbd253cde3377e7c3e1fe9b/src/generic/ascii_validation.h | verified (source) |
@@ -1387,10 +1427,10 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
 | 10 | uops.info `PCMPESTRI`, `PSHUFB`, `PMOVMSKB` | https://uops.info/html-instr/PCMPESTRI_XMM_XMM_I8.html | verified (SIMD note) |
 | 11 | Rust 1.99.1: `u64::carrying_add` (stable since 1.91.0), `slice::as_chunks`, `Vec::set_len` (`unsafe`), `Vec::spare_capacity_mut` | https://doc.rust-lang.org/1.99.1/std/primitive.u64.html#method.carrying_add ; https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.as_chunks ; https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.set_len ; https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.spare_capacity_mut | verified (docs; `carrying_add` also by compile under `forbid(unsafe_code)`) |
 | 12 | Rust Reference 1.99.1, code generation attributes (`target_feature`) | https://doc.rust-lang.org/1.99.1/reference/attributes/codegen.html | verified (SIMD note) |
-| 13 | Compile-only asm check | `spike/h1-research/asmcheck` (commands in its `Cargo.toml`) | verified (run 2026-11-08) |
-| 14 | Executable model of P-D and W-D | `spike/h1-research/scanthru_model.py` (seed 9112; output in §4.1) | verified (run 2026-11-08) |
+| 13 | Compile-only asm check | `tools/h1-research/asmcheck` (commands in its `Cargo.toml`) | verified (run 2026-11-08) |
+| 14 | Executable model of P-D and W-D | `tools/h1-research/scanthru_model.py` (seed 9112; output in §4.1) | verified (run 2026-11-08) |
 | 15 | Quiet parser race, 2026-11-08 | branch `p0/parser-bench-rerun` (PR #21), `docs/notes/response-parser.md` §8.6, `bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl` | verified (recorded run; dev numbers) |
-| 16 | Prior art: Kourier, hparse, xocomil, simdzone; QUICHE Balsa | links in §4.6 | unverified (not read) |
+| 16 | Prior art: Kourier, hparse, xocomil, simdzone | https://kourier-server.github.io ; https://github.com/floatdrop/hparse ; https://docs.rs/crate/xocomil/0.3.0 ; https://github.com/NLnetLabs/simdzone | unverified (not read) |
 | 17 | Every parser and writer of §1 | §1 link bases | verified (source at the pins) |
 
 ## 10. Deferred, hand-offs and pre-existing issues
@@ -1405,8 +1445,9 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
 **Hand-offs to other branches (not editable here):**
 - `request-writer.md` L77, L94, L119 (branch `p0/writer`): curl does not cut custom headers at a newline (§3 intro)
   — Task 5 fix list.
-- `docs/superpowers/plans/2026-11-06-p0-foundations.md` L344, `response-parser.md` L320 and `request-writer.md` §8.4
-  must be updated when §5.1 (caller-owned spans) and Task 5c land.
+- `docs/superpowers/plans/2026-11-06-p0-foundations.md` L344 and `response-parser.md` L320 — owner **Task 4c**
+  (updated when §5.1's caller-owned spans land); `request-writer.md` §8.4 — owner **Task 5c** (updated when the
+  writer race replaces `bench/writer/`).
 - `response-parser.md` §8.6 on `milestone/p0` still shows the noisy 2026-11-07 table; PR #21 replaces it.
 
 **Pre-existing issues found by the review, fixed on this branch:** `bench/parsers/README.md` and

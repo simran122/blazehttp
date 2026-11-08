@@ -1,3 +1,4 @@
+# removal: end of P1a (#24)
 # Compile-only check for docs/notes/h1-speed-research.md §5.0: does safe Rust lower 64-byte block classification
 # to SIMD? Nothing here is run. Commands (rustc 1.99.1, CARGO_BUILD_JOBS=2):
 #   RUSTFLAGS="-C target-cpu=generic --emit asm" cargo build --release --target aarch64-apple-darwin

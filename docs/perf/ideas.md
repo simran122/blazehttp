@@ -61,7 +61,7 @@ re-run in the Linux reference container (nightly window) and on the x64 VM first
 
 ## HTTP/1.1 parser and writer speed (survey 2026-11-08; detail in `docs/notes/h1-speed-research.md`)
 
-No row here was benchmarked: every speed effect is unverified. Where a row's *correctness* was checked by a recorded run (the executable model in `spike/h1-research/`), the status says so. Candidates and their measurement plan are in the note (§5–§7).
+No row here was benchmarked: every speed effect is unverified. Where a row's *correctness* was checked by a recorded run (the executable model in `tools/h1-research/`), the status says so. Candidates and their measurement plan are in the note (§5–§7).
 
 | Idea | Hypothesis | How to measure | Status |
 |---|---|---|---|
@@ -74,7 +74,7 @@ No row here was benchmarked: every speed effect is unverified. Where a row's *co
 | Writer layout hints from JS (`[u16; 2]` per line), tiled name/`: `/value/CRLF ranges checked with `get()` and branch-free folds | removes the delta search; injection-exact without counters | same + fuzz vs `scan_fields` | Unverified; P2 contract change; measure the JS-side cost first |
 | Interned name ids from JS for known names (undici record, h2o tokens) | known names cost ≈ 0 in Rust | same | Unverified; P2 |
 | Authority binding by a `(slot, generation)` template id at checkout instead of a byte compare per request | −2–4 ns per request | same | Unverified; Task 6 |
-| P-D: ScanThru bit-stream validator (6-bit state, line-start hand-off) over `engine-simd` block bitmaps + index flatten | ≈ 0.4–0.6 cycles per byte, predictor-independent | P1a criterion, varied-256 + ring64 | Speed unverified. Correctness checked by the model (`spike/h1-research/scanthru_model.py`: spans, split points, review counterexamples) |
+| P-D: ScanThru bit-stream validator (6-bit state, line-start hand-off) over `engine-simd` block bitmaps + index flatten | ≈ 0.4–0.6 cycles per byte, predictor-independent | P1a criterion, varied-256 + ring64 | Speed unverified. Correctness checked by the model (`tools/h1-research/scanthru_model.py`: spans, split points, review counterexamples) |
 | SIMD fast path accepts only; any anomaly re-runs the block on the scalar parser (simdutf "locate on error") | keeps one error semantics; no SIMD/scalar differential on errors | fuzz SIMD vs scalar | Unverified |
 | W-D: writer-form bit-stream validator for the delta (+ optional fused `copy_classified`, `out.clear()` on errors) | ≈ 14 ns at 100 B, ≈ 45–50 ns at 400 B: pays only on large deltas | P1a criterion, post1k + h20 | Speed unverified; correctness checked by the model |
 | Netty's exact SWAR byte-equality (`SWARUtil.applyPattern`: no false positives above the first match) | exact masks for `;`, CR, `,` searches in chunk sizes and `Connection` lists | criterion | Unverified |
@@ -82,6 +82,6 @@ No row here was benchmarked: every speed effect is unverified. Where a row's *co
 | SWAR 8-digit parse for Content-Length (Muła/Lemire) | fewer branches than the digit loop | criterion | Unverified; values are 1–7 digits, probably noise |
 | Hex table for chunk sizes | cheaper than range compares | criterion | Unverified; P1a chunked |
 | nginx's "bytes still needed" hint from the chunked decoder | better read sizing | G0 chunked cells | Unverified; P1a |
-| Real hyper (in-memory duplex) instead of the hyper emulation in the writer bench | equal-work fidelity | Task 5c differential gate | Unverified |
+| Real hyper's `Client::encode` through a one-function shim (pre-cloned maps, clone timed separately) instead of the hyper emulation in the writer bench; real hyper over an in-memory duplex only for the byte-equality check | equal-work fidelity | Task 5c differential gate | Unverified |
 | Prior-art SIMD parsers to study later: Kourier (C++, strict, SIMD), hparse (Zig), xocomil (Rust), simdzone (DNS zone files) | may hold further tricks | read at a pinned release | Unverified (found by search, not read; links in the note §4.6) |
 | QUICHE Balsa (Envoy) HTTP/1 parser | not vectorised (survey) — no gain expected | — | Unverified |
