@@ -8,6 +8,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# Linked by `#[path]` from examples/h1_write_bench.rs and bench/writer/hyper-emul, which cargo-shear does not follow.
+[package.metadata.cargo-shear]
+ignored-paths = ["tests/support/write_bench.rs"]
+
 [dev-dependencies]
 # Counts allocations of the calling thread for the zero-allocation writer test (tests/h1_writer_alloc.rs); its
 # global allocator lives in its own test binary. The unsafe code stays inside that crate.

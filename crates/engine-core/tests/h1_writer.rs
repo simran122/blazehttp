@@ -505,6 +505,13 @@ fn template_too_large() {
 }
 
 #[test]
+fn template_is_send_and_sync() {
+    // Task 6's ShardConfig moves the template from the control plane to its shard thread (note §6.2, X1).
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<HeaderTemplate>();
+}
+
+#[test]
 fn template_debug_hides_bytes() {
     let template = new_template(
         b"secret-host.example",
