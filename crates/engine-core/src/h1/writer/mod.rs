@@ -247,19 +247,28 @@ fn framing(method: Method, body_len: usize) -> Result<RequestFraming, ErrorCode>
 
 /// Origin-form (note §6.3): `/` first, then only visible ASCII (0x21–0x7E) other than `#` (a fragment), `"`, `<`
 /// and `>` (WHATWG always percent-encodes them), and no `\` before the first `?` (some servers read `/\x` as `//x`).
-/// One branch-free pass that tracks whether the query has started.
+/// The byte check is one branch-free fold with no loop-carried state, so it vectorises; the backslash rule is a
+/// separate search, only done when the target holds a backslash.
 #[expect(
     clippy::needless_bitwise_bool,
-    reason = "`&` keeps the fold branch-free (note §6.3); every operand is a cheap comparison"
+    reason = "`&` keeps the fold branch-free so it vectorises (note §6.3); every operand is a cheap comparison"
 )]
 fn validate_target(target: &[u8]) -> Result<(), ErrorCode> {
     let origin_form = target.first() == Some(&b'/');
-    let (valid, _) = target.iter().fold((true, false), |(ok, in_query), &b| {
-        let allowed = b.is_ascii_graphic() & !matches!(b, b'#' | b'"' | b'<' | b'>');
-        let path_backslash = (b == b'\\') & !in_query;
-        (ok & allowed & !path_backslash, in_query | (b == b'?'))
+    let visible = target.iter().fold(true, |ok, &b| {
+        ok & b.is_ascii_graphic() & (b != b'#') & (b != b'"') & (b != b'<') & (b != b'>')
     });
-    if origin_form & valid {
+    // `contains` is a fast search; the path is located only when a backslash exists at all (rare).
+    let path_backslash = target.contains(&b'\\') && {
+        let path_end = target
+            .iter()
+            .position(|&b| b == b'?')
+            .unwrap_or(target.len());
+        target
+            .get(..path_end)
+            .is_some_and(|path| path.contains(&b'\\'))
+    };
+    if origin_form & visible & !path_backslash {
         Ok(())
     } else {
         Err(INTERNAL)
