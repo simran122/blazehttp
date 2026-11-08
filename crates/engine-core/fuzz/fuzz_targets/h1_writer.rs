@@ -1,7 +1,8 @@
 //! `write_request` / `HeaderTemplate` fuzz target (`docs/notes/request-writer.md` §9.5). Inputs are structure-aware
 //! requests: a method id, a target (valid path bytes, raw bytes or a limit-boundary size), a template host (valid
 //! shapes or raw bytes), template and delta field lines built from forbidden, singleton, token and raw names with
-//! valid or raw values (≤ 200 lines), a declared line count that is usually right, a body length (incl. the 64 KiB
+//! valid or raw values, and valid names, values and targets with one injected raw byte at any position (≤ 200
+//! lines), a declared line count that is usually right, a body length (incl. the 64 KiB
 //! boundary) and the connection's authority. Properties:
 //! 1. **exact outcome:** an independent spec model (plain per-byte loops over RFC 9110/9112 + note §6–§7) gives the
 //!    same result, error code included — the writer is neither too lenient nor too strict;
@@ -76,6 +77,12 @@ enum Name {
     /// `x-` plus lowercase letters chosen from the bytes.
     Token(Vec<u8>),
     Raw(Vec<u8>),
+    /// A token name with one raw byte inserted (position classes start / middle / end, note §9.2).
+    Inject {
+        name: Vec<u8>,
+        at: u8,
+        byte: u8,
+    },
 }
 
 #[derive(Arbitrary, Debug)]
@@ -83,6 +90,12 @@ enum Value {
     /// Visible ASCII, SP, HTAB and obs-text only.
     Clean(Vec<u8>),
     Raw(Vec<u8>),
+    /// A clean value with one raw byte inserted.
+    Inject {
+        value: Vec<u8>,
+        at: u8,
+        byte: u8,
+    },
 }
 
 #[derive(Arbitrary, Debug)]
@@ -100,6 +113,12 @@ enum Target {
     /// `/` plus visible ASCII chosen from the bytes.
     Path(Vec<u8>),
     Raw(Vec<u8>),
+    /// A valid path with one raw byte inserted after the leading `/`.
+    Inject {
+        path: Vec<u8>,
+        at: u8,
+        byte: u8,
+    },
     /// `/` plus `a` bytes, total 16,383 + `extra` (0–3) bytes.
     Boundary {
         extra: u8,
@@ -161,6 +180,39 @@ fn spell(canonical: &str, case: u32, underscore: bool) -> Vec<u8> {
         .collect()
 }
 
+/// `x-` plus lowercase letters chosen from the bytes.
+fn token(bytes: &[u8]) -> Vec<u8> {
+    [
+        &b"x-"[..],
+        &bytes.iter().map(|b| b'a' + b % 26).collect::<Vec<_>>(),
+    ]
+    .concat()
+}
+
+/// Field content only: control bytes and DEL become SP.
+fn clean(bytes: &[u8]) -> Vec<u8> {
+    bytes
+        .iter()
+        .map(|&b| if b < 0x20 || b == 0x7F { b' ' } else { b })
+        .collect()
+}
+
+/// `/` plus visible ASCII chosen from the bytes.
+fn path(bytes: &[u8]) -> Vec<u8> {
+    [
+        &b"/"[..],
+        &bytes.iter().map(|b| 0x21 + b % 94).collect::<Vec<_>>(),
+    ]
+    .concat()
+}
+
+/// `bytes` with `byte` inserted at `at` modulo its length plus one (start, middle or end).
+fn inject(mut bytes: Vec<u8>, at: u8, byte: u8) -> Vec<u8> {
+    let at = usize::from(at) % (bytes.len() + 1);
+    bytes.insert(at, byte);
+    bytes
+}
+
 fn name_bytes(name: &Name) -> Vec<u8> {
     match name {
         Name::Forbidden {
@@ -181,22 +233,17 @@ fn name_bytes(name: &Name) -> Vec<u8> {
             *case,
             *underscore,
         ),
-        Name::Token(bytes) => [
-            &b"x-"[..],
-            &bytes.iter().map(|b| b'a' + b % 26).collect::<Vec<_>>(),
-        ]
-        .concat(),
+        Name::Token(bytes) => token(bytes),
         Name::Raw(bytes) => bytes.clone(),
+        Name::Inject { name, at, byte } => inject(token(name), *at, *byte),
     }
 }
 
 fn line_bytes(line: &Line) -> Vec<u8> {
     let value = match &line.value {
-        Value::Clean(bytes) => bytes
-            .iter()
-            .map(|&b| if b < 0x20 || b == 0x7F { b' ' } else { b })
-            .collect(),
+        Value::Clean(bytes) => clean(bytes),
         Value::Raw(bytes) => bytes.clone(),
+        Value::Inject { value, at, byte } => inject(clean(value), *at, *byte),
     };
     let separator = line.separator.as_deref().unwrap_or(b": ");
     let terminator = line.terminator.as_deref().unwrap_or(b"\r\n");
@@ -209,12 +256,17 @@ fn block(lines: &[Line]) -> Vec<u8> {
 
 fn target_bytes(target: &Target) -> Vec<u8> {
     match target {
-        Target::Path(bytes) => [
-            &b"/"[..],
-            &bytes.iter().map(|b| 0x21 + b % 94).collect::<Vec<_>>(),
-        ]
-        .concat(),
+        Target::Path(bytes) => path(bytes),
         Target::Raw(bytes) => bytes.clone(),
+        Target::Inject {
+            path: bytes,
+            at,
+            byte,
+        } => {
+            let path = path(bytes);
+            let at = 1 + usize::from(*at) % path.len();
+            [&path[..at], &[*byte], &path[at..]].concat()
+        }
         Target::Boundary { extra } => {
             let len = H1_LIMITS.max_request_target_bytes - 1 + usize::from(extra % 4);
             [&b"/"[..], &vec![b'a'; len - 1]].concat()
