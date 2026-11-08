@@ -123,7 +123,7 @@ Record every measured idea. Keep only measured wins.
   CPU: `bench/parsers/` (README there), one Docker image per language, differential gate before timing.
 - **Hypothesis:** at P0 (safe scalar Rust) we lead on short heads, are at parity with httparse on 20-header heads,
   and are linear under 1-byte feeds where restart-style parsers are not.
-- **Method:** `pnpm bench:parsers` (harness commit `d813c22` after the rebase onto the parser's fix round; the runner's "refuse if other containers run" check
+- **Method:** `pnpm bench:parsers` (measured at `ac7d0b4`, which rebases made unreachable; the same harness code is `5797c66` on `p0/parser-bench`, and these results are committed in `4955f1c`; the runner's "refuse if other containers run" check
   was added after this run and changes nothing measured). Linux arm64, Docker Desktop 28.5.1 on the owner's M2,
   kernel 6.11.11-linuxkit, every invocation `--cpus=1 --network=none`, no other container running. Same CPU baseline
   for all: generic Armv8-A (Rust `target-cpu=generic`, C/C++ `-march=armv8-a`, Zig `-mcpu=baseline`, Go
@@ -174,7 +174,7 @@ Record every measured idea. Keep only measured wins.
   plus a chunked / `Connection: close` / trailing-OWS head; C/C++ with GCC 14.2 and `-DNDEBUG`, direct calls in every
   timed loop; containers pinned with `--cpuset-cpus=2`; the 64-variant rings of each fixture timed as well.
 - **Hypothesis:** with the split, ours is still ahead of httparse on short heads and at parity on 20 fields.
-- **Method:** `pnpm bench:parsers --out …-gcc14.jsonl` at commit `12651b2` (clean tree), then `--cc gcc-12` for the
+- **Method:** `pnpm bench:parsers --out …-gcc14.jsonl` at commit `12651b2` as recorded in the JSONL (clean tree; it is `17239b2` on `p0/parser-bench` after the rebase onto `milestone/p0`, identical tree), then `--cc gcc-12` for the
   C/C++ rows. Linux arm64 Docker Desktop 28.5.1 on the owner's M2, `--cpus=1 --cpuset-cpus=2 --network=none`, no
   other container at start; 7 interleaved rounds × 300 ms after 100 ms warm-up; feeds 5 rounds. Gate passed on all 10
   workloads in both runs (it caught one real difference while being built: llhttp keeps trailing OWS in values; its
