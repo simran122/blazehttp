@@ -636,11 +636,11 @@ absolute ns are ≈ 3× a quiet run and only per-round ratios are used). Median 
 | Go 1.27.3 `net/http` | 0.08, 0.10, 0.07, 0.11, 0.10 | 0.04, 0.06, 0.04, 0.05, 0.07 | `*Response` + header map (10 / 40 allocations) |
 
 **With the per-field output, httparse and picohttpparser are ahead of us on every workload** (ours takes 1.2–2.0×
-their time). The llhttp and Beast `basic_parser` ratios are superseded: their timed paths delivered no fields in this
+their time; by median per-round ratio, unresolved at this noise until the quiet re-run). The llhttp and Beast `basic_parser` ratios are superseded: their timed paths delivered no fields in this
 run (fixed in fix round 2; numbers wait for the re-run). We stay ahead of Beast `response_parser`, Zig (which hands
 no fields out, so compare it with the plain row) and Go. The split costs as much as the parse (plain / with-fields =
 0.50–0.63): P0 scans the bytes twice where httparse scans once. Without the split we lead everyone except httparse on
-the 20-field ring. 1-byte feeds (a)–(d): we stay linear (0.08–0.66 ms), as do llhttp, picohttpparser (its `last_len`
+the 20-field ring (same caveat). 1-byte feeds (a)–(d): we stay linear (0.08–0.66 ms), as do llhttp, picohttpparser (its `last_len`
 scan, then one parse) and Zig (0.07–0.74 ms), and Go (0.30–2.05 ms); httparse re-parses from byte 0 (161–429 ms) and
 Beast re-parses the current partial line (25 ms–2.2 s). GCC 12.2 vs 14.2 for the C/C++ rows: no effect resolvable above
 this run's noise (`…-gcc12.jsonl`).

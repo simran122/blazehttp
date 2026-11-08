@@ -204,7 +204,8 @@ Record every measured idea. Keep only measured wins.
   252 / 429 / 314 / 161, Beast 25 ms–2.2 s. **GCC 12.2 vs 14.2** (same rows, second run): no compiler effect resolvable
   above this noise (picohttpparser ratio on `1k-h20` 1.08 vs 1.33, llhttp 1.37 vs 1.08: they move in opposite
   directions between runs).
-- **Where we win / lose (headline, `blazehttp+fields`):** **httparse is ahead on every workload** (ours+fields takes
+- **Where we win / lose (headline, `blazehttp+fields`; by median per-round ratio, unresolved at this noise until the
+  quiet re-run):** **httparse is ahead on every workload** (ours+fields takes
   1.2–2.0× its time), and so is picohttpparser (1.2–1.8×). llhttp's row delivered no fields and is superseded until
   the re-run. We stay ahead of Beast `response_parser` (1.75–3× faster), Zig `std.http` (3.7–5.4×) and Go `net/http` (9–14×). Without the split (`blazehttp`, what the engine pays when it needs
   only the framing facts) we are ahead of all of them except httparse on the 20-field ring (1.08). On 1-byte feeds we
