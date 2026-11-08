@@ -29,6 +29,7 @@ const CONTAINER_LIMITS = ['--memory=2g', '--memory-swap=2g', '--network=none'] a
 
 /** A harness container's flags: the limits plus one CPU of quota pinned to vCPU `cpuset` (recorded as run). */
 const harnessFlags = (cpuset: string): string[] => ['--cpus=1', `--cpuset-cpus=${cpuset}`, ...CONTAINER_LIMITS];
+
 /** One image build, downloads included; a slower build is hung (Docker Hub pulls hung for hours on the bench host). */
 const BUILD_TIMEOUT_MS = 20 * 60_000;
 
@@ -368,7 +369,7 @@ function main(): void {
   if (running !== '') throw new Error(`containers this run did not start are running; stop them first:\n${running}`);
   const source = tree();
   if (opts.build) for (const h of new Set(opts.parsers.map((p) => p.harness))) build(h, opts.cc, source);
-  // Taken after the builds (or the image check with --no-build): a tree that moved meanwhile invalidates the images.
+  // Taken again after the builds (right away with --no-build): a tree that moved meanwhile invalidates the images.
   const changed = sourceChange(source, tree());
   if (changed !== undefined) throw new Error(changed);
   const builtImages = images(opts);

@@ -57,6 +57,7 @@ describe('untrackedPaths', () => {
       Buffer.from('dir/with space.ts'),
     ]);
     expect(untrackedPaths(Buffer.alloc(0))).toEqual([]);
+    expect(untrackedPaths(Buffer.from('a\0unterminated'))).toEqual([Buffer.from('a'), Buffer.from('unterminated')]);
   });
 });
 
@@ -103,18 +104,19 @@ describe('staleImages', () => {
 
 describe('untracked entries as git lists them', () => {
   const repo = mkdtempSync(join(tmpdir(), 'provenance-git-'));
-  const git = (...args: string[]): Buffer => {
-    const result = spawnSync('git', args, { cwd: repo });
+  const gitIn = (cwd: string, ...args: string[]): Buffer => {
+    const result = spawnSync('git', args, { cwd });
     if (result.status !== 0) throw new Error(result.stderr.toString());
     return result.stdout;
   };
+  const git = (...args: string[]): Buffer => gitIn(repo, ...args);
   git('init', '-q');
   mkdirSync(join(repo, 'dir'));
   writeFileSync(join(repo, 'dir', 'inner.txt'), 'inner');
   symlinkSync('dir', join(repo, 'link-to-dir'));
   symlinkSync('missing/target', join(repo, 'dangling'));
   mkdirSync(join(repo, 'nested'));
-  spawnSync('git', ['init', '-q'], { cwd: join(repo, 'nested') });
+  gitIn(join(repo, 'nested'), 'init', '-q');
   afterAll(() => {
     rmSync(repo, { recursive: true, force: true });
   });
@@ -140,7 +142,7 @@ describe('sourceChange', () => {
 
   it('reports a new commit or new uncommitted work', () => {
     expect(sourceChange(clean, { ...clean, commit: 'def' })).toBe(
-      'the source tree changed during the build (abc → def); run again on a still tree',
+      'the source tree changed while the images were prepared (abc → def); run again on a still tree',
     );
     expect(sourceChange(clean, { commit: 'abc', dirtyFiles: [' M x'], dirtySha256: '0123456789abcdef' })).toContain(
       'abc → abc+dirty.0123456789ab',

@@ -48,6 +48,9 @@ export function untrackedPaths(output: Buffer): Buffer[] {
     if (path.length > 0 && path[path.length - 1] !== SLASH) paths.push(path);
     start = end + 1;
   }
+  // git terminates every entry; an unterminated tail is still a path, never dropped.
+  const tail = output.subarray(start);
+  if (tail.length > 0 && tail[tail.length - 1] !== SLASH) paths.push(tail);
   return paths;
 }
 
@@ -68,13 +71,13 @@ export function revision(tree: TreeState): string {
 }
 
 /**
- * Why the source changed between two snapshots (before and after the image builds), or undefined when it did not:
- * images built while the tree changed may mix both versions.
+ * Why the source changed between two snapshots (at the start of a run and after its image builds, or after the image
+ * check with `--no-build`), or undefined when it did not: images built while the tree changed may mix both versions.
  */
 export function sourceChange(before: TreeState, after: TreeState): string | undefined {
   return revision(before) === revision(after)
     ? undefined
-    : `the source tree changed during the build (${revision(before)} → ${revision(after)}); run again on a still tree`;
+    : `the source tree changed while the images were prepared (${revision(before)} → ${revision(after)}); run again on a still tree`;
 }
 
 const REVISION_LABEL = 'org.opencontainers.image.revision';
