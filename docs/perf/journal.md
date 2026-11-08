@@ -188,8 +188,8 @@ Record every measured idea. Keep only measured wins.
   |---|---|---|
   | httparse | **1.16 / 1.64 / 1.73 / 1.96 / 2.02** | 0.70 / 0.89 / 0.87 / 1.08 / 0.86 |
   | picohttpparser | **1.21 / 1.33 / 1.78 / 1.34 / 1.57** | 0.78 / 0.74 / 0.80 / 0.71 / 0.73 |
-  | llhttp (no field delivery — superseded) | 1.27 / 1.08 / 1.13 / 1.13 / 1.54 | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
-  | Beast `basic_parser` (no field delivery — superseded) | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
+  | llhttp (no field delivery — superseded) | superseded: 1.27 / 1.08 / 1.13 / 1.13 / 1.54 | superseded: 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
+  | Beast `basic_parser` (no field delivery — superseded) | superseded: 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | superseded: 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
   | Beast `response_parser` | 0.33 / 0.35 / 0.57 / 0.42 / 0.35 | 0.23 / 0.22 / 0.30 / 0.23 / 0.19 |
   | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.21 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
   | Go `net/http` | 0.08 / 0.10 / 0.07 / 0.11 / 0.10 | 0.04 / 0.06 / 0.04 / 0.05 / 0.07 |
@@ -198,8 +198,8 @@ Record every measured idea. Keep only measured wins.
   the colon and a scalar OWS trim), so "the split costs as much as the parse" partly measures this helper, not only
   the second pass itself. The workloads written `1k` × 64 / `1k-h20` × 64 here are the `*-ring64` workloads (the
   JSONL of this run still names them `*-x64`). The llhttp and Beast `basic_parser` rows above are superseded. Their timed paths
-  delivered no fields (llhttp registered no field callbacks; Beast's callback recorded nothing), so those ratios
-  compare unequal work. Both now record name/value spans on the timed path; their numbers wait for the re-run.
+  delivered no fields (llhttp registered no field callbacks; Beast's callback recorded nothing), so both their
+  ratio columns (with fields and plain) compare unequal work. Both now record name/value spans on the timed path; their numbers wait for the re-run.
   The split itself costs as much as the parse: plain / with-fields = 0.50–0.63. Allocations per head: 0 for every
   parser except Beast `response_parser` (4 / 21 / 15.2) and Go (10 / 40 / 31.7). Feeds (median ms, (a)/(b)/(c)/(d)):
   ours 0.52 / 0.66 / 0.41 / 0.076 (with fields 0.49 / 0.54 / 0.40 / 0.097), picohttpparser 0.56 / 0.56 / 0.74 / 0.082,
