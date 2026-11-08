@@ -330,9 +330,11 @@ mod tests {
     use std::task::{Context, Poll};
     use std::time::Duration;
 
+    use std::future::Future;
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
     use tokio::time::error::Elapsed;
-    use tokio::time::timeout;
+    use tokio::time::{Sleep, timeout};
 
     use super::{BATCH_BYTES, BUFFER_BYTES, Mode, run};
     use crate::cells::{Refusal, refusal, response_for};
@@ -350,8 +352,9 @@ mod tests {
     const OUTPUT_CAP: usize = 64 << 20;
 
     /// A scripted peer: `input` arrives in reads that never cross a cut; writes are recorded per call, at most
-    /// `max_write` bytes each and `cap` bytes in total (then it panics). Reads stop for good at `stall_reads_at`, and
-    /// writes or the shutdown can be made to never complete, to test the deadlines.
+    /// `max_write` bytes each and `cap` bytes in total (then it panics). Reads wait (virtual time) at each `pauses`
+    /// offset and stop for good at `stall_reads_at`; writes or the shutdown can be made to never complete, to test the
+    /// deadlines.
     struct Script {
         input: Vec<u8>,
         cuts: Vec<usize>,
@@ -364,6 +367,9 @@ mod tests {
         stall_reads_at: Option<usize>,
         stall_writes: bool,
         stall_shutdown: bool,
+        /// `(offset, wait)` in offset order: before reading at `offset`, wait `wait`.
+        pauses: Vec<(usize, Duration)>,
+        sleeping: Option<Pin<Box<Sleep>>>,
     }
 
     impl Script {
@@ -380,7 +386,28 @@ mod tests {
                 stall_reads_at: None,
                 stall_writes: false,
                 stall_shutdown: false,
+                pauses: Vec::new(),
+                sleeping: None,
             }
+        }
+
+        /// Waits out the pause due at the current read offset, if any.
+        fn poll_pause(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+            let Some(&(at, wait)) = self.pauses.first() else {
+                return Poll::Ready(());
+            };
+            if at != self.read {
+                return Poll::Ready(());
+            }
+            let sleeping = self
+                .sleeping
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(wait)));
+            if sleeping.as_mut().poll(cx).is_pending() {
+                return Poll::Pending;
+            }
+            self.sleeping = None;
+            self.pauses.remove(0);
+            Poll::Ready(())
         }
 
         fn record(&mut self, bufs: &[IoSlice<'_>]) -> usize {
@@ -405,18 +432,20 @@ mod tests {
     impl AsyncRead for Script {
         fn poll_read(
             mut self: Pin<&mut Self>,
-            _: &mut Context<'_>,
+            cx: &mut Context<'_>,
             buf: &mut ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
             let at = self.read;
-            if self.stall_reads_at == Some(at) {
+            if self.stall_reads_at == Some(at) || self.poll_pause(cx).is_pending() {
                 return Poll::Pending;
             }
+            let pauses: Vec<usize> = self.pauses.iter().map(|&(offset, _)| offset).collect();
             let stop = self
                 .cuts
                 .iter()
                 .copied()
                 .chain(self.stall_reads_at)
+                .chain(pauses)
                 .filter(|&cut| cut > at)
                 .min()
                 .unwrap_or(self.input.len());
@@ -723,6 +752,27 @@ mod tests {
             "an idle client was closed: {still_open:?}"
         );
         assert!(!script.shut_down);
+    }
+
+    /// Request 1 arms a deadline; after a long idle gap, request 2 must get a fresh one, not the expired one.
+    #[test]
+    fn each_request_gets_its_own_deadline() {
+        let (first, second) = (get("/1k"), get("/1k-h20"));
+        let input = [first.clone(), second.clone()].concat().into_bytes();
+        // The cut makes request 1 arrive in two reads, so it arms a deadline.
+        let mut script = Script::new(input, vec![5]);
+        let gap = Duration::from_secs(5);
+        script.pauses = vec![
+            (first.len(), gap),
+            (first.len() + 10, Duration::from_millis(500)),
+        ];
+        drive(&mut script, Duration::from_secs(1))
+            .expect("finished")
+            .expect("connection");
+        assert_eq!(
+            script.output,
+            [wire(b"/1k", false), wire(b"/1k-h20", false)].concat()
+        );
     }
 
     #[test]
