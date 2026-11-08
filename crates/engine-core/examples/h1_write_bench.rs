@@ -1,120 +1,34 @@
 //! Development benchmark: `write_request` vs the copy floor (`docs/notes/request-writer.md` §8.1, §8.4). Run with
-//! `cargo run --release -p engine-core --example h1_write_bench`. The copy floor appends the same bytes with the same
-//! `extend_from_slice` sequence and the same framing result (taken from the writer once, untimed) but no validation,
-//! no limit, authority, singleton or line-count check, no checked length sum and no reservation, so
-//! writer − floor = validation + bookkeeping. Prints one JSON line per run and a Markdown table. Results are dev
-//! measurements (`docs/perf/journal.md`); P1a replaces this with a criterion bench.
+//! `cargo run --release -p engine-core --example h1_write_bench` (`-- --verify` runs the byte-equality checks only,
+//! as CI does). The copy floor appends the same bytes with the same `extend_from_slice` sequence and the same framing
+//! result (taken from the writer once, untimed) but no validation, no limit, authority, singleton or line-count
+//! check, no checked length sum and no reservation, so writer − floor = validation + bookkeeping. Prints one JSON line
+//! per run and a Markdown table. Results are dev measurements (`docs/perf/journal.md`).
+//! P1a replaces it with the criterion bench `benches/h1_write.rs`.
+// removal: P1a (#23)
 
+#[path = "../tests/support/write_bench.rs"]
+mod write_bench;
 #[path = "../tests/support/write_rings.rs"]
 mod write_rings;
 
-use std::fmt::NumBuffer;
-use std::hint::black_box;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use engine_core::h1::{HeaderTemplate, Reuse, write_request};
-use write_rings::{DEFAULT_LINES, DEFAULTS, HOST, Request};
-
-const RUNS: usize = 7;
-const BLOCKS_PER_RUN: u32 = 4;
-const ITERATIONS_PER_BLOCK: usize = 100_000;
-const WARM_UP: Duration = Duration::from_millis(100);
-
-/// A ring request with the framing lines the writer chose for it.
-struct Framed {
-    request: Request,
-    content_length: bool,
-    close: bool,
-}
-
-fn writer(out: &mut Vec<u8>, framed: &Framed, template: &HeaderTemplate) {
-    let _ =
-        write_request(out, &framed.request.parts(), template, HOST).expect("valid bench request");
-}
-
-/// The copy floor (note §8.1): the writer's bytes, appended in the same order, without any check.
-fn floor(out: &mut Vec<u8>, framed: &Framed, template_bytes: &[u8]) {
-    let request = &framed.request;
-    out.clear();
-    out.extend_from_slice(request.method.as_str().as_bytes());
-    out.extend_from_slice(b" ");
-    out.extend_from_slice(&request.target);
-    out.extend_from_slice(b" HTTP/1.1\r\n");
-    out.extend_from_slice(template_bytes);
-    out.extend_from_slice(&request.headers);
-    if framed.content_length {
-        let mut digits = NumBuffer::new();
-        out.extend_from_slice(b"content-length: ");
-        out.extend_from_slice(request.body.len().format_into(&mut digits).as_bytes());
-        out.extend_from_slice(b"\r\n");
-    }
-    if framed.close {
-        out.extend_from_slice(b"connection: close\r\n");
-    }
-    out.extend_from_slice(b"\r\n");
-    out.extend_from_slice(&request.body);
-}
-
-/// Takes each request's framing from the writer's output and checks that the floor writes the same bytes; returns
-/// the ring and its mean head length.
-fn frame(
-    ring: Vec<Request>,
-    template: &HeaderTemplate,
-    template_bytes: &[u8],
-) -> (Vec<Framed>, usize) {
-    let (mut out, mut copy, mut head) = (Vec::new(), Vec::new(), 0);
-    let framed: Vec<Framed> = ring
-        .into_iter()
-        .map(|request| {
-            let reuse = write_request(&mut out, &request.parts(), template, HOST)
-                .expect("valid bench request");
-            let head_len = out.len() - request.body.len();
-            let framed = Framed {
-                content_length: out[..head_len]
-                    .windows(18)
-                    .any(|w| w == b"\r\ncontent-length: "),
-                close: reuse == Reuse::CloseAfterExchange,
-                request,
-            };
-            floor(&mut copy, &framed, template_bytes);
-            assert_eq!(copy, out, "the floor writes the writer's bytes");
-            head += head_len;
-            framed
-        })
-        .collect();
-    let mean = head / framed.len();
-    (framed, mean)
-}
-
-/// Nanoseconds per request over `ITERATIONS_PER_BLOCK` requests cycling through `ring`.
-fn time_block(ring: &[Framed], out: &mut Vec<u8>, write: impl Fn(&mut Vec<u8>, &Framed)) -> f64 {
-    let start = Instant::now();
-    for i in 0..ITERATIONS_PER_BLOCK {
-        write(black_box(&mut *out), black_box(&ring[i % ring.len()]));
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "durations and counts far below 2^52"
-    )]
-    let ns = start.elapsed().as_nanos() as f64 / ITERATIONS_PER_BLOCK as f64;
-    ns
-}
-
-fn median(values: &mut [f64]) -> f64 {
-    values.sort_by(f64::total_cmp);
-    values[values.len() / 2]
-}
+use engine_core::h1::{HeaderTemplate, write_request};
+use write_bench::{
+    BLOCKS_PER_RUN, Framed, RUNS, WARM_UP, floor, frame, median, template_bytes, time_block,
+};
+use write_rings::{DEFAULT_LINES, DEFAULTS, HOST};
 
 /// Interleaved runs of writer and floor; prints one JSON line per run and returns the medians and the ratio range.
-fn measure(
-    name: &str,
-    ring: &[Framed],
-    template: &HeaderTemplate,
-    template_bytes: &[u8],
-) -> [f64; 5] {
+fn measure(name: &str, ring: &[Framed], template: &HeaderTemplate) -> [f64; 5] {
+    let template_bytes = template_bytes();
     let mut out = Vec::new();
-    let ours = |out: &mut Vec<u8>, r: &Framed| writer(out, r, template);
-    let copy = |out: &mut Vec<u8>, r: &Framed| floor(out, r, template_bytes);
+    let ours = |out: &mut Vec<u8>, r: &Framed| {
+        let _ =
+            write_request(out, &r.request.parts(), template, HOST).expect("valid bench request");
+    };
+    let copy = |out: &mut Vec<u8>, r: &Framed| floor(out, r, &template_bytes);
     let start = Instant::now();
     while start.elapsed() < WARM_UP {
         time_block(ring, &mut out, ours);
@@ -149,17 +63,25 @@ fn measure(
 
 fn main() {
     let template = HeaderTemplate::new(HOST, DEFAULTS, DEFAULT_LINES, &[]).expect("valid template");
-    let template_bytes = [&b"host: "[..], HOST, b"\r\n", DEFAULTS].concat();
     let sets = [
         ("get", write_rings::get()),
         ("post1k", write_rings::post1k()),
         ("varied", write_rings::varied()),
     ];
-    let mut rows = Vec::new();
-    for (name, ring) in sets {
-        let (ring, head) = frame(ring, &template, &template_bytes);
-        rows.push((name, head, measure(name, &ring, &template, &template_bytes)));
+    let rings: Vec<_> = sets
+        .into_iter()
+        .map(|(name, ring)| (name, frame(ring, &template)))
+        .collect();
+    if write_bench::verify_only() {
+        println!(
+            "verified: the copy floor writes the writer's bytes for every request of every set"
+        );
+        return;
     }
+    let rows: Vec<_> = rings
+        .iter()
+        .map(|(name, (ring, head))| (name, head, measure(name, ring, &template)))
+        .collect();
     println!();
     println!(
         "write_request vs copy floor; {RUNS} runs x {BLOCKS_PER_RUN} blocks, median of per-run ratios"
