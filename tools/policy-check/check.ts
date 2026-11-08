@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { checkFile, lintSettings, type Violation } from './rules.ts';
+import { checkFile, type Violation, workspaceLintSettings } from './rules.ts';
 
 /** Contains rule-violating strings as test fixtures. */
 const EXCLUDED = new Set(['tools/policy-check/rules.test.ts']);
@@ -13,7 +13,7 @@ const packageVersion = existsSync(MANIFEST)
   ? (JSON.parse(readFileSync(MANIFEST, 'utf8')) as { version: string }).version
   : '0.0.0';
 
-const workspaceLints = lintSettings(readFileSync('Cargo.toml', 'utf8'), 'workspace.lints');
+const workspaceLints = workspaceLintSettings(readFileSync('Cargo.toml', 'utf8'));
 
 const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
   .split('\0')

@@ -1,5 +1,5 @@
 import ts from 'typescript';
-import { tomlEntries } from './toml.ts';
+import { parse, TomlDate, TomlError, type TomlTable, type TomlValue } from 'smol-toml';
 
 export type RuleId =
   | 'rust-allow-forbidden'
@@ -321,18 +321,35 @@ const eslintDirective: Rule = (path, content) => {
 const CRATE_MANIFEST = /^crates\/[^/]+\/Cargo\.toml$/;
 const FUZZ_MANIFEST = /^crates\/[^/]+\/fuzz\/Cargo\.toml$/;
 
-/** Lint settings under `<prefix>.` (`workspace.lints` or `lints`), e.g. `clippy.pedantic.level` → `"deny"`. */
-export const lintSettings = (toml: string, prefix: 'workspace.lints' | 'lints'): LintSettings =>
-  new Map(
-    [...tomlEntries(toml)]
-      .filter(([key]) => key.startsWith(`${prefix}.`))
-      .map(([key, value]) => [key.slice(prefix.length + 1), value]),
-  );
+const isTable = (value: TomlValue | undefined): value is TomlTable =>
+  typeof value === 'object' && !Array.isArray(value) && !(value instanceof TomlDate);
 
-/** `clippy.pedantic.level` → `[lints.clippy] pedantic.level`. */
+/** `table[key]` when `table` is a TOML table that has its own `key`. */
+const field = (table: TomlValue | undefined, key: string): TomlValue | undefined =>
+  isTable(table) && Object.hasOwn(table, key) ? table[key] : undefined;
+
+/** A `lints` table flattened to `<tool>.<lint>[.<field>]` → JSON value, e.g. `clippy.pedantic.level` → `"deny"`. */
+const lintSettingsOf = (lints: TomlValue | undefined): LintSettings => {
+  const settings = new Map<string, string>();
+  const visit = (value: TomlValue, key: string): void => {
+    if (!isTable(value)) {
+      settings.set(key, JSON.stringify(value));
+      return;
+    }
+    for (const [name, inner] of Object.entries(value)) visit(inner, key === '' ? name : `${key}.${name}`);
+  };
+  if (lints !== undefined) visit(lints, '');
+  return settings;
+};
+
+/** The root manifest's `[workspace.lints]` settings. A manifest that does not parse throws. */
+export const workspaceLintSettings = (toml: string): LintSettings =>
+  lintSettingsOf(field(field(parse(toml), 'workspace'), 'lints'));
+
+/** `clippy.pedantic.level` → `[lints.clippy] pedantic.level`; `workspace` → `[lints] workspace`. */
 const lintName = (key: string): string => {
   const dot = key.indexOf('.');
-  return `[lints.${key.slice(0, dot)}] ${key.slice(dot + 1)}`;
+  return dot === -1 ? `[lints] ${key}` : `[lints.${key.slice(0, dot)}] ${key.slice(dot + 1)}`;
 };
 
 /** How a fuzz crate's lint settings differ from the workspace's: missing, changed or extra keys. */
@@ -348,17 +365,30 @@ const lintDifferences = (workspace: LintSettings, own: LintSettings): string[] =
   });
 };
 
+/** The manifest's `lints` value, or a violation when it is not valid TOML (fail closed). */
+const manifestLints = (path: string, content: string): { lints: TomlValue | undefined } | Violation => {
+  try {
+    return { lints: field(parse(content), 'lints') };
+  } catch (error) {
+    if (!(error instanceof TomlError)) throw error;
+    return violation(path, error.line, 'crate-lints', `cannot parse TOML: ${String(error.message.split('\n')[0])}`);
+  }
+};
+
 /**
  * Every crate inherits the workspace lints (`[lints] workspace = true`). A fuzz crate is its own workspace, so its
  * `[lints.<tool>]` tables must equal the workspace settings: none missing, loosened or added.
  */
 const crateLints: Rule = (path, content, ctx) => {
-  if (CRATE_MANIFEST.test(path)) {
-    const inherits = tomlEntries(content).get('lints.workspace') === 'true';
+  const crate = CRATE_MANIFEST.test(path);
+  if (!crate && !FUZZ_MANIFEST.test(path)) return [];
+  const read = manifestLints(path, content);
+  if ('rule' in read) return [read];
+  if (crate) {
+    const inherits = field(read.lints, 'workspace') === true;
     return inherits ? [] : [violation(path, 1, 'crate-lints', 'crate must set [lints] workspace = true')];
   }
-  if (!FUZZ_MANIFEST.test(path)) return [];
-  return lintDifferences(ctx.workspaceLints, lintSettings(content, 'lints')).map((message) =>
+  return lintDifferences(ctx.workspaceLints, lintSettingsOf(read.lints)).map((message) =>
     violation(path, 1, 'crate-lints', message),
   );
 };

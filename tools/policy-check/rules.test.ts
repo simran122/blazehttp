@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { checkFile, type Context, lintSettings } from './rules.ts';
+import { checkFile, type Context, workspaceLintSettings } from './rules.ts';
 
 const WORKSPACE_TOML = `[workspace.lints.rust]
 deprecated = "deny"
@@ -9,7 +9,7 @@ deprecated = "deny"
 pedantic = { level = "deny", priority = -1 }
 allow_attributes =  "deny"
 `;
-const CTX: Context = { packageVersion: '0.0.0', workspaceLints: lintSettings(WORKSPACE_TOML, 'workspace.lints') };
+const CTX: Context = { packageVersion: '0.0.0', workspaceLints: workspaceLintSettings(WORKSPACE_TOML) };
 
 const v = (path: string, src: string) => checkFile(path, src, CTX).map((x) => x.rule);
 /** Rules for a crate manifest that already inherits the workspace lints, so tests see only the rule under test. */
@@ -242,4 +242,22 @@ test('a fuzz crate lint table equals the workspace: no extra or loosened lints',
   expect(fuzz(full.replace('allow_attributes = "deny"', 'allow_attributes = "warn"'))).toEqual([
     'fuzz crate sets [lints.clippy] allow_attributes = "warn"; the workspace sets "deny"',
   ]);
+  expect(fuzz(`${full}# see """\ntoo_many_lines = "allow"\n# """\n`)).toEqual([
+    'fuzz crate sets [lints.clippy] too_many_lines = "allow", which the workspace does not',
+  ]);
+  expect(fuzz(`lints.workspace = true\n${full}`)).toEqual([
+    'fuzz crate sets [lints] workspace = true, which the workspace does not',
+  ]);
+  expect(
+    fuzz(
+      "['lints'.rust]\n'deprecated' = 'deny'\n[lints.'clippy']\npedantic = { level = 'deny', priority = -1 }\nallow_attributes = 'deny'\n",
+    ),
+  ).toEqual([]);
+});
+test('manifests are read by a real TOML parser: quotes in comments and literal keys behave as in Cargo', () => {
+  expect(v('crates/x/Cargo.toml', '[package]\nname = "x" # quoting: """\n[lints]\nworkspace = true\n')).toEqual([]);
+  expect(v('crates/x/Cargo.toml', "['lints']\n'workspace' = true\n")).toEqual([]);
+  const broken = checkFile('crates/x/Cargo.toml', '[package]\nname = "x\n', CTX);
+  expect(broken.map((x) => [x.rule, x.line])).toEqual([['crate-lints', 2]]);
+  expect(broken[0]?.message).toMatch(/^cannot parse TOML: /);
 });
