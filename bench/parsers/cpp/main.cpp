@@ -78,6 +78,17 @@ std::size_t put_head(Parser& p, std::string_view head) {
 // Name/value spans into the parsed bytes; reserved once and reused, so recording them never allocates.
 using span_list = std::vector<std::pair<std::string_view, std::string_view>>;
 
+// Field slots, as in the C harness (MAX_FIELDS) and the Rust one (the parser's field limit).
+constexpr std::size_t max_fields = 100;
+
+// The connection's reused span list (the harness is single-threaded): reserved once at start-up, so recording spans
+// never allocates and no per-parse initialisation guard runs.
+span_list reused_spans = [] {
+    span_list spans;
+    spans.reserve(max_fields);
+    return spans;
+}();
+
 class span_parser final : public http::basic_parser<false> {
 public:
     explicit span_parser(span_list& spans) : spans_(spans) {
@@ -148,28 +159,19 @@ struct beast_response_parser {
 
 struct beast_basic_parser {
     static constexpr std::string_view name = "beast-basic-parser";
-    // The connection's reused span list (the harness is single-threaded).
-    static span_list& reused() {
-        static span_list spans = [] {
-            span_list s;
-            s.reserve(100);
-            return s;
-        }();
-        return spans;
-    }
     static facts parse(std::string_view head) {
-        span_parser p(reused());
+        span_parser p(reused_spans);
         std::size_t n = put_head(p, head);
         return facts_of(p, p.status, n);
     }
     static field_list fields(std::string_view head) {
         parse(head);
         field_list out;
-        for (auto const& [name, value] : reused()) out.emplace_back(name, value);
+        for (auto const& [name, value] : reused_spans) out.emplace_back(name, value);
         return out;
     }
     static std::size_t feed(std::string_view input) {
-        span_parser p(reused());
+        span_parser p(reused_spans);
         return feed_parser(p, input);
     }
 };
