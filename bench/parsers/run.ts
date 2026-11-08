@@ -184,8 +184,7 @@ function spawnBuild(args: readonly string[]): void {
 
 /**
  * One harness invocation in its own named container: one CPU of quota pinned to one vCPU, 2 GiB of memory, no
- * network. A container
- * that outlives the timeout is removed (it is ours) and reported.
+ * network. A container that outlives the timeout is removed (it is ours) and reported.
  */
 function harnessRun(parser: Parser, options: Options, workDir: string, args: readonly string[]): string {
   const name = `blazehttp-parsers-${randomUUID()}`;
