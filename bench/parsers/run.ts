@@ -22,12 +22,14 @@ import type { Workload } from './workloads.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const HERE = import.meta.dirname;
-/** A harness invocation runs ≤ 0.5 s of timing (or a few seconds of quadratic feeding); anything longer is hung. */
+/** The longest `--run-ms`: with the 100 ms warm-up and container start it stays well inside the invocation timeout. */
+const MAX_RUN_MS = 60_000;
+/** A harness invocation runs ≤ 100 ms warm-up + `--run-ms` (or seconds of quadratic feeding); longer is hung. */
 const INVOCATION_TIMEOUT_MS = 120_000;
 /** Every container this runner starts: bounded memory (swap included, so the bench host never runs out), no network. */
 const CONTAINER_LIMITS = ['--memory=2g', '--memory-swap=2g', '--network=none'] as const;
 
-/** A harness container's flags: the limits plus one CPU of quota pinned to vCPU `cpuset`; recorded in `meta.container`. */
+/** A harness container's flags: the limits plus one CPU of quota pinned to vCPU `cpuset` (`meta.container`). */
 const harnessFlags = (cpuset: string): string[] => ['--cpus=1', `--cpuset-cpus=${cpuset}`, ...CONTAINER_LIMITS];
 
 /** One image build, downloads included; a slower build is hung (Docker Hub pulls hung for hours on the bench host). */
@@ -325,9 +327,11 @@ function images(opts: Options): Record<string, { id: string; labels: Record<stri
   );
 }
 
-function positive(text: string, what: string, min = 1): number {
+function positive(text: string, what: string, min = 1, max = Number.MAX_SAFE_INTEGER): number {
   const n = Number(text);
-  if (!/^\d+$/.test(text) || n < min) throw new Error(`${what} must be an integer ≥ ${String(min)}`);
+  if (!/^\d+$/.test(text) || n < min || n > max) {
+    throw new Error(`${what} must be an integer from ${String(min)} to ${String(max)}`);
+  }
   return n;
 }
 
@@ -351,7 +355,7 @@ function options(): Options {
   if (unknown.length > 0) throw new Error(`unknown parsers: ${unknown.join(', ')}`);
   return {
     rounds: positive(values.rounds, '--rounds', 5),
-    runMs: positive(values['run-ms'], '--run-ms'),
+    runMs: positive(values['run-ms'], '--run-ms', 1, MAX_RUN_MS),
     feedRounds: positive(values['feed-rounds'], '--feed-rounds'),
     cpuset: String(positive(values.cpuset, '--cpuset', 0)),
     cc: values.cc,

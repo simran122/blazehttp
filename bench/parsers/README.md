@@ -75,7 +75,7 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
   (values in order per name) without the `Connection` and `Transfer-Encoding` fields it consumes into
   `resp.Close`/`resp.TransferEncoding` (checked through the facts instead). Any mismatch aborts the run.
 - Statistic: each round runs every parser once per workload, starting at a different parser each round; per
-  invocation 100 ms warm-up, then blocks of 1,000 parses until `--run-ms` elapses; ns/head per round. Reported: median
+  invocation 100 ms warm-up, then blocks of 1,000 parses until `--run-ms` (default 300, at most 60,000) elapses; ns/head per round. Reported: median
   and min–max ns over rounds, and the median and min–max of the per-round ratios **ours+fields / theirs** and **ours /
   theirs** (below 1: ours is faster). At least 5 rounds (default 7). Gate runs need design §16.4 (10 rounds,
   bootstrap 95% CI), which this dev bench does not implement.
