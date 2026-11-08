@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { checkFile, type Context, lintTables } from './rules.ts';
+import { checkFile, type Context, lintSettings } from './rules.ts';
 
 const WORKSPACE_TOML = `[workspace.lints.rust]
 deprecated = "deny"
@@ -9,7 +9,7 @@ deprecated = "deny"
 pedantic = { level = "deny", priority = -1 }
 allow_attributes =  "deny"
 `;
-const CTX: Context = { packageVersion: '0.0.0', workspaceLints: lintTables(WORKSPACE_TOML, 'workspace.lints') };
+const CTX: Context = { packageVersion: '0.0.0', workspaceLints: lintSettings(WORKSPACE_TOML, 'workspace.lints') };
 
 const v = (path: string, src: string) => checkFile(path, src, CTX).map((x) => x.rule);
 /** Rules for a crate manifest that already inherits the workspace lints, so tests see only the rule under test. */
@@ -188,6 +188,22 @@ test('every crate inherits the workspace lints', () => {
   for (const toml of ['[package]\nname = "x"\n', '[lints]\nworkspace = false\n', '[lints.clippy]\npedantic = "deny"\n'])
     expect(v('crates/x/Cargo.toml', toml), toml).toEqual(['crate-lints']);
   expect(v('Cargo.toml', '[package]\n')).toEqual([]);
+});
+test('crate lint inheritance is read in every TOML form', () => {
+  for (const toml of [
+    'lints.workspace = true\n[package]\nname = "x"\n',
+    'lints = { workspace = true }\n[package]\nname = "x"\n',
+    '[package]\nname = "x"\n[lints] # inherit\nworkspace=true # yes\n',
+    '[package]\r\nname = "x # not a comment"\r\n[ lints ]\r\nworkspace = true\r\n',
+  ])
+    expect(v('crates/x/Cargo.toml', toml), toml).toEqual([]);
+  for (const toml of [
+    '[package]\ndescription = """\n[lints]\nworkspace = true\n"""\n',
+    "[package]\ndescription = '''\n[lints]\nworkspace = true\n'''\n",
+    '[package]\nlints.workspace = true\n',
+    '[lints]\n# workspace = true\n',
+  ])
+    expect(v('crates/x/Cargo.toml', toml), toml).toEqual(['crate-lints']);
 });
 test('a fuzz crate repeats every workspace lint in its own tables', () => {
   const fuzz = (toml: string) => checkFile('crates/x/fuzz/Cargo.toml', toml, CTX).map((x) => x.message);

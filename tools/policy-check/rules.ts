@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import { tomlEntries } from './toml.ts';
 
 export type RuleId =
   | 'rust-allow-forbidden'
@@ -12,10 +13,10 @@ export type RuleId =
   | 'crate-lints';
 
 export type Violation = { file: string; line: number; rule: RuleId; message: string };
-/** Lint settings by tool (`rust`, `clippy`): whitespace-normalised `key = value` lines. */
-export type LintTables = ReadonlyMap<string, ReadonlySet<string>>;
-/** `workspaceLints` are the root manifest's `[workspace.lints.*]` tables. */
-export type Context = { packageVersion: string; workspaceLints: LintTables };
+/** Lint settings as `<tool>.<lint>[.<field>]` → normalised TOML value, e.g. `clippy.pedantic.level` → `"deny"`. */
+export type LintSettings = ReadonlyMap<string, string>;
+/** `workspaceLints` are the root manifest's `[workspace.lints.*]` settings. */
+export type Context = { packageVersion: string; workspaceLints: LintSettings };
 type Rule = (path: string, content: string, ctx: Context) => Violation[];
 
 /** Rules apply only to code and config files, never to prose docs. */
@@ -317,33 +318,22 @@ const eslintDirective: Rule = (path, content) => {
     });
 };
 
-const TOML_HEADER = /^\[([^\]]+)\]\s*$/;
-const TOML_KEY_LINE = /^[\w-]+\s*=/;
 const CRATE_MANIFEST = /^crates\/[^/]+\/Cargo\.toml$/;
 const FUZZ_MANIFEST = /^crates\/[^/]+\/fuzz\/Cargo\.toml$/;
 
-/** Key lines of each TOML table, whitespace-normalised, e.g. `lints.clippy` → `{'pedantic = …'}`. */
-const tomlTables = (toml: string): Map<string, Set<string>> => {
-  const tables = new Map<string, Set<string>>();
-  let current = new Set<string>();
-  for (const raw of toml.split('\n')) {
-    const line = raw.trim().replace(/\s+/g, ' ');
-    const header = TOML_HEADER.exec(line)?.[1];
-    if (header !== undefined) {
-      current = tables.get(header) ?? new Set<string>();
-      tables.set(header, current);
-    } else if (TOML_KEY_LINE.test(line)) current.add(line);
-  }
-  return tables;
-};
-
-/** Lint settings by tool (`rust`, `clippy`) from the `[<prefix>.<tool>]` tables of a manifest. */
-export const lintTables = (toml: string, prefix: 'workspace.lints' | 'lints'): LintTables =>
+/** Lint settings under `<prefix>.` (`workspace.lints` or `lints`), e.g. `clippy.pedantic.level` → `"deny"`. */
+export const lintSettings = (toml: string, prefix: 'workspace.lints' | 'lints'): LintSettings =>
   new Map(
-    [...tomlTables(toml)]
-      .filter(([name]) => name.startsWith(`${prefix}.`))
-      .map(([name, keys]) => [name.slice(prefix.length + 1), keys]),
+    [...tomlEntries(toml)]
+      .filter(([key]) => key.startsWith(`${prefix}.`))
+      .map(([key, value]) => [key.slice(prefix.length + 1), value]),
   );
+
+/** `clippy.pedantic.level` → `[lints.clippy] pedantic.level`. */
+const lintName = (key: string): string => {
+  const dot = key.indexOf('.');
+  return `[lints.${key.slice(0, dot)}] ${key.slice(dot + 1)}`;
+};
 
 /**
  * Every crate inherits the workspace lints (`[lints] workspace = true`). A fuzz crate is its own workspace, so its
@@ -351,18 +341,16 @@ export const lintTables = (toml: string, prefix: 'workspace.lints' | 'lints'): L
  */
 const crateLints: Rule = (path, content, ctx) => {
   if (CRATE_MANIFEST.test(path)) {
-    const inherits = tomlTables(content).get('lints')?.has('workspace = true') === true;
+    const inherits = tomlEntries(content).get('lints.workspace') === 'true';
     return inherits ? [] : [violation(path, 1, 'crate-lints', 'crate must set [lints] workspace = true')];
   }
   if (!FUZZ_MANIFEST.test(path)) return [];
-  const own = lintTables(content, 'lints');
-  return [...ctx.workspaceLints].flatMap(([tool, settings]) =>
-    [...settings]
-      .filter((setting) => own.get(tool)?.has(setting) !== true)
-      .map((setting) =>
-        violation(path, 1, 'crate-lints', `fuzz crate lacks workspace lint [lints.${tool}] ${setting}`),
-      ),
-  );
+  const own = lintSettings(content, 'lints');
+  return [...ctx.workspaceLints]
+    .filter(([key, value]) => own.get(key) !== value)
+    .map(([key, value]) =>
+      violation(path, 1, 'crate-lints', `fuzz crate lacks workspace lint ${lintName(key)} = ${value}`),
+    );
 };
 
 const RULES: Record<RuleId, Rule> = {
