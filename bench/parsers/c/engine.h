@@ -45,7 +45,8 @@ typedef struct {
     facts_t (*parse)(const char *head, size_t len);
     /* Times `parse` over `heads` (see ENGINE_TIMER); returns ns per head. */
     double (*time)(const head_t *heads, size_t count, unsigned long long run_ns, uint64_t *sink);
-    /* The gate's view of the fields, outside the timed path. */
+    /* The fields the timed path delivers, for the gate: picohttpparser's header array and llhttp's callback spans
+     * both come from the same parse function the timed loop calls. */
     void (*fields)(const char *head, size_t len, field_list_t *out);
     /* Feeds `input` one byte per call; returns the partial-input mode and stores the head length at completion. */
     const char *(*feed)(const char *input, size_t len, size_t *head_len);
