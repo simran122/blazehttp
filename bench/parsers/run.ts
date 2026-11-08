@@ -3,14 +3,14 @@
 //                                  [--parsers id,id] [--out <file.jsonl>] [--no-build] [--gate-only]
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { loadavg, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
-import { dirtyDigest, revision, staleImages, untrackedPaths } from './provenance.ts';
+import { dirtyDigest, readUntracked, revision, staleImages, untrackedPaths } from './provenance.ts';
 import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
 import type { CheckReport, FeedMode } from './protocol.ts';
@@ -151,19 +151,17 @@ interface Options {
   readonly gateOnly: boolean;
 }
 
-function run(command: string, args: readonly string[]): string {
-  const result = spawnSync(command, args, {
-    cwd: ROOT,
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-    timeout: INVOCATION_TIMEOUT_MS,
-  });
+/** Runs a command to completion and returns its stdout bytes; a failure, signal or timeout throws. */
+function runBytes(command: string, args: readonly string[]): Buffer {
+  const result = spawnSync(command, args, { cwd: ROOT, maxBuffer: 256 * 1024 * 1024, timeout: INVOCATION_TIMEOUT_MS });
   if (result.error !== undefined) throw new Error(`${command} ${args.join(' ')}: ${result.error.message}`);
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed (${String(result.status)}):\n${result.stderr}`);
+    throw new Error(`${command} ${args.join(' ')} failed (${String(result.status)}):\n${result.stderr.toString()}`);
   }
   return result.stdout;
 }
+
+const run = (command: string, args: readonly string[]): string => runBytes(command, args).toString('utf8');
 
 const imageOf = (h: Harness, cc: string): string => `blazehttp-parsers-${h.dir}${h.compiled ? `-${cc}` : ''}`;
 
@@ -290,10 +288,9 @@ function versions(options: Options): Record<string, string> {
 
 /** The working tree's state, taken before any image is built, so results from uncommitted code can be traced. */
 function tree(): TreeState {
-  const untracked = untrackedPaths(run('git', ['ls-files', '-z', '--others', '--exclude-standard'])).map((path) => ({
-    path,
-    content: readFileSync(join(ROOT, path)),
-  }));
+  const untracked = untrackedPaths(runBytes('git', ['ls-files', '-z', '--others', '--exclude-standard'])).map((path) =>
+    readUntracked(ROOT, path),
+  );
   return {
     commit: run('git', ['rev-parse', 'HEAD']).trim(),
     dirtyFiles: run('git', ['status', '--porcelain'])
