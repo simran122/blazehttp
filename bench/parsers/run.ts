@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
-import { dirtyDigest, revision, untrackedPaths } from './provenance.ts';
+import { dirtyDigest, revision, staleImages, untrackedPaths } from './provenance.ts';
 import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
 import type { CheckReport, FeedMode } from './protocol.ts';
@@ -371,6 +371,10 @@ function main(): void {
   if (running !== '') throw new Error(`containers this run did not start are running; stop them first:\n${running}`);
   const source = tree();
   if (opts.build) for (const h of new Set(opts.parsers.map((p) => p.harness))) build(h, opts.cc, source);
+  const builtImages = images(opts);
+  const stale = staleImages(builtImages, revision(source));
+  if (stale.length > 0)
+    throw new Error(`images do not match the source tree; rebuild (drop --no-build):\n${stale.join('\n')}`);
 
   const workDir = mkdtempSync(join(tmpdir(), 'blazehttp-parsers-'));
   try {
@@ -399,7 +403,7 @@ function main(): void {
       date,
       label: 'dev (not a gate run)',
       ...source,
-      images: images(opts),
+      images: builtImages,
       docker: {
         serverVersion: docker.ServerVersion,
         architecture: arch,

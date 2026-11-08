@@ -37,3 +37,21 @@ export function untrackedPaths(output: string): string[] {
 export function revision(tree: TreeState): string {
   return tree.dirtySha256 === null ? tree.commit : `${tree.commit}+dirty.${tree.dirtySha256.slice(0, 12)}`;
 }
+
+const REVISION_LABEL = 'org.opencontainers.image.revision';
+
+/**
+ * Images built from another source than `expected` (the current tree's `revision`), as messages; empty when every
+ * image matches. A `--no-build` run must not time images of other code.
+ */
+export function staleImages(
+  images: Readonly<Record<string, { readonly labels: Readonly<Record<string, string>> }>>,
+  expected: string,
+): string[] {
+  return Object.entries(images)
+    .filter(([, image]) => image.labels[REVISION_LABEL] !== expected)
+    .map(
+      ([name, image]) =>
+        `${name}: built from ${image.labels[REVISION_LABEL] ?? 'an unknown revision'}, source is ${expected}`,
+    );
+}

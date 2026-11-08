@@ -15,7 +15,8 @@ Output: a markdown table per section on stdout and `bench/results/<date>-<arch>-
 with host, load, container flags, compiler choice, versions, the source tree taken before any build (commit,
 dirty-file list, SHA-256 over the diff and untracked files) and each image's id and labels; images are stamped with
 `org.opencontainers.image.revision` = the commit, marked `+dirty.<hash>` for uncommitted work; then one line per
-parser × workload). The runner refuses to overwrite an existing results file (`--out` names another).
+parser × workload). The runner refuses to overwrite an existing results file (`--out` names another). Every run checks that each image's revision label
+matches the source tree, so `--no-build` cannot time images built from other code.
 
 ## Parsers
 

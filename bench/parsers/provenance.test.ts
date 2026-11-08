@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { dirtyDigest, revision, untrackedPaths } from './provenance.ts';
+import { dirtyDigest, revision, staleImages, untrackedPaths } from './provenance.ts';
 
 const file = (path: string, content: string): { path: string; content: Buffer } => ({
   path,
@@ -37,5 +37,23 @@ describe('untrackedPaths', () => {
       'dir/with space.ts',
     ]);
     expect(untrackedPaths('')).toEqual([]);
+  });
+});
+
+describe('staleImages', () => {
+  const label = (rev: string): Record<string, string> => ({ 'org.opencontainers.image.revision': rev });
+
+  it('accepts images built from the current source', () => {
+    expect(staleImages({ a: { labels: label('abc') }, b: { labels: label('abc') } }, 'abc')).toEqual([]);
+  });
+
+  it('reports images built from other code or with no revision label', () => {
+    expect(staleImages({ a: { labels: label('old') }, b: { labels: {} }, c: { labels: label('abc') } }, 'abc')).toEqual(
+      ['a: built from old, source is abc', 'b: built from an unknown revision, source is abc'],
+    );
+  });
+
+  it('treats a dirty source as different from its commit', () => {
+    expect(staleImages({ a: { labels: label('abc') } }, 'abc+dirty.0123456789ab')).toHaveLength(1);
   });
 });
