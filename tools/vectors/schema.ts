@@ -58,10 +58,10 @@ export interface VectorCase {
 type Reuse = 'allowed' | 'closeAfterExchange';
 
 /** The writer's whole output (head and body) and its reuse verdict, or its error in display form `CODE/detail`. */
-export type RequestExpect = { readonly bytes: string; readonly reuse: Reuse } | { readonly error: string };
+type RequestExpect = { readonly bytes: string; readonly reuse: Reuse } | { readonly error: string };
 
 /** One request the writer serialises (`tests/vectors/h1-request/`, docs/notes/request-writer.md §9.3). */
-export interface RequestVectorCase {
+interface RequestVectorCase {
   readonly name: string;
   /** How every byte string of the case (request fields and expected bytes) becomes bytes, as for responses. */
   readonly inputEncoding: InputEncoding;
