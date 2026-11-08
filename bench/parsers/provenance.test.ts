@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { dirtyDigest, readUntracked, revision, staleImages, untrackedPaths } from './provenance.ts';
+import { dirtyDigest, readUntracked, revision, sourceChange, staleImages, untrackedPaths } from './provenance.ts';
 import type { UntrackedFile } from './provenance.ts';
 
 const file = (path: string, content: string): UntrackedFile => ({
@@ -128,5 +128,22 @@ describe('untracked entries as git lists them', () => {
       ['dir/inner.txt', 'file', 'inner'],
       ['link-to-dir', 'link', 'dir'],
     ]);
+  });
+});
+
+describe('sourceChange', () => {
+  const clean = { commit: 'abc', dirtyFiles: [], dirtySha256: null };
+
+  it('is undefined while the tree stays the same', () => {
+    expect(sourceChange(clean, { ...clean })).toBeUndefined();
+  });
+
+  it('reports a new commit or new uncommitted work', () => {
+    expect(sourceChange(clean, { ...clean, commit: 'def' })).toBe(
+      'the source tree changed during the build (abc → def); run again on a still tree',
+    );
+    expect(sourceChange(clean, { commit: 'abc', dirtyFiles: [' M x'], dirtySha256: '0123456789abcdef' })).toContain(
+      'abc → abc+dirty.0123456789ab',
+    );
   });
 });

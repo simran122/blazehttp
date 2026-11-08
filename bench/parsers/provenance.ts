@@ -67,6 +67,16 @@ export function revision(tree: TreeState): string {
   return tree.dirtySha256 === null ? tree.commit : `${tree.commit}+dirty.${tree.dirtySha256.slice(0, 12)}`;
 }
 
+/**
+ * Why the source changed between two snapshots (before and after the image builds), or undefined when it did not:
+ * images built while the tree changed may mix both versions.
+ */
+export function sourceChange(before: TreeState, after: TreeState): string | undefined {
+  return revision(before) === revision(after)
+    ? undefined
+    : `the source tree changed during the build (${revision(before)} → ${revision(after)}); run again on a still tree`;
+}
+
 const REVISION_LABEL = 'org.opencontainers.image.revision';
 
 /**

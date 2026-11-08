@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
-import { dirtyDigest, readUntracked, revision, staleImages, untrackedPaths } from './provenance.ts';
+import { dirtyDigest, readUntracked, revision, sourceChange, staleImages, untrackedPaths } from './provenance.ts';
 import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
 import type { CheckReport, FeedMode } from './protocol.ts';
@@ -367,6 +367,9 @@ function main(): void {
   if (running !== '') throw new Error(`containers this run did not start are running; stop them first:\n${running}`);
   const source = tree();
   if (opts.build) for (const h of new Set(opts.parsers.map((p) => p.harness))) build(h, opts.cc, source);
+  // Taken after the builds (or the image check with --no-build): a tree that moved meanwhile invalidates the images.
+  const changed = sourceChange(source, tree());
+  if (changed !== undefined) throw new Error(changed);
   const builtImages = images(opts);
   const stale = staleImages(builtImages, revision(source));
   if (stale.length > 0)
