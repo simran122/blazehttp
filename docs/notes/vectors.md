@@ -309,6 +309,10 @@ empty-file panics.
 | `request.connAuthority` | Optional; the connection's authority, `templateHost` when absent. |
 | `expect` | `{ "bytes": "<whole request>", "reuse": "allowed" \| "closeAfterExchange" }` or `{ "error": "CODE/detail" }` (an engine error, as for responses). |
 
+**Provenance of the own file.** `blazehttp-rules.json` cites the note at commit `482b8e3`, which the annotated tag
+`notes/request-writer-task5` keeps reachable whatever happens to the branch (a rebase replaced the first pin, review
+item 26).
+
 **How the files were built.** Every case states its intended outcome; an independent model of the note's rules
 (§6.2–§7, written with plain per-byte loops and set lookups, outside the repository) computes the outcome and the exact
 bytes, and a case is written only when the two agree. The Rust runner (`injection_vectors` in `tests/h1_writer.rs`)

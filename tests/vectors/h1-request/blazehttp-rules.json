@@ -1,8 +1,8 @@
 {
   "source": {
     "project": "blazehttp",
-    "url": "https://github.com/simran122/blazehttp/blob/d600cf557f3e928ed9e852341303b29dce28a4d2/docs/notes/request-writer.md",
-    "commit": "d600cf557f3e928ed9e852341303b29dce28a4d2",
+    "url": "https://github.com/simran122/blazehttp/blob/482b8e30bcbaf25f0149679d2aabff9889910d96/docs/notes/request-writer.md",
+    "commit": "482b8e30bcbaf25f0149679d2aabff9889910d96",
     "licence": "MIT OR Apache-2.0",
     "copyright": "Copyright (c) 2026 blazehttp contributors"
   },
