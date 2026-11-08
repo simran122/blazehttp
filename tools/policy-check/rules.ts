@@ -256,8 +256,10 @@ const SCRIPT_KIND: ReadonlyMap<string, ts.ScriptKind> = new Map([
   ['mjs', ts.ScriptKind.JS],
   ['cjs', ts.ScriptKind.JS],
 ]);
-/** Any comment ESLint reads as a directive or inline config: `eslint…`, `global`, `globals`, `exported`. */
-const ESLINT_DIRECTIVE = /^(?:eslint|globals?\b|exported\b)/;
+/** Line comments ESLint reads as directives (`-line`, `-next-line`), plus bare `disable`/`enable`, inert but misleading. */
+const LINE_DIRECTIVE = /^eslint-(?:disable|enable)(?:-line|-next-line)?(?:\s|$)/;
+/** Block comments ESLint reads as directives or inline config: `eslint`, `eslint-disable…`, `eslint-enable`, `eslint-env`, `global(s)`, `exported`. */
+const BLOCK_DIRECTIVE = /^(?:eslint(?:-disable(?:-line|-next-line)?|-enable|-env)?|globals?|exported)(?:\s|$)/;
 /** The one accepted form (design §13.1 rule 9), as the whole of a line comment: named rules and a reason. */
 const ESLINT_NEXT_LINE = /^eslint-disable-next-line [@a-z][\w@/-]*(?:, ?[@a-z][\w@/-]*)* -- \S.*$/;
 const DIRECTIVE_MESSAGE = 'only a line comment "eslint-disable-next-line <rule> -- <reason>" may steer ESLint';
@@ -296,7 +298,8 @@ const scriptComments = (
 const isAllowedComment = (content: string, range: ts.CommentRange): boolean => {
   const line = range.kind === ts.SyntaxKind.SingleLineCommentTrivia;
   const text = content.slice(range.pos + 2, line ? range.end : range.end - 2).trim();
-  return !ESLINT_DIRECTIVE.test(text) || (line && ESLINT_NEXT_LINE.test(text));
+  if (!line) return !BLOCK_DIRECTIVE.test(text);
+  return !LINE_DIRECTIVE.test(text) || ESLINT_NEXT_LINE.test(text);
 };
 
 /**

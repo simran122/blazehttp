@@ -125,6 +125,29 @@ test('eslint directives are found per comment, not per line', () => {
   expect(ts('// eslint-disable-line x -- a // eslint-disable-next-line y -- b')).toEqual(['eslint-directive@1']);
   expect(ts('const re = /\\/\\/ eslint-disable/;\nconst t = `/* eslint-disable */${String(re)}`;')).toEqual([]);
 });
+test('only comments in ESLint directive grammar count: prose that starts with the same words passes', () => {
+  for (const prose of [
+    '// exported for tests',
+    '// global state lives here',
+    '// globals are frozen',
+    '// eslint.config.js reads this',
+    '// eslint-plugin-sonarjs is pinned',
+    '/* eslint.config.js reads this */',
+    '/* globalThis is used */',
+    '/* exporter of things */',
+  ])
+    expect(ts(prose), prose).toEqual([]);
+  for (const directive of [
+    '// eslint-disable',
+    '// eslint-enable complexity',
+    '// eslint-disable-line',
+    '/* eslint-env node */',
+    '/* exported foo */',
+    '/* global */',
+    '/* eslint */',
+  ])
+    expect(ts(directive), directive).toEqual(['eslint-directive@1']);
+});
 test('every script extension is checked, JSX comments included and JSX text excluded', () => {
   for (const path of ['a.cjs', 'a.cts', 'a.jsx', 'a.tsx']) {
     expect(ts('/* eslint-disable */', path), path).toEqual(['eslint-directive@1']);
