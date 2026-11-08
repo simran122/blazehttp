@@ -632,10 +632,12 @@ unresolved):
 - with equal work we lose to httparse on every workload (1.23–1.95×), to picohttpparser on every
   workload but the single `1k` head (unresolved there), and to llhttp on `1k-h20`; the other llhttp verdicts and every
   Beast `basic_parser` verdict are unresolved at this noise;
-- we beat Beast `response_parser`, Zig `std.http` (which hands no fields out) and Go `net/http`;
-- the split costs as much as the parse; without it we are ahead of every parser by median (parity, unresolved, with
-  httparse on the 20-field and mixed heads and with picohttpparser on `1k-h20`); on 1-byte feeds we are the fastest by
-  median (in a noisy phase);
+- we beat Go `net/http`, and Beast `response_parser` on every workload but the single `1k` head (ahead by median
+  there, unresolved); Zig `std.http` hands no fields out, and our plain row beats it;
+- the split costs as much as the parse, partly because the split helper is plain scalar code (`memchr` per line,
+  `.position()` for the colon); without the split we are ahead of every parser by median (parity, unresolved, with
+  httparse on the 20-field and mixed heads; ahead by median but unresolved against picohttpparser on `1k-h20`); on
+  1-byte feeds we are the fastest by median (in a noisy phase);
 - GCC 12.2 vs 14.2: not resolvable in that run.
 
 To beat every parser with equal work, the parser must record name/value spans during its single scan (Task 4c), and

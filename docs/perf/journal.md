@@ -188,11 +188,11 @@ Record every measured idea. Keep only measured wins.
   | vs | ours+fields / theirs | plain ours / theirs |
   |---|---|---|
   | httparse | **1.16 / 1.64 / 1.73 / 1.96 / 2.02** | 0.70 / 0.89 / 0.87 / 1.08 / 0.86 |
-  | picohttpparser | **1.21 / 1.33 / 1.78 / 1.34 / 1.57** | 0.78 / 0.74 / 0.80 / 0.71 / 0.73 |
-  | llhttp (no field delivery; re-measured 2026-11-08) | 1.27 / 1.08 / 1.13 / 1.13 / 1.54 | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
-  | Beast `basic_parser` (no field delivery; re-measured 2026-11-08) | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
-  | Beast `response_parser` | 0.33 / 0.35 / 0.57 / 0.42 / 0.35 | 0.23 / 0.22 / 0.30 / 0.23 / 0.19 |
-  | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.21 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
+  | picohttpparser | **1.21 / 1.32 / 1.78 / 1.34 / 1.57** | 0.78 / 0.74 / 0.80 / 0.71 / 0.73 |
+  | llhttp (no field delivery; re-measured 2026-11-08) | 1.27 / 1.07 / 1.13 / 1.13 / 1.54 | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
+  | Beast `basic_parser` (no field delivery; re-measured 2026-11-08) | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.45 / 0.54 |
+  | Beast `response_parser` | 0.33 / 0.35 / 0.57 / 0.42 / 0.35 | 0.23 / 0.22 / 0.30 / 0.23 / 0.18 |
+  | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.20 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
   | Go `net/http` | 0.08 / 0.10 / 0.07 / 0.11 / 0.10 | 0.04 / 0.06 / 0.04 / 0.05 / 0.07 |
 
   **Fix round 2 notes:** the split helper is plain scalar code (`memchr` for each line's CR, then `.position()` for
@@ -206,7 +206,7 @@ Record every measured idea. Keep only measured wins.
   ours 0.52 / 0.66 / 0.41 / 0.076 (with fields 0.49 / 0.54 / 0.40 / 0.097), picohttpparser 0.56 / 0.56 / 0.74 / 0.082,
   llhttp 0.62 / 0.73 / 0.52 / 0.073, Zig 0.73 / 0.65 / 0.60 / 0.069, Go 2.05 / 2.03 / 1.95 / 0.30, httparse
   252 / 429 / 314 / 161, Beast 25 ms–2.2 s. **GCC 12.2 vs 14.2** (same rows, second run): no compiler effect resolvable
-  above this noise (picohttpparser ratio on `1k-h20` 1.08 vs 1.33, llhttp 1.37 vs 1.08: they move in opposite
+  above this noise (picohttpparser ratio on `1k-h20` 1.08 vs 1.32, llhttp 1.37 vs 1.07: they move in opposite
   directions between runs).
 - **Where we win / lose (headline, `blazehttp+fields`; by median per-round ratio, unresolved at this noise until the
   quiet re-run):** **httparse is ahead on every workload** (ours+fields takes
@@ -235,18 +235,20 @@ Record every measured idea. Keep only measured wins.
      --out bench/results/2026-11-08-arm64-dev-parsers-gcc12.jsonl`. This step **rebuilt** its images (Rust, C, C++)
      while step 2's results file was still untracked, so the tree counted as dirty: the meta lists only `??
      bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl`, and every image is labelled
-     `8ff4b87…+dirty.6224b242e81d`. That file is outside every build context, so the source is `8ff4b87`, but our
-     parser in the GCC 12 run is a separate build of it.
+     `8ff4b87…+dirty.6224b242e81d`. That file is excluded from every build context (Rust: the
+     `bench/parsers/rust/Dockerfile.dockerignore` whitelist on the repo-root context; C/C++: context
+     `bench/parsers/<lang>`), so the source is `8ff4b87`, but our parser in the GCC 12 run is a separate build of it.
 
   Linux arm64 Docker Desktop on the owner's M2, `--cpus=1 --cpuset-cpus=2 --memory=2g --memory-swap=2g
   --network=none`, no other container at start; other agents' cargo builds ran on the host. **Load rule:** `sysctl -n
   vm.loadavg` every 5 s on the host (raw samples: `bench/results/2026-11-08-arm64-dev-parsers-load-samples.txt`); a
   round runs from the runner's previous stderr marker ("differential gate passed" or "round N/7 done", timestamped
-  when written) to its own "round N/7 done"; the feed phase runs from "round 7/7 done" to the end of the run; a window
-  is **noisy** when its 1-minute load exceeds 6 (`…-round-load.jsonl`, with a meta line stating this rule). GCC 14:
-  rounds 1–4 noisy (6.9–8.6), rounds 5–7 quiet (≤ 5.6), **feed phase noisy** (max 7.25). GCC 12: every round noisy
-  (8.4–10.9) and the feed phase too (max 11.14). A first attempt died in round 7 when the host was suspended for ≈ 18
-  min (`spawnSync … ETIMEDOUT`, no results written) and was restarted from step 1.
+  when written) to its own "round N/7 done"; the feed phase runs from "round 7/7 done" to the end of the run; windows
+  include both ends (a sample on a boundary counts in both windows); a window is **noisy** when its 1-minute load
+  exceeds 6 (`…-round-load.jsonl`, with a meta line stating this rule). GCC 14: rounds 1–4 noisy (6.9–8.6), rounds 5–7
+  quiet (≤ 5.6), **feed phase noisy** (max 7.25). GCC 12: every round noisy (8.4–10.9) and the feed phase too (max
+  11.14). A first attempt died in round 7 when the host was suspended for ≈ 18 min (`spawnSync … ETIMEDOUT`, no
+  results written) and was restarted from step 1.
 
   **Statistics caveat:** medians cover all 7 rounds, noisy ones included; the JSONL keeps only median, min and max per
   row (no per-round series), so quiet-only medians cannot be computed. A verdict whose per-round range crosses 1 is
@@ -291,15 +293,16 @@ Record every measured idea. Keep only measured wins.
     (1k-3-headers 0.72 [0.608, 1.937]; 1k-20-headers 0.81 [0.723, 1.253]; 1k-3-headers-ring64 0.82 [0.742, 1.074];
     1k-20-headers-ring64 0.97 [0.819, 1.201]; mixed-64 0.90 [0.822, 1.058]): unresolved, near parity on the `1k-h20`
     ring and mixed.
-  - **Beast `response_parser`: we win** (0.29–0.53; only the `1k` per-round range crosses 1: 1k-3-headers 0.44 [0.383,
-    1.254]).
+  - **Beast `response_parser`: we win on `1k-h20`, both rings and mixed** (0.29–0.53, ranges below 1); `1k` is ahead
+    by median but unresolved: 1k-3-headers 0.44 [0.383, 1.254].
   - **Go `net/http`: we win** (0.08–0.15, every range below 1).
 - **Unequal work, stated separately:** Zig `std.http` hands no fields out, so compare it with our plain row: we win
   (0.11–0.15, with fields 0.22–0.26). Our plain row (framing facts only) is ahead of every parser by median, but these
   ranges cross 1: 1k-20-headers 0.93 [0.839, 1.309]; 1k-20-headers-ring64 0.94 [0.822, 1.002]; mixed-64 0.93 [0.789,
-  1.143] vs httparse; 1k-20-headers 0.68 [0.638, 1.041] vs picohttpparser (parity, unresolved). 1-byte feeds: fastest
-  by median on all four inputs, and our median is below every rival's minimum; margins over the best rival 36%, 11%,
-  33%, 8% (with fields 41%, 17%, 55%, 7%), measured in a noisy phase.
+  1.143] vs httparse (parity, unresolved); 1k-20-headers 0.68 [0.638, 1.041] vs picohttpparser (ahead by median,
+  unresolved). 1-byte feeds: fastest by median on all four inputs, and our median is below every rival's minimum; the
+  best rival takes 36%, 11%, 33%, 8% longer than our plain row on (a)–(d) (than our row with fields: 41%, 17%, 55%,
+  7%), measured in a noisy phase.
 - **What must change to beat every parser:** the split doubles our cost, so the parser must emit name/value spans
   during its single scan (Task 4c, "spans in scan"); then P1a SIMD must take it below httparse (≤ 0.85× on `1k-h20`
   with fields), picohttpparser and llhttp, on arm64 and x64 (x64 still unmeasured).
@@ -310,4 +313,5 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** results `bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl`, `…-gcc12.jsonl`, their
   `…-round-load.jsonl` and `…-load-samples.txt`. They supersede the numbers of the 2026-11-07 cross-language entries
   (not the `h1_parse_bench` entries).
-- **Commit:** results `7295506` and load metadata in this commit, measured at `8ff4b87`.
+- **Commit:** results `7295506`, load metadata `255aa65` (window edges stated in a later commit), measured at
+  `8ff4b87`.
