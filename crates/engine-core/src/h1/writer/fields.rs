@@ -146,8 +146,12 @@ fn classify(name: &[u8]) -> NameClass {
 
 /// Whether two field names are the same field once ASCII case is folded and `_` is read as `-` (the spelling rule of
 /// the name policy and of the sensitive-name match).
+///
+/// The plain case-insensitive compare answers the common case first; the folding loop runs only when it fails
+/// (measured: the fold alone cost ≈ 10–15 ns per `post1k` request, docs/perf/journal.md).
 fn same_name(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| fold(x) == fold(y))
+    a.eq_ignore_ascii_case(b)
+        || (a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| fold(x) == fold(y)))
 }
 
 fn fold(b: u8) -> u8 {
