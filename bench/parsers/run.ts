@@ -27,7 +27,7 @@ const INVOCATION_TIMEOUT_MS = 120_000;
 /** Every container this runner starts: bounded memory (swap included, so the bench host never runs out), no network. */
 const CONTAINER_LIMITS = ['--memory=2g', '--memory-swap=2g', '--network=none'] as const;
 
-/** A harness container's flags: the limits plus one CPU of quota pinned to vCPU `cpuset` (recorded as run). */
+/** A harness container's flags: the limits plus one CPU of quota pinned to vCPU `cpuset`; recorded in `meta.container`. */
 const harnessFlags = (cpuset: string): string[] => ['--cpus=1', `--cpuset-cpus=${cpuset}`, ...CONTAINER_LIMITS];
 
 /** One image build, downloads included; a slower build is hung (Docker Hub pulls hung for hours on the bench host). */
@@ -288,7 +288,10 @@ function versions(options: Options): Record<string, string> {
   );
 }
 
-/** The working tree's state, taken before any image is built, so results from uncommitted code can be traced. */
+/**
+ * The working tree's state (commit, dirty files, digest of uncommitted work); `main` takes it before and after the
+ * image builds.
+ */
 function tree(): TreeState {
   const untracked = readUntrackedAll(
     ROOT,

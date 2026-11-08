@@ -16,7 +16,7 @@ export interface TreeState {
   readonly commit: string;
   /** `git status --porcelain` lines; empty for a clean tree. */
   readonly dirtyFiles: readonly string[];
-  /** SHA-256 over the tracked diff and every untracked entry (path, kind and content); null for a clean tree. */
+  /** `dirtyDigest` of the tracked diff and every untracked entry; null for a clean tree. */
   readonly dirtySha256: string | null;
 }
 
@@ -68,7 +68,7 @@ export function untrackedPaths(output: Buffer): Buffer[] {
 }
 
 /**
- * Reads one untracked entry under `root` the way git hashes it: a symbolic link's target text (never followed, so a
+ * Reads one untracked entry under `root` as git would store it: a symbolic link's target text (never followed, so a
  * link to a directory or a dangling link works), otherwise the file's bytes.
  */
 export function readUntracked(root: string, path: Buffer): UntrackedFile {
@@ -119,8 +119,8 @@ export function revision(tree: TreeState): string {
 }
 
 /**
- * Why the source changed between two snapshots (at the start of a run and after its image builds, or after the image
- * check with `--no-build`), or undefined when it did not: images built while the tree changed may mix both versions.
+ * Why the source changed between two snapshots (at the start of a run, and again after its image builds, or right away
+ * with `--no-build`), or undefined when it did not: images built while the tree changed may mix both versions.
  */
 export function sourceChange(before: TreeState, after: TreeState): string | undefined {
   return revision(before) === revision(after)
