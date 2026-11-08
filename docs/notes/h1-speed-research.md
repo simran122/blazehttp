@@ -828,47 +828,59 @@ our design. Status per source in §9.
 ### 4.1 Parabix bit streams: ScanThru and MatchStar — the carry primitive for HTTP lines
 
 - **Source (verified, primary text):** Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data
-  Parallelism in Regular Expression Matching*, PACT 2014. Text represents a block of input as one bit stream per
-  character class ("parallel bit streams"); markers advance through a class with an **addition**, whose carries move
-  every marker through its run at once: `MatchStar(M, C) = (((M ∧ C) + C) ⊕ C) ∨ M` (§3), which "differs from
-  ScanThru of the Parabix tool chain in that it finds all matches, not just the longest". Carries between 64-bit
-  words are kept per addition by the Pablo compiler, and the paper's contribution is long-stream addition for
-  blocks ≥ 256 bits. Reported: 1–4 CPU cycles per byte for full regex matching on SSE2/AVX2.
+  Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 (dblp `conf/IEEEpact/CameronSSH0HL14`). Text is represented as one
+  bit stream per character class ("parallel bit streams"); markers advance through a class with an **addition**,
+  whose carries move every marker through its run at once: `MatchStar(M, C) = (((M ∧ C) + C) ⊕ C) ∨ M` (§3), which
+  "differs from ScanThru of the Parabix tool chain in that it finds all matches, not just the longest". Carries
+  between 64-bit words are kept per addition by the Pablo compiler; the paper adds long-stream addition for blocks
+  ≥ 256 bits. Reported: 1–4 CPU cycles per byte for full regex matching on SSE2/AVX2.
 - **ScanThru** (the longest-match form we need): `ScanThru(M, C) = (M + C) ∧ ¬C` moves each marker in `M` to the
-  first byte after the run of class `C` that starts at it. For an HTTP field line: markers at line starts, `C` =
-  tchar → lands on the byte after the name, which must be `:`; markers after the colon, `C` = field-content → lands on
-  the value's end, which must be CR, followed by LF. **All lines of a 64-byte block are validated with two additions
-  and a handful of AND/OR/XOR, no per-line branch.**
-- **Verified for HTTP by a differential test (2026-11-08):** `tools/scanthru_check.py` in the session scratchpad
-  (written by the papers survey, re-run for this note: `ok {'ok': 129666, 'more': 33812, 'err': 36522}` in 9.4 s)
-  implements a strict field-section validator over 64-bit blocks — five class bitmaps (LF, CR, `:`, tchar,
-  field-content), two chained ScanThrus with `carrying_add`, an error mask `(N ∧ ¬colon) ∨ (E ∧ ¬CR) ∨ (A ⊕ LF) ∨ (S
-  ∧ ¬(tchar ∨ CR))` (A = CR shifted by one, S = line starts) — and matches a scalar RFC 9112 reference on 200,000
-  mutated heads **including the exact offset of the first error** and every block-boundary case (empty-line CR at
-  bits 62/63/64, runs crossing blocks). ≈ 32 `u64` operations per 64-byte block on top of the five bitmaps; 5 carry
-  bits between blocks.
-- **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` compiles on stable 1.99.1 under
-  `#![forbid(unsafe_code)]` (compile-only check, 2026-11-08; the papers survey reports it stable since 1.91.0,
-  unverified against the release notes). Only the **classification** (bytes → bitmaps) needs SIMD: rustc 1.99.1 does
-  not auto-vectorise a safe 64-byte compare-to-bitmask loop on aarch64 or x86_64 (§5.0), and exact SWAR costs ≈ 76
-  (aarch64) / 110 (x86_64) instructions per class per 64 B. So: **classification in `engine-simd`, validation and
-  span extraction in safe `engine-core`.**
+  first byte after the run of class `C` that starts at it. For a field line: markers at line starts, `C` = tchar →
+  lands on the byte after the name, which must be `:`; markers after the colon, `C` = field-content → lands on the
+  value's end, which must be CR, followed by LF. **All lines of a 64-byte block are validated with two additions and
+  a handful of AND/OR/XOR, with no per-line branch.**
+- **Verified for HTTP by an executable model (run 2026-11-08):** `spike/h1-research/scanthru_model.py` implements
+  exactly the P-D pseudocode of §5.5 (six carry bits including the pending empty-line CR, the head-end limit
+  `bits ≤ h + 1`, flatten inputs masked by the limit and the received length) and the W-D writer form of §6.5, and
+  checks them against scalar references that emit **spans**:
+  - `python3 -I spike/h1-research/scanthru_model.py` (seed 9112) printed
+    `parser {'more': 16132, 'ok': 66481, 'err': 17387}`, `parser regressions + boundary sweep 3`,
+    `writer accepted 42052 of 100000` (≈ 12 s).
+  - Parser: 100,000 mutated heads, each parsed whole and split at 0–3 random points through the line-start hand-off
+    between P-D and the scalar parser (§5.5); result, head end, **every span** and the exact first-error offset must
+    equal the reference. Plus the three review counterexamples (empty-line CR at bit 63 followed by a body line, a
+    bare CR after the last CRLF, a body line after the head end) and a boundary sweep (paddings 0–139 × five tails ×
+    **every single split point**).
+  - Writer: 100,000 mutated deltas with declared line counts off by −1/0/+1, plus the smuggling and unterminated
+    deltas and empty names (§6.5).
+  - The first version of the model (an earlier survey script) checked only accept/reject and error offsets in one
+    call; it is superseded.
+- **Cost:** ≈ 32 `u64` operations per 64-byte block on top of the five class bitmaps; 6 carry bits between blocks
+  (parser form).
+- **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` is stable since 1.91.0 and
+  compiles on 1.99.1 under `#![forbid(unsafe_code)]` (compile-only check, `spike/h1-research/asmcheck`, function
+  `scan_thru`; [std docs](https://doc.rust-lang.org/1.99.1/std/primitive.u64.html#method.carrying_add)). Only the
+  **classification** (bytes → bitmaps) needs SIMD: rustc 1.99.1 does not auto-vectorise a safe 64-byte
+  compare-to-bitmask loop (§5.0). So: **classification in `engine-simd`, validation and span extraction in safe
+  `engine-core`.**
 - **Resumability:** every check is causal (a bit depends only on bytes at or before it, plus the one-byte CR→LF
-  lookahead carried as a bit), so the parser checkpoints the carry bits at the last complete block and
-  re-classifies at most a 63-byte tail on the next call.
+  lookahead carried as a bit). §5.5 uses this for a hand-off at line starts rather than a carry checkpoint, so that
+  every line is committed exactly once.
 
 ### 4.2 simdjson stage 1 in depth (verified, source at `v5.1.1`)
 
-- Strings: `prefix_xor` by carry-less multiply (`_mm_clmulepi64_si128` on x64, `vmull_p64` on arm64;
-  `include/simdjson/haswell/bitmask.h` L18–22, `arm64/bitmask.h` L17–22) turns quote bits into "inside a string"
-  regions; the odd-backslash sequence logic carries across blocks. **HTTP has no quoting in the head grammar we
-  validate** (quoted strings only appear inside values, which are opaque), so prefix-XOR is not needed — ScanThru is
-  the right primitive (the line structure is "run of class X, then a delimiter").
-- Index extraction (`src/generic/stage1/json_structural_indexer.h` `bit_indexer::write`, L82–93, `write_indexes`
-  L44–76): `tzcnt` + clear-lowest-bit, writing a fixed number of indexes unconditionally, then the rest only when the
-  popcount is larger — no data-dependent branch per index. For HTTP: four bitmaps with one bit per line (name start,
-  colon, value start, value end) → four independent index arrays → spans, with no dependent chain from one span to
-  the next.
+- Strings: `prefix_xor` turns quote bits into "inside a string" regions — by carry-less multiply on x64
+  (`_mm_clmulepi64_si128`, `include/simdjson/haswell/bitmask.h` L18–22) and by a shift-XOR cascade on arm64 (the
+  `vmull_p64` form is commented out as slower, `include/simdjson/arm64/bitmask.h` L17–30). **HTTP has no quoting in
+  the head grammar we validate** (quoted strings only appear inside opaque values), so prefix-XOR is not needed —
+  ScanThru is the right primitive (the line structure is "run of class X, then a delimiter").
+- Index extraction (`src/generic/stage1/json_structural_indexer.h` `bit_indexer::write`, L93–122): returns early on
+  an empty mask (a branch the comment calls sometimes mispredicted, sometimes helpful), takes the popcount, writes
+  indexes in unrolled steps of 4 up to 24 (`write_indexes_stepped`, `tzcnt` + clear-lowest-bit), and loops for the
+  rest only when the popcount exceeds 24 (`simdjson_unlikely`). For HTTP: four bitmaps with one bit per line (name
+  start, colon, value start, value end) → four index arrays → spans, with no dependent chain from one span to the
+  next; with ≤ 16 lines per 64-byte block (the minimum line `a:\r\n` is 4 bytes) one step-of-4 unroll to 16 covers a
+  block.
 - Padding: stage 1 reads whole blocks; inputs are padded (SIMD note §3.6).
 
 ### 4.3 "Validate fast, locate on error" (simdutf, verified at `v9.3.3`)
