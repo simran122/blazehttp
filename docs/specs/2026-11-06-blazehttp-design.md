@@ -443,9 +443,16 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
    - **Rust** (`clippy.toml` at the repo root, read by both workspaces): `too_many_lines` with `too-many-lines-threshold = 60` (the lint is in `clippy::pedantic`, already denied); `too_many_arguments` with `too-many-arguments-threshold = 4` (Rust counts `self`). Clippy counts only lines with code: blank and comment-only lines are skipped, and closures count toward their enclosing function.
    - **TypeScript/JS** (`eslint.config.js`, all `.ts` and `.js` files, tests included): `max-lines-per-function` 60 with `skipBlankLines`, `skipComments` and `IIFEs` (nested callbacks and IIFEs count toward the outer function, the same as clippy), `complexity` ≤ 10, `max-depth` ≤ 4, and `@typescript-eslint/max-params` ≤ 4 (the typescript-eslint extension of `max-params`, which ignores a `this: void` parameter). Pass an object when there are more parameters.
    - **Tests get no higher limit.** Table-driven tests keep their tables and fixtures in module-level constants and helpers, never inside a test body. `describe` blocks group by topic and stay within the limit. Large golden outputs live in fixture files (`toMatchFileSnapshot`), not inline snapshots.
-   - **Exceptions** to any rule-9 lint are allowed only in one of two forms, and a reviewer must approve each one:
-     - Rust: `#[expect(<lint>, reason = "…")]`. CI denies `allow_attributes` and `allow_attributes_without_reason` in both workspaces. Unlike `allow`, `expect` fails once the exception is no longer needed.
-     - TypeScript/JS: `// eslint-disable-next-line <rule> -- <reason>`. The `eslint-disable-reason` policy check rejects every other directive form (file or block `eslint-disable`, `-line`, or no `-- reason`). ESLint runs with `reportUnusedDisableDirectives: 'error'` and `--max-warnings 0`.
+   - **Exceptions** to any rule-9 lint are allowed only in one of two forms, and a reviewer must approve each one.
+     - **Rust: `#[expect(<lint>, reason = "…")]`.** Unlike `allow`, `expect` fails once the exception is no longer needed. CI enforces the form in three ways:
+       - Clippy denies `allow_attributes`, which catches outer `#[allow]`, and `allow_attributes_without_reason`, which catches a missing `reason`. Both workspaces set these lints.
+       - Clippy's `allow_attributes` does not see inner `#![allow]`. So the `rust-allow-attribute` policy check (`pnpm policy`) rejects `allow(` in every attribute form, read bracket-balanced across lines: outer, inner, and inside `cfg_attr`.
+       - `rust-allow-forbidden` rejects any `allow` or `expect` of `deprecated`, `dead_code` or `unused*`.
+     - **TypeScript/JS: a line comment that is exactly `// eslint-disable-next-line <rule>[, <rule>…] -- <reason>`.**
+       - The `eslint-directive` policy check takes every comment from the TypeScript parse tree, so strings, templates, regexes and JSX text are not comments. It rejects any other comment that ESLint would read as a directive or as inline config: one starting with `eslint`, `global`, `globals` or `exported`, multi-line blocks and several comments on one line included.
+       - The check runs outside ESLint, so no directive can switch it off.
+       - ESLint itself runs with `reportUnusedDisableDirectives: 'error'` and `--max-warnings 0`, so a disable that suppresses nothing fails.
+     - **Not machine-checked:** whether a reason is good, the reviewer's approval, and rule changes in `eslint.config.js` or `clippy.toml` themselves. These are part of code review.
      - A hot-path exception needs a criterion/parser-bench measurement (§7; `crates/engine-core/examples/h1_parse_bench.rs`) showing that splitting the function costs more than 2 %, recorded in `docs/perf/journal.md`.
    - Reviewers also check single responsibility by hand: no linter can tell whether a name is honest.
 
