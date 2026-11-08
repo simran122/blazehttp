@@ -7,6 +7,7 @@ component** (design §7, §16.2); it says nothing about whole clients (that is t
 ```sh
 pnpm bench:parsers                        # build every image, gate, time, print tables, write JSONL
 node bench/parsers/run.ts --rounds 10     # more rounds; --run-ms, --feed-rounds, --cpuset, --cc, --parsers, --out, --no-build
+node bench/parsers/run.ts --gate-only     # build the images and run only the differential gate (no timing)
 node bench/parsers/run.ts --cc gcc-12 --parsers picohttpparser,llhttp,beast-response-parser,beast-basic-parser --out <file>
 ```
 

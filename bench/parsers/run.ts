@@ -1,6 +1,6 @@
 // Cross-language response-head parser bench runner (bench/parsers/README.md).
 // Usage: node bench/parsers/run.ts [--rounds 7] [--run-ms 300] [--feed-rounds 5] [--cpuset 2] [--cc gcc-14|gcc-12]
-//                                  [--parsers id,id] [--out <file.jsonl>] [--no-build]
+//                                  [--parsers id,id] [--out <file.jsonl>] [--no-build] [--gate-only]
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -145,6 +145,8 @@ interface Options {
   readonly parsers: readonly Parser[];
   readonly out: string | undefined;
   readonly build: boolean;
+  /** Build and run the differential gate only: no timing, no results file. */
+  readonly gateOnly: boolean;
 }
 
 function run(command: string, args: readonly string[]): string {
@@ -327,6 +329,7 @@ function options(): Options {
       parsers: { type: 'string' },
       out: { type: 'string' },
       'no-build': { type: 'boolean', default: false },
+      'gate-only': { type: 'boolean', default: false },
     },
   });
   if (COMPILERS[values.cc] === undefined) throw new Error(`--cc must be one of ${Object.keys(COMPILERS).join(', ')}`);
@@ -343,6 +346,7 @@ function options(): Options {
     parsers: PARSERS.filter((p) => p.id === OURS || p.id === OURS_WITH_FIELDS || (wanted?.includes(p.id) ?? true)),
     out: values.out,
     build: !values['no-build'],
+    gateOnly: values['gate-only'],
   };
 }
 
@@ -353,7 +357,7 @@ function main(): void {
   const arch = String(docker.Architecture);
   const out =
     opts.out ?? join(ROOT, 'bench/results', `${date}-${arch === 'aarch64' ? 'arm64' : arch}-dev-parsers.jsonl`);
-  if (existsSync(out)) throw new Error(`${out} exists; pass --out to write this run elsewhere`);
+  if (!opts.gateOnly && existsSync(out)) throw new Error(`${out} exists; pass --out to write this run elsewhere`);
 
   // Benchmark host rule: never share the CPUs with containers this run did not start (and never stop them).
   const running = run('docker', ['ps', '--format', '{{.Names}} {{.Image}}']).trim();
@@ -367,6 +371,7 @@ function main(): void {
     for (const w of all) writeFileSync(join(workDir, `${w.name}.http`), Buffer.concat(w.heads));
     const loadBefore = loadavg();
     const checks = gate(opts, workDir, all);
+    if (opts.gateOnly) return;
     const timedWorkloads = all.filter((w) => w.kind === 'timed');
     const samples = timeAll(opts, workDir, timedWorkloads);
     const feeds = feedAll(
