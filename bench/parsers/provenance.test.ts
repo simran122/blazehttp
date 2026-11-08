@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   dirtyDigest,
@@ -21,6 +21,25 @@ const file = (path: string, content: string): UntrackedFile => ({
   kind: 'file',
   content: Buffer.from(content),
 });
+
+/**
+ * A temp dir made (and filled by `setup`) before the suite's tests and removed after them; it is removed even when
+ * `setup` fails, because the directory exists before `setup` runs.
+ */
+function tempDir(prefix: string, setup: (dir: string) => void): () => string {
+  let dir: string | undefined;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), prefix));
+    setup(dir);
+  });
+  afterAll(() => {
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+  });
+  return () => {
+    if (dir === undefined) throw new Error(`${prefix} temp dir was not created`);
+    return dir;
+  };
+}
 
 describe('dirtyDigest', () => {
   const none = Buffer.alloc(0);
@@ -82,22 +101,20 @@ describe('untrackedPaths', () => {
 });
 
 describe('readUntracked', () => {
-  const root = mkdtempSync(join(tmpdir(), 'provenance-'));
-  mkdirSync(join(root, 'dir'));
-  writeFileSync(join(root, 'plain.txt'), 'bytes');
-  symlinkSync('dir', join(root, 'link-to-dir'));
-  symlinkSync('missing/target', join(root, 'dangling'));
-  afterAll(() => {
-    rmSync(root, { recursive: true, force: true });
+  const root = tempDir('provenance-', (dir) => {
+    mkdirSync(join(dir, 'dir'));
+    writeFileSync(join(dir, 'plain.txt'), 'bytes');
+    symlinkSync('dir', join(dir, 'link-to-dir'));
+    symlinkSync('missing/target', join(dir, 'dangling'));
   });
 
   it('hashes a file by its bytes', () => {
-    expect(readUntracked(root, Buffer.from('plain.txt'))).toEqual(file('plain.txt', 'bytes'));
+    expect(readUntracked(root(), Buffer.from('plain.txt'))).toEqual(file('plain.txt', 'bytes'));
   });
 
   it('hashes a symbolic link by its target text without following it (directory and dangling targets)', () => {
-    expect(readUntracked(root, Buffer.from('link-to-dir'))).toEqual({ ...file('link-to-dir', 'dir'), kind: 'link' });
-    expect(readUntracked(root, Buffer.from('dangling'))).toEqual({
+    expect(readUntracked(root(), Buffer.from('link-to-dir'))).toEqual({ ...file('link-to-dir', 'dir'), kind: 'link' });
+    expect(readUntracked(root(), Buffer.from('dangling'))).toEqual({
       ...file('dangling', 'missing/target'),
       kind: 'link',
     });
@@ -123,27 +140,24 @@ describe('staleImages', () => {
 });
 
 describe('untracked entries as git lists them', () => {
-  const repo = mkdtempSync(join(tmpdir(), 'provenance-git-'));
-  const gitIn = (cwd: string, ...args: string[]): Buffer => {
+  const git = (cwd: string, ...args: string[]): Buffer => {
     const result = spawnSync('git', args, { cwd });
     if (result.status !== 0) throw new Error(result.stderr.toString());
     return result.stdout;
   };
-  const git = (...args: string[]): Buffer => gitIn(repo, ...args);
-  git('init', '-q');
-  mkdirSync(join(repo, 'dir'));
-  writeFileSync(join(repo, 'dir', 'inner.txt'), 'inner');
-  symlinkSync('dir', join(repo, 'link-to-dir'));
-  symlinkSync('missing/target', join(repo, 'dangling'));
-  mkdirSync(join(repo, 'nested'));
-  gitIn(join(repo, 'nested'), 'init', '-q');
-  afterAll(() => {
-    rmSync(repo, { recursive: true, force: true });
+  const repo = tempDir('provenance-git-', (dir) => {
+    git(dir, 'init', '-q');
+    mkdirSync(join(dir, 'dir'));
+    writeFileSync(join(dir, 'dir', 'inner.txt'), 'inner');
+    symlinkSync('dir', join(dir, 'link-to-dir'));
+    symlinkSync('missing/target', join(dir, 'dangling'));
+    mkdirSync(join(dir, 'nested'));
+    git(join(dir, 'nested'), 'init', '-q');
   });
 
   it('reads symlinks as links, skips the nested repository and never follows a link', () => {
-    const entries = untrackedPaths(git('ls-files', '-z', '--others', '--exclude-standard')).map((path) =>
-      readUntracked(repo, path),
+    const entries = untrackedPaths(git(repo(), 'ls-files', '-z', '--others', '--exclude-standard')).map((path) =>
+      readUntracked(repo(), path),
     );
     expect(entries.map((e) => [e.path.toString(), e.kind, e.content.toString()]).sort()).toEqual([
       ['dangling', 'link', 'missing/target'],
@@ -171,30 +185,28 @@ describe('sourceChange', () => {
 });
 
 describe('readUntrackedAll', () => {
-  const root = mkdtempSync(join(tmpdir(), 'provenance-race-'));
-  afterAll(() => {
-    rmSync(root, { recursive: true, force: true });
+  const root = tempDir('provenance-race-', (dir) => {
+    writeFileSync(join(dir, 'kept.txt'), 'kept');
   });
-  writeFileSync(join(root, 'kept.txt'), 'kept');
   const failing = (code: string) => (): UntrackedFile => {
     throw Object.assign(new Error(code), { code });
   };
 
   it('reads entries that are still there', () => {
-    expect(readUntrackedAll(root, [Buffer.from('kept.txt')])).toEqual([file('kept.txt', 'kept')]);
+    expect(readUntrackedAll(root(), [Buffer.from('kept.txt')])).toEqual([file('kept.txt', 'kept')]);
   });
 
   it('reports an entry deleted after git listed it as a moving tree', () => {
-    expect(() => readUntrackedAll(root, [Buffer.from('deleted.txt')])).toThrow(
+    expect(() => readUntrackedAll(root(), [Buffer.from('deleted.txt')])).toThrow(
       'the source tree changed while it was read ("deleted.txt": ENOENT); run again on a still tree',
     );
   });
 
   it.each(['EISDIR', 'ENOTDIR'])('reports %s (an entry that changed type) as a moving tree', (code) => {
-    expect(() => readUntrackedAll(root, [Buffer.from('x')], failing(code))).toThrow(`("x": ${code}); run again`);
+    expect(() => readUntrackedAll(root(), [Buffer.from('x')], failing(code))).toThrow(`("x": ${code}); run again`);
   });
 
   it('rethrows any other error unchanged', () => {
-    expect(() => readUntrackedAll(root, [Buffer.from('x')], failing('EACCES'))).toThrow(/^EACCES$/);
+    expect(() => readUntrackedAll(root(), [Buffer.from('x')], failing('EACCES'))).toThrow(/^EACCES$/);
   });
 });
