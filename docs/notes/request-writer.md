@@ -144,7 +144,7 @@ so `master` is pinned). Line ranges are those read for this note.
 | undici GHSA-4992-7rv2-5pvq / CVE-2026-1527 | CRLF via the `upgrade` option | `upgrade`/`connection` forbidden; no upgrade path in 1.0 | JS + Rust | `rejects_forbidden_user_headers` |
 | undici GHSA-m8rv-5g2x-5cg5 / CVE-2026-15157 (fixed 8.9.0) | CRLF via a blob-like body's `.type` pushed into headers unvalidated | same as CVE-2022-35948: Rust validates the assembled delta and its line count, not individual sinks | Rust | `injection_vectors`, `rejects_injected_line_by_count` |
 | undici GHSA-2mjp-6q6p-2qxm / CVE-2026-1525 | Two `Content-Length` fields via case variants in a header array | user `content-length` forbidden in any case; exactly one generated | JS + Rust | `rejects_forbidden_user_headers` (case variants), fuzz property "exactly one CL" |
-| undici GHSA-8qr4-xgw6-wmr3 / CVE-2022-35949 | `pathname` given as an absolute URL changed the request's origin (SSRF) | target must start with `/`; `//x` is valid origin-form and cannot change Host (§6.3); URL joining is P2's | JS + Rust | `target_must_start_with_slash`, `accepts_double_slash_target` |
+| undici GHSA-8qr4-xgw6-wmr3 / CVE-2022-35949 | `pathname` given as an absolute URL changed the request's origin (SSRF) | target must start with `/`; `//x` is valid origin-form and cannot change Host (§6.3); URL joining is P2's | JS + Rust | `target_must_be_origin_form` (`INVALID_TARGETS`, `VALID_TARGETS`) |
 | undici GHSA-3787-6prv-h9w3 / CVE-2024-24758, GHSA-wqq4-5wpv-mx2g / CVE-2023-45143; Go GO-2024-2600 / CVE-2023-45289; curl CVE-2018-1000007 | `Proxy-Authorization`, `Cookie`, `Authorization` or custom credentials kept on a cross-origin redirect | template bound to `conn_authority` (§6.6); P1b rebuilds the template and filters the delta without `sensitiveHeaders` on a cross-origin hop (§10.3) | Rust (now + P1b) | `rejects_template_for_other_authority`; P1b `cross_origin_redirect_strips_template_and_delta_sensitive_fields` |
 | undici GHSA-35p6-xmwp-9g52 / CVE-2026-6733 | Unsolicited response on an idle keep-alive socket attached to the next request | not a writer rule → Task 6 (`any byte while idle → close`, design §5.1) | Rust (Task 6) | Task 6 |
 | Node CVE-2018-12116 (< 6.15 / 8.14) | Unicode path written as latin1: U+010D U+010A → CR LF | JS writes deltas with `buf.write(str, off, 'latin1')`: code points > 0xFF must be rejected **before** the write (design §10); Rust sees only bytes and rejects CR/LF either way | JS + Rust | P2 test; Rust `injection_vectors` (CR/LF bytes) |
@@ -270,17 +270,19 @@ are not needed: one `write`/`writev` per request already carries the whole reque
 ## 6. Chosen design (precise)
 
 ### 6.1 Files (Task 5 scope)
-- `crates/engine-core/src/h1/writer.rs`: `HeaderTemplate`, `RequestParts`, `Reuse`, `write_request`, and the private
-  helpers: the `HOST` byte class, the name classifier (forbidden and singleton names), the target and field-line
-  validators, and the one framing predicate. One responsibility (serialise a request head). Split into
-  `writer/{mod.rs, template.rs}` only if it grows past ≈ 500 lines.
+- `crates/engine-core/src/h1/writer/` (split in fix round 1, design §13.1 rule 2): `mod.rs` serialises a request
+  (`RequestParts`, `Reuse`, `write_request`, the framing predicate, the target check, `MAX_P0_REQUEST_BYTES`);
+  `fields.rs` validates field blocks for template and delta (line grammar, the name classifier with forbidden and
+  singleton names, the line count, sensitive names); `template.rs` holds `HeaderTemplate` and the host validation.
 - `crates/engine-core/src/h1/grammar.rs` (already on `milestone/p0`): reused as is (`TCHAR`, `FIELD_CONTENT`,
   `token_len`, `value_len`). **No new table there.** The target check uses `u8::is_ascii_graphic` and a `#` test
   (§6.3), and `HOST` stays in `writer.rs` because only the writer uses it (design §13.1 rule 1).
 - `crates/engine-core/src/h1/mod.rs`: re-exports `HeaderTemplate`, `RequestParts`, `Reuse` and `write_request`.
   The `#![deny(clippy::indexing_slicing, clippy::arithmetic_side_effects, clippy::unwrap_used, clippy::expect_used,
   clippy::panic, clippy::unreachable)]` block now at the top of `grammar.rs` is **hoisted once to `h1/mod.rs`**, so
-  `grammar.rs`, `parser/` and `writer.rs` all inherit it (lint attributes on a module apply to its children; DRY).
+  `grammar.rs`, `parser/` and `writer/` all inherit it (a lint attribute on a module applies to everything inside
+  it, [rustc book: lint levels via attributes](https://doc.rust-lang.org/1.99.1/rustc/lints/levels.html#via-compiler-flag); DRY). The error codes
+  shared by parser and writer (`INTERNAL`, `HEADERS_TOO_LARGE`) live once in `h1/mod.rs`.
   The now-duplicated blocks in `grammar.rs`, `parser/mod.rs` and `parser/facts.rs` are deleted (X11); behaviour is
   unchanged and the parser tests stay green.
 - Tests and tools:
@@ -309,17 +311,22 @@ pub struct HeaderTemplate {
     sensitive: bool,  // contains a name from the client's sensitiveHeaders list
 }
 impl HeaderTemplate {
-    pub fn new(host: &[u8], fields: &[u8], sensitive_names: &[&[u8]]) -> Result<Self, ErrorCode>;
+    pub fn new(host: &[u8], fields: &[u8], field_lines: u16, sensitive_names: &[&[u8]]) -> Result<Self, ErrorCode>;
     pub fn authority(&self) -> &[u8];
     pub fn is_sensitive(&self) -> bool;
-    pub(crate) fn as_bytes(&self) -> &[u8];
+    pub(super) fn bytes(&self) -> &[u8];      // for write_request (writer/mod.rs)
+    pub(super) fn singletons(&self) -> u8;
 }
 ```
 - **`host`** is WHATWG `url.host` as JS produces it: punycoded, lowercase, IPv6 bracketed, default port omitted, no
-  userinfo (design §12; P2 hand-off §10.4). The structure is checked, not just the bytes (W9):
-  - either `[` then IPv6 bytes (HEXDIG, `:`, `.`) then `]`, or a reg-name/IPv4 of ALPHA / DIGIT / `-._~!$&'()*+,;=`
-    with **no `%`** (WHATWG has already decoded or rejected it);
-  - then optionally `:` and 1–5 DIGIT with a value ≤ 65535;
+  userinfo (design §12; P2 hand-off §10.4). The structure is checked, not just the bytes (W9, fix round 1):
+  - either `[`, an IPv6 literal that parses as [`Ipv6Addr`](https://doc.rust-lang.org/1.99.1/core/net/struct.Ipv6Addr.html) (std, no
+    allocation; so no zone id, no malformed groups and no IPv4 literal in brackets), `]`;
+  - or a reg-name/IPv4 of **lowercase** ALPHA / DIGIT / `-._~!$&'()*+,;=` with **no `%`** (WHATWG has already
+    lowercased, and decoded or rejected percent-encoding) and no empty label (one trailing dot, a fully qualified
+    name, is allowed);
+  - then optionally `:` and 1–5 DIGIT without a leading zero and a value 1–65535 (WHATWG omits default ports and
+    never pads);
   - non-empty.
 
   `,` stays allowed, because RFC 3986 sub-delims includes it and the WHATWG host parser can emit it. The Host of
@@ -328,31 +335,45 @@ impl HeaderTemplate {
   `INVALID_CONFIG {field: 'url', reason: 'host'}` before Rust sees them (§10.4, X7); reaching Rust is a bypass.
 - **`fields`**: same grammar, forbidden set and singleton rule as the per-request delta (§6.4), validated **once**
   here. The singleton bits are recorded for the per-request check.
-- **`sensitive`**: true when any field name equals, ignoring ASCII case, a name in `sensitive_names`. That is the
+- **`fields`'s line count (fix round 1, item 1):** `field_lines` is the number of default fields JS serialised;
+  the template rejects a mismatch with `Engine(Internal)` exactly as the delta does (§6.4 line count), through the
+  same `scan_fields`. A default value carrying `\r\nauthorization: Basic evil` would otherwise ride on every request
+  to that origin.
+- **`sensitive`**: true when any field name is a name in `sensitive_names` under the name policy's spelling rule
+  (ASCII case folded, `_` read as `-` on both sides, fix round 1), so `x_api_key` counts as `x-api-key`. It is
+  recorded in the same pass that validates the fields. That is the
   client's configured `sensitiveHeaders` list, passed with `RegisterTemplate`; the design §8 default is
   `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-auth-token`. The registry uses the
   flag to release sensitive templates immediately (design §11.2), and P1b's redirect stripping uses it (§10.3).
 - **Size:** the host line plus `fields` ≤ `maxRequestFieldsBytes`, else `TooLarge(Headers)` (§7).
-- **Allocation:** one `Vec::try_reserve_exact(total)` filled with the slices, then `into_boxed_slice` (exact capacity,
-  no reallocation). A failed reserve is `Engine(ResourceExhausted)`. The template is built on the control plane
+- **Allocation:** one `Vec::try_reserve_exact(total)` filled with the slices, then `into_boxed_slice`. The
+  allocator may give more than asked ([`try_reserve_exact`](https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.try_reserve_exact):
+  capacity "can not be relied upon to be precisely minimal"), in which case `into_boxed_slice` moves the bytes into
+  an exact allocation ([`into_boxed_slice`](https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.into_boxed_slice)): at most one
+  more allocation, control plane only. A failed reserve is `Engine(ResourceExhausted)`. The template is built on the control plane
   (dispatcher, design §11.3), moved to the shard thread and never mutated again.
 - **No `Clone`.** Copying secret bytes implicitly is unwanted. **Ownership (X1):** Task 6's `ShardConfig` owns the
-  `HeaderTemplate` **by value**. It is `Send + Sync` (`Box<[u8]>`, `usize`, `u8`, `bool`), so it moves from the
+  `HeaderTemplate` **by value**. It is `Send + Sync` (auto traits: every field — `Box<[u8]>`, `usize`, `u8`,
+  `bool` — is, [`Send`](https://doc.rust-lang.org/1.99.1/std/marker/trait.Send.html); pinned by the test `template_is_send_and_sync`), so it
+  moves from the
   control plane to the shard thread; if workers on that thread share it, the shard wraps it in an `Rc` once, on its
   own thread.
 - **Manual `Debug`** (W8): prints byte lengths, `authority().len()` and the `sensitive` flag, never the bytes. The
   head is never logged or traced. After `out.clear()` a pooled `out` still holds old credentials in memory past
-  `len`. They are off the wire and unreachable through safe code; this is documented and accepted.
+  `len`, and a dropped `HeaderTemplate` frees its bytes without zeroing them (item 23). Both are off the wire and
+  unreachable through safe code; this is documented and accepted.
 - **Registry rules (W7; template registry task, recorded here):** a template is looked up by `(id, generation)`. A
   stale generation fails (`Engine(Internal)`) and never falls back to another template. Content-keyed deduplication
   compares the **full bytes, host included**, never a hash alone.
 
 ### 6.3 Request target (origin-form)
 - **Non-empty**, first byte `/` (origin-form, RFC 9112 §3.2.1), and at most `maxRequestTargetBytes`.
-- **Every byte `u8::is_ascii_graphic()` (0x21–0x7E) and not `#`.** That rules out SP, CTL, DEL, 0x80–0xFF and the
-  fragment delimiter. RFC 9112's origin-form is `absolute-path [ "?" query ]`; a `#` would start a fragment, which is
-  never sent and which some servers truncate at, a differential (W4). It is checked with a branch-free fold:
-  `t.iter().fold(true, |ok, &b| ok & b.is_ascii_graphic() & (b != b'#'))`. That is stricter than undici (whose path
+- **Every byte `u8::is_ascii_graphic()` (0x21–0x7E) and not `#`, `"`, `<` or `>`, and no `\` before the first
+  `?`** (fix round 1, item 17). That rules out SP, CTL, DEL, 0x80–0xFF and the fragment delimiter; WHATWG always
+  percent-encodes `"`, `<` and `>`, and some servers read `/\x` as `//x`. Deviation from RFC 3986, recorded: `^`, `` ` ``,
+  `{`, `|`, `}` and `\` in the query stay accepted because WHATWG leaves them raw in queries. RFC 9112's origin-form is `absolute-path [ "?" query ]`; a `#` would start a fragment, which is
+  never sent and which some servers truncate at, a differential (W4). It is checked with one branch-free fold that
+  also tracks whether the query has started. That is stricter than undici (whose path
   regex rejects only code points outside U+0021–U+00FF) and Bun (accepts ≥ 0x80). The URL layer percent-encodes
   (design §5.2).
 - **`//evil.example/x` is accepted (decision, W11).** It is a valid origin-form: `absolute-path = 1*( "/" segment )`
@@ -381,10 +402,14 @@ field-value = *FIELD_CONTENT                 ; grammar::value_len (HTAB, SP–'~
 - **Allowed:** empty values (`x: \r\n` is trailing OWS and valid), and leading or trailing SP/HTAB inside a value as
   OWS. Nothing is trimmed; undici and axios do not trim either, while Go does. P2 decides the user-facing behaviour.
 - **Name classification:** one private `fn classify(name: &[u8]) -> NameClass` with
-  `enum NameClass { Forbidden, Singleton(u8), Other }`. It matches on `name.len()` first, then
-  `eq_ignore_ascii_case` against at most three candidates, so it is O(1) per line.
-- **Forbidden names (W10):** `host`, `transfer-encoding`, `connection`, `upgrade`, `expect`, `te`, `keep-alive`,
-  `proxy-connection`, `proxy-authorization`, `content-length`, plus **the underscore spelling of every forbidden or
+  `enum NameClass { Forbidden, Singleton(u8), Other }`. It checks the `proxy-` prefix, matches on `name.len()`, then
+  compares with at most three candidates through `same_name` (ASCII case folded, `_` read as `-`), so it is O(1) per
+  line.
+- **Forbidden names (W10; fix round 1 adds `trailer`, `http2-settings` and the `proxy-` prefix):** `host`,
+  `transfer-encoding`, `connection`, `upgrade`, `expect`, `te`, `keep-alive`, `content-length`, `trailer` (Go drops a
+  user `Trailer`, Fetch forbids it; no trailers are sent in 1.0), `http2-settings` (meaningless without an h2c
+  `Upgrade`, which is forbidden), **every `proxy-` name** (Fetch's forbidden prefix; proxy credentials and hop-by-hop
+  proxy fields come only from the proxy configuration, P1b), plus **the underscore spelling of every forbidden or
   singleton name** (X9): `content_length`, `transfer_encoding`, `proxy_authorization`, `content_type`,
   `user_agent`, `keep_alive` and `proxy_connection`. Some gateways (CGI-style environments, nginx with
   `underscores_in_headers`) map `_` to `-`, which would turn them into framing or credential headers, or into a
@@ -400,8 +425,14 @@ field-value = *FIELD_CONTENT                 ; grammar::value_len (HTAB, SP–'~
   line, checks `seen & bit != 0` (error) then sets `seen |= bit`. That is O(1) per line with no allocation, and a
   repeat inside the template or inside the delta is caught the same way. Two `authorization` or two `content-type`
   values let an intermediary and the origin pick different ones (Host of Troubles-style ambiguity). Other duplicate
-  names are not a smuggling vector once framing headers are forbidden. P2 still guarantees the delta never repeats
-  a template name (§10.4).
+  names are not a smuggling vector once framing headers are forbidden. **Contract, not check (item 7):** RFC 9110
+  §5.3 forbids repeating a non-list field; the writer enforces only the singleton subset and passes other repeats
+  through (vectors `duplicates / …` document it). P2 guarantees one line per non-list name and never repeats a template
+  name in the delta (§10.4), with its own tests. `sec-` (Fetch's other forbidden prefix) is browser-only and not
+  forbidden here.
+- **OPTIONS content (item 2):** RFC 9110 §9.3.7 — a client that sends content in OPTIONS MUST send a valid
+  `Content-Type`. `OPTIONS` with a non-empty body and no `content-type` in template or delta is `Engine(Internal)`
+  (P2: `INVALID_CONFIG`). The singleton bits already say whether `content-type` is present, so the check is O(1).
 - **Size:** `maxRequestFieldsBytes` counts exactly the template bytes (**including the `host:` line**) plus the delta
   bytes. It excludes the request line, the generated `content-length` and `connection` lines, and the final CRLF.
 - **Line count (X3, ruling).** `RequestParts::header_lines: u16` is the number of fields the JS layer serialised
@@ -409,6 +440,8 @@ field-value = *FIELD_CONTENT                 ; grammar::value_len (HTAB, SP–'~
   with `Engine(Internal)` (O(1) extra). This closes the well-formed injection that the byte classes cannot see: a
   value carrying `\r\nx-forwarded-for: 1.2.3.4` (or a `cookie` line when none was set) parses as one more valid
   line, so the count is off by one. 64 KiB of minimal lines (`a: \r\n`, 5 bytes) is 13,107 lines, so `u16` fits.
+  The count is **the number of entries JS iterated, never derived from the serialised bytes** (item 9): deriving it
+  from CRLFs would count the smuggled line too. The template takes the same count (`field_lines`, item 1).
 
 ### 6.5 Framing and reuse: one predicate
 ```rust
@@ -472,14 +505,15 @@ pub fn write_request(
    - One wire format for template and delta means one validator.
    - `sensitive_names` feeds the flag in §6.2.
 2. **`conn_authority` (W1, High).** `write_request` returns `Engine(Internal)` unless `conn_authority` is byte-equal
-   to `template.authority()`, so a template can never be used on a connection to another origin (credentials in
-   defaults would otherwise leak). Task 6 passes the authority its connection was opened for, from `ShardConfig`'s
+   to `template.authority()`, so a template is never used on a connection to another **authority** (credentials in
+   defaults would otherwise leak). The scheme is not bound in P0, which is plaintext only (item 4): a template built
+   for `https://a.example` would pass on `http://a.example`. P1a's TLS task binds the whole origin (§10.5). Task 6 passes the authority its connection was opened for, from `ShardConfig`'s
    authority field (P0; the pool key from P1b), and `ShardConfig::new` checks that field is byte-equal to
    `template.authority()` (X10).
 3. **Returns `Reuse`** from the one predicate in §6.5. Task 6 must honour it (§10.1).
 4. **`RequestParts` keeps `pub` fields.** It is a passive borrowed parameter object with no invariants and no state
-   changes. That is the carve-out to design §13.2 rule 1 listed in §11, and its doc comment says so. `HeaderTemplate`
-   keeps private fields and `pub(crate) fn as_bytes()`. **No `Debug` derive** on `RequestParts` (X4): a manual
+   changes; design §13.2 rule 1 lists it as passive data, and its doc comment says so. `HeaderTemplate`
+   keeps private fields; `write_request` reads them through `pub(super)` accessors (`bytes()`, `singletons()`). **No `Debug` derive** on `RequestParts` (X4): a manual
    `Debug` prints the method, the byte lengths and `header_lines`, never the bytes (headers carry credentials).
 5. **Buffer contract:** `write_request` **clears `out` at the start**, runs every check (§7 order), computes the total
    length with checked additions, **reserves exactly** with one `out.try_reserve_exact(total)` (a no-op when the
@@ -536,16 +570,21 @@ first failing check wins, so every input has exactly one error.
 |---|---|---|
 | 1 | `body.len() > maxCopiedBodyBytes` (P0 contract; Task 6 `try_submit` already returns `TooLarge(RequestBody)`, so reaching here is a bypass) | `Engine(Internal)` |
 | 2 | `target.len() > maxRequestTargetBytes` (16,384) | `TooLarge(Url)` |
-| 3 | `template.as_bytes().len() + headers.len() > maxRequestFieldsBytes` (65,536; §6.4 counting) | `TooLarge(Headers)` |
+| 3 | `template.bytes().len() + headers.len() > maxRequestFieldsBytes` (65,536; §6.4 counting) | `TooLarge(Headers)` |
 | 4 | `conn_authority != template.authority()` | `Engine(Internal)` |
 | 5 | `HEAD` with a non-empty body (§6.5) | `Engine(Internal)` |
-| 6 | target empty, first byte not `/`, or a byte not graphic or equal to `#` | `Engine(Internal)` |
-| 7 | delta line grammar, forbidden name in any case, repeated singleton | `Engine(Internal)` |
+| 6 | target empty, first byte not `/`, a byte not graphic or one of `#`, `"`, `<`, `>`, or `\` before the query | `Engine(Internal)` |
+| 7 | delta line grammar, forbidden name in any spelling, repeated singleton, line count ≠ `header_lines`, OPTIONS content without `content-type` | `Engine(Internal)` |
 | 8 | `checked_add` overflow of the total length | `Engine(ResourceExhausted)` |
 | 9 | `out.try_reserve_exact(total)` fails | `Engine(ResourceExhausted)` |
 | T1 | `HeaderTemplate::new`: host line + fields > 65,536 (template alone) | `TooLarge(Headers)` |
-| T2 | `HeaderTemplate::new`: host structure or field grammar, forbidden or repeated singleton | `Engine(Internal)` |
-| T3 | `HeaderTemplate::new`: `try_reserve_exact` fails or the length sum overflows | `Engine(ResourceExhausted)` |
+| T2 | `HeaderTemplate::new`: host structure or field grammar, forbidden or repeated singleton, line count ≠ `field_lines` | `Engine(Internal)` |
+| T3 | `HeaderTemplate::new`: `try_reserve_exact` fails | `Engine(ResourceExhausted)` |
+
+The template's length sum saturates, so an overflow is reported as T1 `TooLarge(Headers)` (a sum past `usize::MAX`
+is past the limit too). Rows whose codes differ are pinned pairwise by `error_precedence` (fix round 1, item 25);
+rows 4–7 share `Engine(Internal)` and are ordered for determinism only. Which rule fired is not visible in the code
+(item 29): a private rule enum for diagnostics is a P1a item (§10.5).
 
 - The brief's "re-validation failures are `Engine(Internal)`" is **confirmed** for grammar violations: P2 validates
   first with `INVALID_CONFIG`, so reaching Rust means that contract was bypassed.
@@ -683,13 +722,16 @@ atomic block (`writev(2)`), and with `TCP_NODELAY` a second write is sent "as so
     fields `count_total`, `count_current`, `count_max`, `bytes_total`, `bytes_current` and `bytes_max`.
   - It counts **only the calling thread** (L137–138), and its `#[global_allocator]` is in `allocator.rs` L66.
     That is why it gets its own test binary. The `unsafe` lives inside that crate, so our crates gain none.
-  - Its last release is 2023-09; it is not deprecated, and the RustSec check stays on through `cargo-deny`.
+  - Its last release is 2023-09 and it is not deprecated. `cargo deny check` (advisories, bans, licences, sources)
+    passes locally for the workspace and for `bench/writer/hyper-emul` (fix round 1); CI gains `cargo deny` with
+    Task 15, until then the check is manual.
 - **Steps:**
-  1. Warm up with the largest request of the `varied` ring.
+  1. Warm up with one pass over the `get`, `post1k` and `varied` rings (the counter must see that growth).
   2. `measure(|| for r in ring { write_request(...) })` must report `count_total == 0`.
-  3. A hard check that `out.as_ptr()` and `out.capacity()` are unchanged across all 256 varied requests after the
+  3. A hard check that `out.as_ptr()` and `out.capacity()` are unchanged across every ring request after the
      warm-up.
-  4. A check that `out.capacity()` ≤ head + 64 KiB (§6.7).
+  4. A check that `out.capacity()` ≤ `MAX_P0_REQUEST_BYTES` (§6.7). Growth policy (exact reservations reallocate on
+     each new high, bounded by `MAX_P0_REQUEST_BYTES`): measured and decided by Task 5b (item 31).
 
 **Ratio gates: PROVISIONAL.** They hold until 10 rounds have run on the reference host in the nightly window *and*
 on the x64 VM. After that the thresholds are reset from the median and bootstrap 95% CI (design §16.4); journal and
@@ -716,13 +758,12 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 `rejects_*` test that names header names runs **three letter cases**: lower, UPPER and miXed.
 
 **Framing and reuse (§6.5):**
-- `post_put_patch_query_reusable_without_connection_header`;
-- `query_and_patch_send_content_length_zero`, `put_post_empty_body_send_zero`;
+- `post_put_patch_query_send_content_length_even_when_empty_and_stay_reusable`;
 - `get_head_delete_options_empty_body_send_none`, `query_with_body_is_framed_and_reusable`;
 - `get_delete_options_with_body_send_connection_close_and_not_reusable`;
 - `head_with_body_rejected`;
-- `content_length_digits`: 0, 9, 10, 99, 100, 847 and 65,536 through the writer; `usize::MAX` through the formatting
-  helper.
+- `content_length_digits`: 0, 9, 10, 99, 100, 847 and 65,536 through the writer;
+- `options_with_body_requires_content_type` (item 2).
 
 **Origin binding and templates:**
 - `rejects_template_for_other_authority`: the authority differs by port, by case and by a trailing dot;
@@ -734,6 +775,7 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 - `template_sensitive_flag`: set by `authorization`, `cookie`, `x-api-key` and a custom configured name; clear
   otherwise;
 - `template_too_large`: a template alone over 64 KiB gives `TooLarge(Headers)`;
+- `template_rejects_injected_line_by_count` (item 1) and `template_is_send_and_sync`;
 - `template_debug_hides_bytes` and `parts_debug_hides_bytes` (X4): no field, target or body bytes appear in the
   `{:?}` output.
 
@@ -750,29 +792,28 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
   JS layer must reject code points > 0xFF first (§10.4).
 
 **Line grammar (§6.4):**
-- `rejects_empty_line_inside_delta` (`a: b\r\n\r\nc: d\r\n`) and the same for template fields;
-- `rejects_missing_final_crlf` (`a: b`);
-- `rejects_colon_without_space` (`a:b\r\n`);
-- `rejects_empty_name` (`: b\r\n`);
-- `accepts_obs_text_and_htab_in_values`, `accepts_empty_value`.
+- `rejects_malformed_delta_lines` (`BAD_LINES`, delta and template): an empty line inside the block, a missing
+  final CRLF, a bare CR, `a:b` without the SP, an empty name, SP before the colon, an obs-fold;
+- `accepts_obs_text_htab_ows_and_empty_values`.
 
 **Target (§6.3):**
-- `target_must_start_with_slash` (`http://evil/`, `*`, `?x`);
-- `rejects_empty_target`;
-- `rejects_hash_in_target` with `#` at start, middle and end;
-- `accepts_double_slash_target` (`//evil.example/x`, decision §6.3);
+- `target_must_be_origin_form` (`INVALID_TARGETS`: not `/`-first, empty, `#` at start/middle/end, `"`, `<`, `>`,
+  `\` in the path; `VALID_TARGETS`: `//evil.example/x` per the §6.3 decision, percent-encoded data, raw query bytes);
+- `rejects_target_with_space_ctl_or_non_ascii`;
 - `target_limit`: 16,384 accepted, 16,385 → `TooLarge(Url)`.
 
 **Limits and error precedence (§7):**
 - `fields_limit`: 65,536 / 65,537 → `TooLarge(Headers)`, counted as §6.4 states, host line included;
 - `body_over_copy_limit_rejected`: 65,537 → `Engine(Internal)`;
-- `error_precedence`: target too long **and** containing CR gives `TooLarge(Url)`; fields too large **and** a
-  forbidden name gives `TooLarge(Headers)`; an authority mismatch **and** a bad delta gives the mismatch error.
+- `error_precedence` (`PRECEDENCE`): each pair of §7 rows with different codes — body vs target or fields limit,
+  target limit vs fields limit, authority or target grammar, fields limit vs authority, `HEAD` with a body or a bad
+  delta — gives the earlier row's code; a long target containing CR gives `TooLarge(Url)`;
+- `max_p0_request_bytes_is_the_largest_request`.
 
 **Codec and buffer:**
-- `unknown_method_id_rejected`: `Method::from_wire(99)` gives `None`, which the codec maps to `Engine(Internal)`
-  (test placed with the codec, listed here so it is not forgotten);
-- `error_leaves_out_cleared` and `reuses_output_capacity` across a failing request.
+- `method_from_wire_rejects_unknown_id`: `Method::from_wire(99)` gives `None`; the codec's mapping of an unknown id to
+  `Engine(Internal)` is tested with the codec (Task 6, §10.1);
+- `reuses_output_capacity` across a failing request; every test helper asserts that an error leaves `out` empty.
 
 **Vectors:** `injection_vectors` runs every file of suite `engine-core:h1_writer` (§9.3).
 
@@ -820,11 +861,13 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 - **`headerLines`** is required: the field count the JS layer would pass with `headers` (§6.4, X3). An injection
   vector states the count JS serialised, not the number of CRLFs present.
 - **`connAuthority`** is optional and defaults to `templateHost`. It exists for the binding cases.
-- **Discriminator:** the **directory**. `tools/vectors/schema.ts` picks the case schema from the file's top-level
-  directory (`h1-response/` → response case, `h1-request/` → request case), so no new `kind` field is needed and
+- **Discriminator:** the **directory**. Every vector file sits exactly one level below `tests/vectors`, in a
+  directory named after its case kind (item 22, tested); `tools/vectors/schema.ts` picks the case schema from it (`h1-response/` → response case, `h1-request/` → request case), so no new `kind` field is needed and
   unknown keys stay errors.
-- **Rust:** `tests/support/vectors.rs` gains a `RequestCase` type and `load_request_suite(suite)`, with the same
-  unregistered-file and empty-file panics as `load_suite`.
+- **`templateFieldLines`** is required (fix round 1): the count JS serialised into `templateFields`.
+- **Rust:** `load_suite::<RequestCase>(suite)` (`tests/support/request_vectors.rs`); the index walk in
+  `tests/support/vectors.rs` is shared with `load_suite::<ResponseCase>`, so both get the same unregistered-file and
+  empty-file panics.
 - **Index:** `tests/vectors/index.json` entries map to suite `engine-core:h1_writer`.
 - **Provenance:** ported cases carry `derivedFrom` (`"<file>:<test> @ <tag>"`) and the file's `source.tag` and
   `source.commit`. `THIRD_PARTY_NOTICES` is regenerated (`pnpm vectors:notices`) with:
@@ -861,8 +904,8 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
   names are sent as given, with no case rewriting.
 - **Go `go1.27.3` (`2aae100…`, BSD-3-Clause):**
   - `src/net/http/requestwrite_test.go`: case 25 (CTL in `RawQuery` → error), case 26 (#40978, `PATCH` without a
-    body → `Content-Length: 0`), and the trailer injection cases (#78775), kept for the future chunked writer and
-    marked deferred;
+    body → `Content-Length: 0`); the trailer injection cases (#78775) are **not ported** (no trailers in 1.0; they
+    come with the chunked writer);
   - `src/net/http/request_test.go`: `TestRequestBadHostHeader` (L774, CVE-2023-29406; Go blanks the Host, we
     reject) and `TestRequestInvalidMethod` (L577; for us an unknown method is unrepresentable or fails in the codec).
 - **golang.org/x/net `v0.62.0` (`3de643db506517b3e652a13cc0b56034cea6b8e6`, BSD-3-Clause):**
@@ -902,8 +945,11 @@ count (`vec![EMPTY_HEADER; lines + 2]`), so the oracle never fails for lack of s
    LF; LF only after CR; exactly two SP in the request line.
 5. **Head boundary (W11).** The first `\r\n\r\n` in `out` is exactly the end of the head (`n - 4`).
 6. **Return value:** `Reuse` equals the §6.5 table for (method, body length).
-7. **Line count (X3):** the input's `header_lines` equals the number of delta lines; the generator also passes a
-   wrong count, which must fail.
+7. **Line count (X3):** `header_lines` and `field_lines` are the number of **generated** lines (never counted from
+   the bytes, item 9), plus an optional skew; a raw value holding `\r\nx: y` therefore mismatches as the attack does.
+8. **Sensitive flag:** a fuzzed subset of sensitive names; `is_sensitive` equals the model's.
+9. **Forbidden set from the output:** no design §12 forbidden name in any spelling appears in the written head
+   besides the generated `content-length`/`connection` (read from the bytes, independent of the model's lists).
 
 **On `Err`:** `out` is empty.
 
@@ -911,7 +957,8 @@ count (`vec![EMPTY_HEADER; lines + 2]`), so the oracle never fails for lack of s
 and §7 from the RFC grammar with per-byte loops and string comparisons. `write_request` must return `Ok` **iff**
 `spec_accepts` is true, so the writer is neither too lenient nor too strict.
 
-**Seed corpus:** the §9.2 vectors and the brief's requests.
+**Corpus:** runs start from an empty corpus (the §9.2 vectors are not expressible as structure-aware inputs) with the
+dictionary; the main run keeps its corpus in the task logs and the fuzz mutants are measured from an empty corpus.
 
 ### 9.6 Mutation testing (F8)
 - **`cargo mutants`** (27.1.0): `cargo mutants -p engine-core --file src/h1/writer.rs`. Add `--file src/h1/grammar.rs`
@@ -922,7 +969,7 @@ and §7 from the RFC grammar with per-byte loops and string comparisons. `write_
   mutant there is equivalent and is justified, not killed.
 - **Fuzz mutant check (X8):** four deliberately broken writers, each applied as a **temporary patch in a scratch
   checkout** (the parser's practice, `docs/notes/response-parser.md` §9.7), never as `cfg`-gated branches in
-  engine-core. Each must be caught by §9.5 within **10 minutes or 10 M executions** on one core, with the seed corpus:
+  engine-core. Each must be caught by §9.5 within **10 minutes or 10 M executions** on one core, from an empty corpus:
   1. drop one forbidden name;
   2. flip the content-length condition;
   3. accept a bare LF in values;
@@ -939,7 +986,10 @@ and §7 from the RFC grammar with per-byte loops and string comparisons. `write_
 - One `write_request` per request into the connection's own reused `Vec<u8>`, then one `write`/`try_write` loop over
   that buffer. No `writev` (bodies are ≤ 64 KiB in P0, and TLS must copy anyway).
 - Pass `conn_authority` from `ShardConfig`'s authority field (P0; the pool key from P1b); `ShardConfig::new` checks
-  it is byte-equal to `template.authority()` (§6.6 item 2, X10).
+  it is byte-equal to `template.authority()` (§6.6 item 2, X10). **Derive the dial address and `conn_authority`
+  from that one field** (item 4): two fields equal by construction make the writer's check a tautology.
+- Reference `MAX_P0_REQUEST_BYTES` (147,519 with the current spec limits), never a literal.
+- The codec maps an unknown method id to `Engine(Internal)` before the writer runs; test it there (§9.1).
 - **Partial writes:** if a request is aborted or cancelled after some bytes were written (partial write), close the
   connection (W11). "Zero bytes written" (the stale-connection re-send rule, design §5.1) comes from the first
   write's result.
@@ -962,13 +1012,16 @@ and §7 from the RFC grammar with per-byte loops and string comparisons. `write_
 **Redirects (W1, High).**
 - A **cross-origin** hop (scheme, host or port differs) never reuses the template or the delta as they are. It
   builds a **new template for the new origin** from the original fields minus every `sensitiveHeaders` name (the
-  client's configured list, passed to Rust with the template), and filters the delta by the same list.
+  client's configured list, passed to Rust with the template), and filters the delta by the same list, matching
+  names with the writer's spelling rule (ASCII case folded, `_` read as `-`, item 3), so `x_api_key` is stripped
+  with `x-api-key`.
 - A same-origin hop keeps both.
 - The reasons are the same class in four clients: undici CVE-2024-24758 / GHSA-3787-6prv-h9w3 and CVE-2023-45143 /
   GHSA-wqq4-5wpv-mx2g, Go CVE-2023-45289 / GO-2024-2600, and curl CVE-2018-1000007.
 - Test: `cross_origin_redirect_strips_template_and_delta_sensitive_fields` covering `authorization`, `cookie`,
   `proxy-authorization`, `x-api-key` and a custom configured name. The `conn_authority` check (§6.6) makes a
-  forgotten template swap fail loudly instead of leaking.
+  forgotten template swap to another **authority** fail loudly instead of leaking; a scheme-only change is caught
+  only once P1a binds the origin (§10.5).
 
 **Proxies (W6).** A separate `Target::Absolute` variant:
 - allowed only on a connection to an HTTP proxy;
@@ -998,7 +1051,14 @@ Proxy tests:
 - `templateHost` is WHATWG `url.host`: punycode, lowercase, bracketed IPv6, default port omitted, no userinfo. A host
   outside the §6.2 class (WHATWG accepts e.g. `a{b`) is rejected with `INVALID_CONFIG {field: 'url', reason:
   'host'}` before it reaches Rust (X7).
-- Pass `header_lines`: the number of fields serialised into the delta (§6.4, X3).
+- Pass `header_lines` and the template's `field_lines`: the number of header entries iterated, **never derived from
+  the serialised bytes** (§6.4, items 1 and 9). P2 test: a value containing `\r\nx: y` gives a count of 1 and is
+  rejected (by P2 first, by Rust as a mismatch otherwise).
+- Hosts: lowercase, no empty label, IPv6 literals that parse, ports 1–65535 without a leading zero (WHATWG already
+  emits exactly this; item 8).
+- Reject `OPTIONS` content without a `Content-Type` (item 2), and the forbidden names of §6.4 including `trailer`,
+  `http2-settings` and every `proxy-` name (item 6), with `INVALID_CONFIG`.
+- One line per non-list field name: RFC 9110 §5.3; the writer passes such repeats through (item 7).
 - Never repeat a template field name in a delta: a request that overrides a default uses a template without that
   default (or a host-only template). Rust enforces only the singleton subset (§6.4). A per-request skip mask was
   considered and rejected for now (YAGNI; add it if P2 measures template churn).
@@ -1009,6 +1069,17 @@ Proxy tests:
 - **P4 note (undici transport parity):** undici accepts DEL and 0x80–0xFF in paths, does not reject `#`, and allows
   `connection`, `proxy-authorization`, `te` and `host` headers and repeated singletons. The TS layer must apply our
   stricter rules before calling undici.
+
+### 10.5 To P1a and Task 5b (fix round 1)
+- **Origin binding (item 4):** P1a's TLS task introduces a typed `Origin { scheme, host, port }` used to dial, to key
+  the pool and to build the template; `write_request` compares origins. Test: an `https` template on an `http`
+  connection → `Engine(Internal)`.
+- **Rule diagnostics (item 29):** about nine writer rules share `ENGINE/internal`. P1a adds a private `WriteRule` enum
+  carried in the log/diagnostic context only (wire code unchanged; never bytes), with tests that assert the rule.
+- **Budget hook (X6):** `required_len(parts, template)`, §6.7.
+- **Criterion benches:** the example benches are replaced (#23).
+- **Task 5b:** the `post1k` writer/floor gate (accepted miss in Task 5) and the exact-vs-amortised reservation growth
+  (item 31: each new high reallocates; measure `try_reserve` with the §6.7 shrink bound and add a growth test).
 
 ## 11. Design changes (accepted; applied in the Task 5 PR)
 Exact text changes for `docs/specs/2026-11-06-blazehttp-design.md`. This note round does not edit the design.
@@ -1035,7 +1106,10 @@ Exact text changes for `docs/specs/2026-11-06-blazehttp-design.md`. This note ro
    `required_len(parts, template)` (X6).
 7. **§5.3:** replace "vectored writes only for large plaintext bodies" with "vectored writes only for plaintext
    bodies above a measured threshold (P1b); never `write_vectored` under TLS (rustls allocates per call)".
-8. **§13.2 rule 1:** add "Exception: a passive, borrowed parameter object with no invariants and no state changes may
+8. *(fix round 1)* **§5.1 row:** one pooled buffer, body copied (≤ `maxCopiedBodyBytes`), large-body path P1b; **§11.1:**
+   the P1a `required_len` budget hook; **§12 Injection row:** `trailer`, `http2-settings`, `proxy-`, OPTIONS
+   `Content-Type`, the template line count.
+9. **§13.2 rule 1:** add "Exception: a passive, borrowed parameter object with no invariants and no state changes may
    have `pub` fields; its doc comment says so (e.g. `RequestParts`)."
 
 ## 12. Engineering survey (blogs, docs, write-ups)
