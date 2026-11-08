@@ -330,3 +330,17 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** A kept (simpler, no measured loss at c = 50). B is not settled: c = 500 was not measured, so the
   comparison is repeated at c = 50 and 500 in the nightly window (#15).
 - **Commit:** see the PR that adds `crates/bench-server`.
+
+### 2026-11-08: bench-server TLS batch writes: gather vs copy
+
+- **Idea:** write a TLS batch of several pre-built responses as one vectored write of the static slices (gather)
+  instead of copying them into one buffer (copy). Detail: `docs/notes/bench-server.md` §7.2.
+- **Hypothesis:** the copy is cheaper because rustls processes each slice of a vectored write separately.
+- **Method:** HTTPS `/1k`, c = 50, wrk pipelining 16 requests per write, server `--cpus=4 --threads 4`, wrk
+  `--cpus=3`, shared network namespace, 5 s warm-up + 20 s, server CPU from cgroup `cpu.stat`; 6 rounds, order
+  alternated. Host not idle (load average 10–17), so dev only.
+- **Numbers (no CI, n = 6):** server CPU per request copy median 2.01 µs (1.74–2.12), gather median 1.74 µs
+  (1.62–1.87); gather lower in 4 of 6 rounds.
+- **Kept / dropped:** gather kept on both ports; the copy path and its per-stream switch were deleted (the hypothesis
+  was wrong for this workload).
+- **Commit:** see the PR that adds `crates/bench-server`.
