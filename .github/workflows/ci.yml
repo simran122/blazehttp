@@ -64,6 +64,14 @@ jobs:
       # The writer comparison bench is its own workspace too (never an engine dependency).
       - run: cargo fmt --check --manifest-path bench/writer/hyper-emul/Cargo.toml
       - run: cargo clippy --locked --manifest-path bench/writer/hyper-emul/Cargo.toml --all-targets -- -D warnings
+      # Each writer bench checks once, without timing, that every variant writes the writer's exact bytes.
+      - run: cargo run --release -p engine-core --example h1_write_bench -- --verify
+      - run: cargo run --release --locked --manifest-path bench/writer/hyper-emul/Cargo.toml -- --verify
+      # The Go comparison builds, vets and runs one iteration in the parser bench's pinned Go image.
+      - run: >-
+          docker run --rm -v "$PWD/bench/writer/go:/b" -w /b
+          golang:1-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0
+          sh -c 'test -z "$(gofmt -l .)" && go vet ./... && go test -run "^$" -bench . -benchtime 1x'
 
   # Every parser-bench harness builds in its pinned image (C/C++ with -Werror, go vet + gofmt, zig fmt), then one short
   # run proves the harness protocol and the differential gate end to end. Dev numbers only; never a gate run.

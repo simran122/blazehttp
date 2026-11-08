@@ -1,6 +1,7 @@
 //! Development benchmark: `ResponseParser` vs httparse 1.10.1 plus the same framing-fact extraction
 //! (`docs/notes/response-parser.md` §8.1). Run with `cargo run --release -p engine-core --example h1_parse_bench`.
 //! Results are dev measurements (`docs/perf/journal.md`); P1a replaces this with the criterion bench `benches/h1_parse.rs`.
+// removal: P1a (#23)
 
 #[path = "../tests/support/fixtures.rs"]
 mod fixtures;
