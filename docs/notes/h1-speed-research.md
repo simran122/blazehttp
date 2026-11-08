@@ -686,7 +686,92 @@ design §16.4 once run on the reference host; `post1k` ≤ 2.3× floor.
 
 ## 4. Papers and algorithms
 
-_(in progress)_
+The SIMD note (§3) already covers the nibble LUT (Muła, simdjson §3.1.1), NEON movemask emulation, `pcmpestri` cost,
+SWAR, two-stage bitmaps (simdjson stage 1, Cloudflare 2014) and Keiser–Lemire UTF-8. This section adds what changes
+our design. Status per source in §9.
+
+### 4.1 Parabix bit streams: ScanThru and MatchStar — the carry primitive for HTTP lines
+
+- **Source (verified, primary text):** Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data
+  Parallelism in Regular Expression Matching*, PACT 2014. Text represents a block of input as one bit stream per
+  character class ("parallel bit streams"); markers advance through a class with an **addition**, whose carries move
+  every marker through its run at once: `MatchStar(M, C) = (((M ∧ C) + C) ⊕ C) ∨ M` (§3), which "differs from
+  ScanThru of the Parabix tool chain in that it finds all matches, not just the longest". Carries between 64-bit
+  words are kept per addition by the Pablo compiler, and the paper's contribution is long-stream addition for
+  blocks ≥ 256 bits. Reported: 1–4 CPU cycles per byte for full regex matching on SSE2/AVX2.
+- **ScanThru** (the longest-match form we need): `ScanThru(M, C) = (M + C) ∧ ¬C` moves each marker in `M` to the
+  first byte after the run of class `C` that starts at it. For an HTTP field line: markers at line starts, `C` =
+  tchar → lands on the byte after the name, which must be `:`; markers after the colon, `C` = field-content → lands on
+  the value's end, which must be CR, followed by LF. **All lines of a 64-byte block are validated with two additions
+  and a handful of AND/OR/XOR, no per-line branch.**
+- **Verified for HTTP by a differential test (2026-11-08):** `tools/scanthru_check.py` in the session scratchpad
+  (written by the papers survey, re-run for this note: `ok {'ok': 129666, 'more': 33812, 'err': 36522}` in 9.4 s)
+  implements a strict field-section validator over 64-bit blocks — five class bitmaps (LF, CR, `:`, tchar,
+  field-content), two chained ScanThrus with `carrying_add`, an error mask `(N ∧ ¬colon) ∨ (E ∧ ¬CR) ∨ (A ⊕ LF) ∨ (S
+  ∧ ¬(tchar ∨ CR))` (A = CR shifted by one, S = line starts) — and matches a scalar RFC 9112 reference on 200,000
+  mutated heads **including the exact offset of the first error** and every block-boundary case (empty-line CR at
+  bits 62/63/64, runs crossing blocks). ≈ 32 `u64` operations per 64-byte block on top of the five bitmaps; 5 carry
+  bits between blocks.
+- **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` compiles on stable 1.99.1 under
+  `#![forbid(unsafe_code)]` (compile-only check, 2026-11-08; the papers survey reports it stable since 1.91.0,
+  unverified against the release notes). Only the **classification** (bytes → bitmaps) needs SIMD: rustc 1.99.1 does
+  not auto-vectorise a safe 64-byte compare-to-bitmask loop on aarch64 or x86_64 (§5.5), and exact SWAR costs ≈ 76
+  (aarch64) / 110 (x86_64) instructions per class per 64 B. So: **classification in `engine-simd`, validation and
+  span extraction in safe `engine-core`.**
+- **Resumability:** every check is causal (a bit depends only on bytes at or before it, plus the one-byte CR→LF
+  lookahead carried as a bit), so the parser checkpoints the carry bits at the last complete block and
+  re-classifies at most a 63-byte tail on the next call.
+
+### 4.2 simdjson stage 1 in depth (verified, source at `v5.1.1`)
+
+- Strings: `prefix_xor` by carry-less multiply (`_mm_clmulepi64_si128` on x64, `vmull_p64` on arm64;
+  `include/simdjson/haswell/bitmask.h` L18–22, `arm64/bitmask.h` L17–22) turns quote bits into "inside a string"
+  regions; the odd-backslash sequence logic carries across blocks. **HTTP has no quoting in the head grammar we
+  validate** (quoted strings only appear inside values, which are opaque), so prefix-XOR is not needed — ScanThru is
+  the right primitive (the line structure is "run of class X, then a delimiter").
+- Index extraction (`src/generic/stage1/json_structural_indexer.h` `bit_indexer::write`, L82–93, `write_indexes`
+  L44–76): `tzcnt` + clear-lowest-bit, writing a fixed number of indexes unconditionally, then the rest only when the
+  popcount is larger — no data-dependent branch per index. For HTTP: four bitmaps with one bit per line (name start,
+  colon, value start, value end) → four independent index arrays → spans, with no dependent chain from one span to
+  the next.
+- Padding: stage 1 reads whole blocks; inputs are padded (SIMD note §3.6).
+
+### 4.3 "Validate fast, locate on error" (simdutf, verified at `v9.3.3`)
+
+`generic_validate_ascii_with_errors` (`src/generic/ascii_validation.h` L6–28) checks whole blocks with a cheap
+any-bad test and only on failure calls the scalar `validate_with_errors` to find the exact position. For us: the
+SIMD/bitmap path only has to be exact about **acceptance**; on any anomaly in a block it hands the block to the scalar
+parser, which produces the error (and its class: `Malformed`, `SmugglingRisk`, `TooLarge`) exactly as today. Errors
+are rare, so the cost is irrelevant, and the scalar parser stays the single source of error semantics — the
+differential risk (SIMD note §3.9) shrinks to "the fast path accepts only what the scalar path accepts".
+
+### 4.4 Data-parallel FSMs and SHENG — rejected for the head
+
+- Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014 (primary text read): run the
+  FSM from all states at once with a byte shuffle as a table gather, relying on state convergence. PACT 2014 (§4.1)
+  summarises it as "one or two shuffles per input symbol" and notes it still consumes one byte at a time.
+- Hyperscan/Vectorscan SHENG (`src/nfa/sheng_impl.h` at `vectorscan/5.4.13`, L55–94): a ≤ 16-state DFA whose
+  transition is `cur_state = pshufb(shuffle_mask[c], cur_state)` per byte — a **dependent** shuffle chain, ≈ 1–2
+  cycles per byte of latency.
+- Our scalar parser already runs ≈ 1 cycle per byte; bitmaps run ≈ 0.3–0.5 (§5). Neither FSM form wins for a
+  grammar this regular. (Teddy/shufti/truffle match literal sets and byte classes — the classification side, already
+  covered by the nibble LUT.)
+
+### 4.5 SIMD CSV and line scanning
+
+- simdcsv (Langdale, README at the pin, verified): simdjson's quote handling plus comma/CR-LF bitmaps over padded,
+  cache-line-aligned buffers; "the only new wrinkle … is the fact that we have to detect a CR followed by a LF" —
+  the same `CR ∧ (LF ≫ 1)` pairing we need, with the cross-block bit. No HTTP-specific idea beyond that.
+- Numbers stay scalar: Content-Length and chunk sizes are 1–7 digits in practice; SWAR 8-digit parsing (Muła, Lemire)
+  and a hex table for chunk sizes are enough (ideas.md).
+
+### 4.6 Prior art on SIMD HTTP parsing (none peer-reviewed)
+
+No peer-reviewed paper on SIMD HTTP/1 parsing or serialisation was found (survey of arXiv, ACM DL, USENIX, IEEE,
+2026-11-08). Industrial work: Cloudflare's 2014 picohttpparser AVX2 bitmaps (SIMD note); QUICHE Balsa (Envoy's
+HTTP/1 parser) is not vectorised; Bun's client uses picohttpparser; uWS uses SWAR + a fence. Small open-source
+projects (cursed-http, simdhttp, xocomil, simdzone for DNS zone files) report SIMD parsers; their numbers are
+unverified and listed only in `ideas.md`.
 
 ## 5. Our parser: candidates
 
