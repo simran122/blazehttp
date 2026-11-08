@@ -17,6 +17,26 @@ use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore, version};
 
+/// How long a test waits for any answer, close or stop: a server that never gives one fails the test instead of
+/// hanging it (owner rule: every wait in a test is bounded).
+pub const CLOSE_WITHIN: Duration = Duration::from_secs(5);
+
+/// A short wait for something that must *not* happen (a stalled or capped server must not answer within it).
+pub const SHORT: Duration = Duration::from_millis(300);
+
+/// The pre-built error responses, compared in full.
+pub const NOT_FOUND: &[u8] =
+    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\ndate: Fri, 06 Nov 2026 12:00:00 GMT\r\n\r\n";
+pub const BAD_REQUEST: &[u8] =
+    b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\
+date: Fri, 06 Nov 2026 12:00:00 GMT\r\n\r\n";
+pub const HEAD_TOO_LARGE: &[u8] =
+    b"HTTP/1.1 431 Request Header Fields Too Large\r\ncontent-length: 0\r\n\
+connection: close\r\ndate: Fri, 06 Nov 2026 12:00:00 GMT\r\n\r\n";
+pub const VERSION_NOT_SUPPORTED: &[u8] =
+    b"HTTP/1.1 505 HTTP Version Not Supported\r\ncontent-length: 0\r\n\
+connection: close\r\ndate: Fri, 06 Nov 2026 12:00:00 GMT\r\n\r\n";
+
 /// A running server: its addresses, the switch that stops it, and its task.
 pub struct Running {
     pub bound: Bound,
@@ -70,9 +90,10 @@ pub async fn connect_tls(tls: &TlsBound) -> TlsStream<TcpStream> {
         .with_no_client_auth();
     let name = ServerName::try_from("localhost").expect("server name");
     let tcp = connect(tls.addr).await;
-    TlsConnector::from(Arc::new(config))
-        .connect(name, tcp)
+    let handshake = TlsConnector::from(Arc::new(config)).connect(name, tcp);
+    timeout(CLOSE_WITHIN, handshake)
         .await
+        .expect("handshake in time")
         .expect("handshake")
 }
 
@@ -80,7 +101,7 @@ pub fn get(path: &str) -> Vec<u8> {
     format!("GET {path} HTTP/1.1\r\nhost: bench\r\n\r\n").into_bytes()
 }
 
-/// Writes `request` and reads exactly `expected_len` response bytes.
+/// Writes `request` and reads exactly `expected_len` response bytes within [`CLOSE_WITHIN`].
 pub async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     request: &[u8],
@@ -88,12 +109,12 @@ pub async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
 ) -> Vec<u8> {
     stream.write_all(request).await.expect("write");
     let mut response = vec![0; expected_len];
-    stream.read_exact(&mut response).await.expect("read");
+    timeout(CLOSE_WITHIN, stream.read_exact(&mut response))
+        .await
+        .expect("server answered in time")
+        .expect("read");
     response
 }
-
-/// How long a test waits for the server to close a connection or stop: a server that never does fails the test.
-pub const CLOSE_WITHIN: Duration = Duration::from_secs(5);
 
 /// Writes `request` and reads until the server closes the connection; a reset, or no close within
 /// [`CLOSE_WITHIN`], is a test failure.

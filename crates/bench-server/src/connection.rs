@@ -492,21 +492,23 @@ mod tests {
         format!("GET {path} HTTP/1.1\r\nhost: bench\r\n\r\n")
     }
 
-    /// GETs, a HEAD, an unknown path and a body larger than the buffer, ending with `Connection: close`.
+    /// GETs, a HEAD, an unknown path, a small body and one larger than the buffer, ending with `Connection: close`.
     fn pipelined() -> (Vec<u8>, Vec<u8>) {
         let body = "x".repeat(BIG_BODY);
         let input = [
             get("/1k"),
             format!("POST /1k-h20 HTTP/1.1\r\ncontent-length: {BIG_BODY}\r\n\r\n{body}"),
             "\r\nHEAD /1k-gzip HTTP/1.1\r\n\r\n".to_owned(),
+            "POST /1k HTTP/1.1\r\ncontent-length: 5\r\n\r\nhello".to_owned(),
             get("/nope"),
             "GET /1k-chunked HTTP/1.1\r\nconnection: close\r\n\r\n".to_owned(),
         ]
         .concat();
-        let responses: [&[u8]; 5] = [
+        let responses: [&[u8]; 6] = [
             wire(b"/1k", false),
             wire(b"/1k-h20", false),
             wire(b"/1k-gzip", true),
+            wire(b"/1k", false),
             wire(b"/nope", false),
             wire(b"/1k-chunked", false),
         ];

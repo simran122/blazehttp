@@ -2,7 +2,6 @@
 //! the binary's `--cert-out`.
 
 use std::process::Stdio;
-use std::time::Duration;
 
 use bench_server::{ServerConfig, cells};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -10,10 +9,8 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::support::{
-    CLOSE_WITHIN, config, connect, exchange, get, read_to_close, start, until_close,
+    CLOSE_WITHIN, SHORT, config, connect, exchange, get, read_to_close, start, until_close,
 };
-
-const SHORT: Duration = Duration::from_millis(300);
 
 #[tokio::test(flavor = "multi_thread")]
 async fn connections_past_the_cap_wait_until_one_closes() {
@@ -37,10 +34,10 @@ async fn connections_past_the_cap_wait_until_one_closes() {
     );
     drop(first);
     let mut response = vec![0; cell.response.len()];
-    second
-        .read_exact(&mut response)
+    timeout(CLOSE_WITHIN, second.read_exact(&mut response))
         .await
-        .expect("served once a slot is free");
+        .expect("served once a slot is free")
+        .expect("read");
     assert_eq!(response, cell.response);
 }
 
@@ -52,12 +49,11 @@ async fn an_unfinished_head_is_closed_after_the_request_timeout() {
     })
     .await;
     let mut stream = connect(server.bound.plain).await;
-    let closed = timeout(
-        SHORT * 10,
-        until_close(&mut stream, b"GET /1k HTTP/1.1\r\nhost:"),
-    )
-    .await;
-    assert_eq!(closed.expect("closed by the head timeout"), b"");
+    // `until_close` fails the test if the server has not closed within its own bound.
+    assert_eq!(
+        until_close(&mut stream, b"GET /1k HTTP/1.1\r\nhost:").await,
+        b""
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -89,27 +85,47 @@ async fn a_silent_tls_client_is_closed_after_the_handshake_timeout() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_ends_the_server_and_its_connections() {
     let server = start(config(false)).await;
+    let cell = &cells()[0];
     let mut open = connect(server.bound.plain).await;
+    // One exchange first, so a connection task really is running when the server stops.
+    assert_eq!(
+        exchange(&mut open, &get(cell.path), cell.response.len()).await,
+        cell.response
+    );
     server.stop.send(()).expect("server running");
     timeout(CLOSE_WITHIN, server.task)
         .await
         .expect("server stopped in time")
         .expect("join")
         .expect("clean stop");
-    let ended = timeout(SHORT * 10, read_to_close(&mut open))
+    let rest = timeout(CLOSE_WITHIN, read_to_close(&mut open))
         .await
         .expect("connection ended");
-    assert!(
-        ended.as_ref().map_or(true, Vec::is_empty),
-        "connection still answered: {ended:?}"
-    );
+    assert_eq!(rest.expect("ended without a reset"), b"");
+}
+
+/// A directory removed when the test ends, also when it fails.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(prefix: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("{prefix}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        Self(dir)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        // Best effort: a leftover temp dir must not turn a passing test into a panic during unwinding.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn binary_writes_the_certificate_before_ready() {
-    let dir = std::env::temp_dir().join(format!("bench-server-cert-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    let pem = dir.join("cert.pem");
+    let dir = TempDir::new("bench-server-cert");
+    let pem = dir.0.join("cert.pem");
     let mut child = Command::new(env!("CARGO_BIN_EXE_bench-server"))
         .args([
             "--plain",
@@ -140,7 +156,6 @@ async fn binary_writes_the_certificate_before_ready() {
         written.starts_with("-----BEGIN CERTIFICATE-----"),
         "{written}"
     );
-    std::fs::remove_dir_all(&dir).expect("clean up");
 }
 
 /// The test reader's own guard: more than 16 MiB before end of stream fails fast.
@@ -173,4 +188,17 @@ async fn invalid_connection_limits_are_refused_before_binding() {
             "{max_connections}"
         );
     }
+}
+
+/// The helpers' own guard: a server that never answers fails `exchange` instead of hanging the test.
+#[tokio::test(flavor = "multi_thread")]
+#[should_panic(expected = "answered in time")]
+async fn exchange_fails_fast_when_the_server_never_answers() {
+    let server = start(ServerConfig {
+        stall: true,
+        ..config(false)
+    })
+    .await;
+    let mut stream = connect(server.bound.plain).await;
+    exchange(&mut stream, &get("/1k"), 10).await;
 }

@@ -6,15 +6,10 @@ mod protocol;
 mod support;
 
 use std::path::Path;
-use std::time::Duration;
 
 use bench_server::{ServerConfig, cells, cells_json};
-use support::{config, connect, connect_tls, exchange, get, start};
+use support::{NOT_FOUND, SHORT, config, connect, connect_tls, exchange, get, start};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-/// The pre-built 404, compared in full.
-const NOT_FOUND: &[u8] =
-    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\ndate: Fri, 06 Nov 2026 12:00:00 GMT\r\n\r\n";
 
 /// Every cell, then an unknown path, on one connection: the exact pre-built bytes, and the 404.
 async fn check_every_cell<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S) {
@@ -102,7 +97,7 @@ async fn stall_mode_never_answers() {
         .await
         .expect("write");
     let mut byte = [0; 1];
-    let read = tokio::time::timeout(Duration::from_millis(300), stream.read(&mut byte)).await;
+    let read = tokio::time::timeout(SHORT, stream.read(&mut byte)).await;
     assert!(
         read.is_err(),
         "expected no bytes within 300 ms, got {read:?}"
