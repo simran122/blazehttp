@@ -12,11 +12,15 @@ publish = false
 engine-core = { path = "../../../crates/engine-core" }
 http = "=1.5.0"
 
+# Mirrors the root [workspace.lints] tables (this crate is its own workspace).
 [lints.rust]
 deprecated = "deny"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }
+await_holding_refcell_ref = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
 
 [workspace]
 
