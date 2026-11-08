@@ -480,7 +480,7 @@ Every rule here is mandatory. Every review checks them under maintainability, an
 
 1. **Encapsulation.** Each public surface is the minimum needed: `pub(crate)` by default.
    - A type with invariants keeps its fields private and changes state only through methods.
-   - Passive data and value types with no invariants may expose their fields: `pub` in Rust (Rust API Guidelines C-STRUCT-PRIVATE: public fields are fine for passive data), `readonly` in TypeScript. Examples: `ResponseHead`, the generated `H1Limits`, `PreparedRequest`.
+   - Passive data and value types with no invariants may expose their fields: `pub` in Rust (Rust API Guidelines C-STRUCT-PRIVATE: public fields are fine for passive data), `readonly` in TypeScript. Examples: `ResponseHead`, the generated `H1Limits`, `PreparedRequest`, and the borrowed parameter object `RequestParts` (the writer validates every field, `docs/notes/request-writer.md` §6.6).
 2. **Abstraction through interfaces.** Every seam is a Rust trait or a TS interface, and code depends on the trait, not on the concrete type (dependency inversion).
    - A **seam** is a boundary where the implementation varies per runtime or transport, or where tests substitute a fake.
    - Current seams:
