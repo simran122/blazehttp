@@ -219,3 +219,51 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** `blazehttp+fields` kept as the headline row; runs kept in
   `bench/results/2026-11-07-arm64-dev-parsers-gcc14.jsonl` and `…-gcc12.jsonl`. Re-run both in a quiet window.
 - **Commit:** `p0/parser-bench` (fix round 1).
+
+
+### 2026-11-08: `write_request` (Task 5) vs the copy floor, hyper 1.12 and Go 1.27.3 (committed benches, dev numbers)
+
+- **Idea:** the chosen request writer (`docs/notes/request-writer.md` §1: pre-encoded template + re-validated delta,
+  one exact reservation, one buffer) against the copy floor (same bytes, same appends and framing, no checks), an
+  emulation of hyper 1.12's encoder (`bench/writer/hyper-emul`) and Go's `(*Request).Write` (`bench/writer/go`).
+- **Hypothesis:** within the provisional gates of note §8.4 (`post1k` ≤ 2.3×, `varied` ≤ 2.9× the floor; advisory
+  `get` ≤ 60 ns, `post1k` ≤ 250 ns, `varied` ≤ 300 ns) and ≤ 0.5× the hyper emulation.
+- **Method:** `cargo run --release -p engine-core --example h1_write_bench` (7 runs × 4 interleaved blocks × 100,000
+  requests, 100 ms warm-up, median of per-run ratios) and `cargo run --release --manifest-path
+  bench/writer/hyper-emul/Cargo.toml`, each binary run 3 rounds. Linux arm64: Docker Desktop on the owner's M2,
+  `rust:1-bookworm` (rustc 1.99.1), `--cpus=1` (`cpu.max = 100000 100000`), kernel 6.11.11-linuxkit, generic `aarch64`.
+  Go: `golang:1.27.3-bookworm`, `--cpus=1`, `GOMAXPROCS=1`, `-count 5 -benchmem`. macOS 26.4 on the same M2, default
+  target CPU. **Not a gate run:** other agents' containers were running; host load average 4–10.
+- **Numbers (Linux arm64, rounds 1 / 2 / 3; writer ns, floor ns, median ratio):** `get` (head 146 B) 20.8 / 9.6
+  (2.16), 23.0 / 10.6 (2.16), 55.2 / 26.9 (2.04); `post1k` (head 335 B + 1 KiB) 91.3 / 35.8 (2.55), 99.6 / 39.6 (2.51),
+  288.2 / 105.9 (2.79, loaded round); `varied` (mean head 440 B) 100.2 / 48.9 (2.04), 105.7 / 52.2 (2.05), 331.1 /
+  137.8 (2.38). An earlier quiet round (2026-11-08T07:14Z): 19.1 / 83.5 / 87.8 ns, ratios 2.19 / 2.58 / 2.04.
+  **vs hyper emulation (ours / clone + encode, ours / encode-only):** `get` 0.25 / 0.51, `post1k` 0.38–0.41 /
+  1.16–1.22, `varied` 0.33–0.34 / 0.98–1.02. **Go** `(*Request).Write`: `get` 792–1,631 ns, 224 B, 5 allocations;
+  `post1k` 1,514–2,210 ns, 328 B, 10 allocations (ours: 0 allocations, `tests/h1_writer_alloc.rs`). **macOS:** ratios
+  2.11–2.14 / 2.67–2.76 / 2.36–2.56; vs hyper 0.18 / 0.30–0.32 / 0.31–0.33.
+- **Kept / dropped:** kept (the design of note §1). Advisory absolute values are met (`get` ≤ 23 ns, `post1k` ≤ 100
+  ns, `varied` ≤ 106 ns in the unloaded rounds) and so is the hyper target (≤ 0.41×). **Provisional gate miss:**
+  `post1k` writer/floor is 2.51–2.58× against ≤ 2.3×; `varied` (2.04–2.05×) and `get` meet theirs. The writer itself is
+  faster than the prototype (91 vs 111–220 ns) but the floor is faster too (36 vs 72–112 ns), and the checks added in
+  review (singletons, underscore spellings, line count, authority) cost ≈ 15 ns on `post1k` (next entry). The gates are
+  provisional until the 10 reference-host rounds (note §8.4); P1a's block classification is the planned lever.
+- **Commit:** Task 5 PR (`p0/writer`).
+
+### 2026-11-08: Request writer micro-variants (scratch A/B, not committed)
+
+- **Idea:** where the writer's time goes, and four candidate speed-ups: (a) `#[inline]` on `write_request` so it
+  inlines into the caller's loop across the crate boundary; (b) unrolled appends that skip empty pieces instead of a
+  loop over the 12-slice piece list; (c) a branch-free name-spelling fold; (d) a first-byte filter before name
+  classification; (e) a `name == canonical` fast path before the case-insensitive compare.
+- **Hypothesis:** (a) removes call and setup overhead; (b)–(e) shave the classification cost.
+- **Method:** a scratch crate with the writer's source copied per variant (same crate, so each inlines), timed on the
+  three request sets, 9 runs × 200,000 requests per variant, median; Linux arm64 container `--cpus=1`, 3 rounds; (a)
+  measured with the committed bench before and after, alternated in the same minute.
+- **Numbers:** ablations (quiet round): `post1k` 74–79 ns full, 58–65 ns without classification, 44–46 ns without any
+  delta scan, 76–78 ns without the target check; `varied` 87–93 / 76–85 / 49–51 / 78–80 ns. (a) committed bench `get`
+  19.1 vs 29.7–38.4 ns, `post1k` 83.3–84.9 vs 105.8–123.5 ns, `varied` 87.8–99.5 vs 118.1–136.5 ns (ratios 2.17 vs
+  3.38, 2.57 vs 2.82, 2.04–2.11 vs 2.23–2.32). (b) ±5%, mixed sign; (c) 0 to +2%; (d) 0 to −10% on `varied` only;
+  (e) −4% on `post1k` in 2 of 3 rounds, +33% in the third.
+- **Kept / dropped:** (a) kept (15–35% faster). (b)–(e) dropped: no win beyond noise.
+- **Commit:** Task 5 PR (`p0/writer`), `#[inline]` on `write_request`.
