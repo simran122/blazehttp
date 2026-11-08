@@ -4,8 +4,10 @@
 //! Listens on loopback (`127.0.0.1:8080`) unless an address is given; the harness passes `0.0.0.0:…` explicitly.
 //! Prints `ready plain=<addr> [tls=<addr>]` on stdout once it accepts connections, after writing the TLS certificate
 //! (PEM) to `--cert-out` (which needs `--tls`). `--print-cells` prints the cell manifest (`bench/cells.json`) and
-//! exits. The server runs on `--threads` runtime workers; the main thread only waits.
+//! exits. The server runs on `--threads` runtime workers; the main thread only waits. SIGTERM (`docker stop`) or
+//! SIGINT stops it cleanly: it stops accepting, ends its connections and exits 0.
 
+use std::future::Future;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -92,9 +94,33 @@ fn run(args: Args) -> io::Result<()> {
         .build()?;
     runtime.block_on(async {
         let (ready, bound) = oneshot::channel();
-        let serving = tokio::spawn(serve(args.config, ready, std::future::pending()));
+        let serving = tokio::spawn(serve(args.config, ready, stop_signal()?));
         announce(bound, args.cert_out, io::stdout()).await?;
         serving.await.map_err(io::Error::other)?
+    })
+}
+
+/// Completes on SIGTERM or SIGINT. Registered before `serve` starts, so a signal never finds the default action.
+#[cfg(unix)]
+fn stop_signal() -> io::Result<impl Future<Output = ()> + Send + 'static> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let (mut term, mut int) = (
+        signal(SignalKind::terminate())?,
+        signal(SignalKind::interrupt())?,
+    );
+    Ok(async move {
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+    })
+}
+
+/// Completes on Ctrl-C (the only stop request outside Unix).
+#[cfg(not(unix))]
+fn stop_signal() -> io::Result<impl Future<Output = ()> + Send + 'static> {
+    Ok(async {
+        let _ = tokio::signal::ctrl_c().await;
     })
 }
 

@@ -228,3 +228,33 @@ async fn exchange_fails_fast_when_the_server_never_reads() {
     let request = vec![b'x'; 64 << 20];
     exchange(&mut queued, &request, 1).await;
 }
+
+/// `docker stop` sends SIGTERM to the server (PID 1 in its container): it must stop cleanly, not be killed.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn binary_stops_cleanly_on_sigterm() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_bench-server"))
+        .args(["--plain", "127.0.0.1:0", "--threads", "1"])
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn bench-server");
+    let mut lines = BufReader::new(child.stdout.take().expect("stdout")).lines();
+    let ready = timeout(SHORT * 20, lines.next_line())
+        .await
+        .expect("ready in time")
+        .expect("stdout");
+    assert!(ready.is_some_and(|line| line.starts_with("ready ")));
+    let pid = child.id().expect("running").to_string();
+    let sent = Command::new("kill")
+        .args(["-TERM", &pid])
+        .status()
+        .await
+        .expect("run kill");
+    assert!(sent.success(), "kill -TERM {pid}");
+    let status = timeout(CLOSE_WITHIN, child.wait())
+        .await
+        .expect("stopped in time")
+        .expect("status");
+    assert!(status.success(), "a clean stop exits 0, got {status}");
+}
