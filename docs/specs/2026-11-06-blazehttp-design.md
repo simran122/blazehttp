@@ -448,6 +448,7 @@ Sources: *The Cargo Book* (package layout, workspaces), *The Rust Programming La
        - Clippy denies `allow_attributes`, which catches outer `#[allow]`, and `allow_attributes_without_reason`, which catches a missing `reason`. Both workspaces set these lints.
        - Clippy's `allow_attributes` does not see inner `#![allow]`. So the `rust-allow-attribute` policy check (`pnpm policy`) rejects `allow(` in every attribute form, read bracket-balanced across lines: outer, inner, and inside `cfg_attr`.
        - `rust-allow-forbidden` rejects any `allow` or `expect` of `deprecated`, `dead_code` or `unused*`.
+       - `crate-lints` makes every `crates/*/Cargo.toml` inherit these lints (`[lints] workspace = true`). It also makes the fuzz crate, which is its own workspace, repeat every root `[workspace.lints]` setting.
      - **TypeScript/JS: a line comment that is exactly `// eslint-disable-next-line <rule>[, <rule>…] -- <reason>`.**
        - The `eslint-directive` policy check takes every comment from the TypeScript parse tree, so strings, templates, regexes and JSX text are not comments. It rejects any other comment that ESLint would read as a directive or as inline config: one starting with `eslint`, `global`, `globals` or `exported`, multi-line blocks and several comments on one line included.
        - The check runs outside ESLint, so no directive can switch it off.
