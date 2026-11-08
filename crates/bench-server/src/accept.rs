@@ -2,7 +2,7 @@
 //! (design note §5). The listener is behind the [`Listen`] trait so the retry path is testable with a fake.
 
 use std::future::Future;
-use std::io;
+use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,10 +65,10 @@ async fn next_connection<L: Listen>(listener: &L, logged: &mut ErrorLog) -> io::
             Ok(_) => {}
             Err(e) => match classify(&e) {
                 AcceptFailure::ResourcesExhausted => {
-                    logged.once(&e);
+                    logged.once(&e, &mut io::stderr());
                     tokio::time::sleep(RETRY_PAUSE).await;
                 }
-                AcceptFailure::ConnectionLost => logged.once(&e),
+                AcceptFailure::ConnectionLost => logged.once(&e, &mut io::stderr()),
                 AcceptFailure::Fatal => return Err(e),
             },
         }
@@ -135,11 +135,13 @@ struct ErrorLog {
 }
 
 impl ErrorLog {
-    fn once(&mut self, e: &io::Error) {
+    /// Reports `e` on `out` the first time its kind is seen; a failed report is ignored (a closed stderr must not
+    /// stop the server, and `eprintln!` would panic on it).
+    fn once(&mut self, e: &io::Error, out: &mut impl Write) {
         let key = (e.kind(), e.raw_os_error());
         if !self.seen.contains(&key) {
             self.seen.push(key);
-            eprintln!("bench-server: accept failed ({e}); retrying");
+            let _ = writeln!(out, "bench-server: accept failed ({e}); retrying");
         }
     }
 }
@@ -221,6 +223,26 @@ mod tests {
             started.elapsed()
         );
         client.await.expect("join").expect("client connected");
+    }
+
+    /// A stderr that has been closed.
+    struct Closed;
+
+    impl io::Write for Closed {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn logging_to_a_closed_stderr_does_not_panic() {
+        let mut logged = ErrorLog::default();
+        logged.once(&io::Error::from_raw_os_error(libc::EMFILE), &mut Closed);
+        assert_eq!(logged.seen.len(), 1);
     }
 
     #[tokio::test]

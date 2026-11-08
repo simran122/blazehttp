@@ -30,21 +30,33 @@ fn main() -> ExitCode {
     let args = match parse(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(message) => {
-            eprintln!("{message}\n{USAGE}");
+            report(&format!("{message}\n{USAGE}"));
             return ExitCode::from(2);
         }
     };
-    if args.print_cells {
-        print!("{}", cells_json());
-        return ExitCode::SUCCESS;
-    }
-    match run(args) {
+    let result = if args.print_cells {
+        print_cells(io::stdout())
+    } else {
+        run(args)
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("bench-server: {e}");
+            report(&format!("bench-server: {e}"));
             ExitCode::FAILURE
         }
     }
+}
+
+/// Writes the cell manifest (`bench/cells.json`).
+fn print_cells(mut out: impl Write) -> io::Result<()> {
+    out.write_all(cells_json().as_bytes())?;
+    out.flush()
+}
+
+/// Reports on stderr; a closed stderr is ignored (`eprintln!` would panic on it).
+fn report(message: &str) {
+    let _ = writeln!(io::stderr(), "{message}");
 }
 
 fn parse(mut words: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -154,7 +166,7 @@ mod tests {
     use bench_server::Bound;
     use tokio::sync::oneshot;
 
-    use super::{Args, announce, parse};
+    use super::{Args, announce, parse, print_cells};
 
     /// A stdout that has been closed.
     struct Closed;
@@ -185,6 +197,15 @@ mod tests {
             .await
             .expect("announced");
         assert_eq!(out, b"ready plain=127.0.0.1:8080\n");
+    }
+
+    #[test]
+    fn print_cells_writes_the_manifest_and_reports_a_closed_stdout() {
+        let mut out = Vec::new();
+        print_cells(&mut out).expect("printed");
+        assert_eq!(out, bench_server::cells_json().into_bytes());
+        let error = print_cells(Closed).expect_err("closed stdout");
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
 
     #[tokio::test]
