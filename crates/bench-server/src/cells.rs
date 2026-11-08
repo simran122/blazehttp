@@ -31,6 +31,8 @@ pub struct Cell {
     pub head_len: usize,
     /// FNV-1a 64 of the decoded body (no chunked framing, no gzip): the bytes a client's application receives.
     pub body_fnv: u64,
+    /// The body uses chunked framing, which an HTTP/1.0 client cannot receive (RFC 9112 §6.1).
+    pub chunked: bool,
 }
 
 /// Why a request is answered with an error and the connection closed.
@@ -40,6 +42,8 @@ pub(crate) enum Refusal {
     BadRequest,
     /// 431: a request head larger than the read buffer.
     HeadTooLarge,
+    /// 505: an HTTP major version other than 1, or HTTP/1.0 asking for a chunked cell.
+    VersionNotSupported,
 }
 
 struct Catalog {
@@ -47,6 +51,7 @@ struct Catalog {
     not_found: Vec<u8>,
     bad_request: Vec<u8>,
     head_too_large: Vec<u8>,
+    version_not_supported: Vec<u8>,
 }
 
 static CATALOG: LazyLock<Catalog> = LazyLock::new(Catalog::build);
@@ -62,16 +67,22 @@ pub(crate) fn prebuild() {
     LazyLock::force(&CATALOG);
 }
 
-/// The pre-built response for a request target (only its head for `HEAD`); unknown targets get a pre-built 404.
-pub(crate) fn response_for(target: &[u8], head_only: bool) -> &'static [u8] {
+/// The pre-built response for a request target (only its head for `HEAD`); unknown targets get a pre-built 404. An
+/// HTTP/1.0 request for a chunked cell is refused with 505.
+pub(crate) fn response_for(
+    target: &[u8],
+    head_only: bool,
+    http10: bool,
+) -> Result<&'static [u8], Refusal> {
     match CATALOG
         .cells
         .iter()
         .find(|cell| cell.path.as_bytes() == target)
     {
-        Some(cell) if head_only => &cell.response[..cell.head_len],
-        Some(cell) => &cell.response,
-        None => &CATALOG.not_found,
+        Some(cell) if http10 && cell.chunked => Err(Refusal::VersionNotSupported),
+        Some(cell) if head_only => Ok(&cell.response[..cell.head_len]),
+        Some(cell) => Ok(&cell.response),
+        None => Ok(&CATALOG.not_found),
     }
 }
 
@@ -80,6 +91,7 @@ pub(crate) fn refusal(kind: Refusal) -> &'static [u8] {
     match kind {
         Refusal::BadRequest => &CATALOG.bad_request,
         Refusal::HeadTooLarge => &CATALOG.head_too_large,
+        Refusal::VersionNotSupported => &CATALOG.version_not_supported,
     }
 }
 
@@ -117,7 +129,7 @@ impl Catalog {
             Cell::new("/1k", HEAD_1K, PAYLOAD, PAYLOAD),
             Cell::new("/1k-h20", HEAD_1K_H20, PAYLOAD, PAYLOAD),
             Cell::new("/1k-gzip", &gzip_head, PAYLOAD_GZIP, PAYLOAD),
-            Cell::new("/1k-chunked", &chunked_head, &chunked(PAYLOAD), PAYLOAD),
+            Cell::chunked("/1k-chunked", &chunked_head, PAYLOAD),
             Cell::new("/1m", &big_head, &big, &big),
         ];
         Self {
@@ -125,6 +137,7 @@ impl Catalog {
             not_found: head("404 Not Found", &[("content-length", "0"), ("date", DATE)]),
             bad_request: closing_head("400 Bad Request"),
             head_too_large: closing_head("431 Request Header Fields Too Large"),
+            version_not_supported: closing_head("505 HTTP Version Not Supported"),
         }
     }
 }
@@ -137,6 +150,15 @@ impl Cell {
             response: [head, wire_body].concat(),
             head_len: head.len(),
             body_fnv: fnv1a64(body),
+            chunked: false,
+        }
+    }
+
+    /// A cell whose `body` goes out in chunked framing.
+    fn chunked(path: &'static str, head: &[u8], body: &[u8]) -> Self {
+        Self {
+            chunked: true,
+            ..Self::new(path, head, &frame_chunked(body), body)
         }
     }
 }
@@ -164,7 +186,7 @@ fn closing_head(status: &str) -> Vec<u8> {
 }
 
 /// `body` in `CHUNK_BYTES` chunks plus the last chunk, without trailers.
-fn chunked(body: &[u8]) -> Vec<u8> {
+fn frame_chunked(body: &[u8]) -> Vec<u8> {
     let mut framed = Vec::with_capacity(body.len() + 64);
     for chunk in body.chunks(CHUNK_BYTES) {
         framed.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
@@ -191,12 +213,14 @@ pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
+    use std::process::Command;
+    use std::sync::LazyLock;
 
     use flate2::read::GzDecoder;
 
     use super::{
-        DATE, HEAD_1K, JSON, PAYLOAD, PAYLOAD_GZIP, Refusal, cells, fnv1a64, head, refusal,
-        response_for,
+        CATALOG, DATE, HEAD_1K, JSON, PAYLOAD, PAYLOAD_GZIP, Refusal, cells, fnv1a64, head,
+        prebuild, refusal, response_for,
     };
     use crate::request::find_head_end;
 
@@ -290,17 +314,37 @@ mod tests {
     #[test]
     fn head_only_responses_end_at_the_blank_line() {
         for cell in cells() {
-            let head = response_for(cell.path.as_bytes(), true);
+            let head = response_for(cell.path.as_bytes(), true, false).expect("answered");
             assert_eq!(head, split(&cell.response).0, "{}", cell.path);
             assert_eq!(cell.head_len, head.len(), "{}", cell.path);
         }
-        assert_eq!(response_for(b"/nope", true), response_for(b"/nope", false));
+        assert_eq!(
+            response_for(b"/nope", true, false),
+            response_for(b"/nope", false, false)
+        );
+    }
+
+    #[test]
+    fn http10_gets_505_for_chunked_cells_only() {
+        for cell in cells() {
+            let answer = response_for(cell.path.as_bytes(), false, true);
+            if cell.chunked {
+                assert_eq!(answer, Err(Refusal::VersionNotSupported), "{}", cell.path);
+            } else {
+                assert_eq!(answer, Ok(cell.response.as_slice()), "{}", cell.path);
+            }
+        }
+        assert!(
+            cells().iter().any(|cell| cell.chunked),
+            "the chunked cell is marked"
+        );
     }
 
     #[test]
     fn refusals_close_the_connection() {
         for (kind, status) in [
             (Refusal::BadRequest, "400 "),
+            (Refusal::VersionNotSupported, "505 "),
             (Refusal::HeadTooLarge, "431 "),
         ] {
             let (head, body) = split(refusal(kind));
@@ -311,6 +355,42 @@ mod tests {
             assert_eq!(field(head, "connection"), Some("close"), "{kind:?}");
             assert!(body.is_empty(), "{kind:?}");
         }
+    }
+
+    /// Must run alone in a fresh process (other tests build the catalog as a side effect), so it is ignored here and
+    /// run by [`prebuild_builds_the_catalog_in_a_fresh_process`].
+    #[test]
+    #[ignore = "run in a fresh process by prebuild_builds_the_catalog_in_a_fresh_process"]
+    fn prebuild_builds_the_catalog() {
+        assert!(
+            LazyLock::get(&CATALOG).is_none(),
+            "nothing built the catalog yet"
+        );
+        prebuild();
+        assert!(
+            LazyLock::get(&CATALOG).is_some(),
+            "prebuild built the catalog"
+        );
+    }
+
+    #[test]
+    fn prebuild_builds_the_catalog_in_a_fresh_process() {
+        let exe = std::env::current_exe().expect("test binary");
+        let name = "cells::tests::prebuild_builds_the_catalog";
+        let run = Command::new(exe)
+            .args(["--exact", name, "--ignored", "--test-threads", "1"])
+            .output()
+            .expect("run the test binary");
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            run.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "the ignored test ran: {stdout}"
+        );
     }
 
     #[test]

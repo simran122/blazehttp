@@ -1,5 +1,7 @@
 //! Request boundaries: just enough of a request head to answer it (design note §5). Nothing else is parsed.
 
+use crate::cells::Refusal;
+
 const HEAD_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
 /// Empty lines accepted before a request line (RFC 9112 §2.2 asks servers to ignore at least one).
@@ -18,6 +20,8 @@ pub(crate) struct Request<'a> {
     pub(crate) body_len: u64,
     /// The client asked to close after this response (`Connection: close`, or HTTP/1.0 without keep-alive).
     pub(crate) close: bool,
+    /// An HTTP/1.0 request (it cannot receive a chunked response, RFC 9112 §6.1).
+    pub(crate) http10: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,8 +31,8 @@ pub(crate) enum Scan<'a> {
     Partial {
         resume: usize,
     },
-    /// A head this fixture refuses (answered with 400): see [`scan`].
-    Invalid,
+    /// A head this fixture refuses, and the error response it gets: see [`scan`].
+    Refused(Refusal),
 }
 
 /// The request line's parts this fixture uses.
@@ -49,12 +53,13 @@ struct Fields {
 /// Scans `input` for one request head, starting the blank-line search at `resume` so a peer that sends one byte at a
 /// time costs O(n) in total, not O(n²).
 ///
-/// Refused: more than 8 leading empty lines, a request line without a target or with a version other than HTTP/1.0
-/// or HTTP/1.1, a field line without a colon, whitespace in a field name, obs-fold, `transfer-encoding`, and a
-/// missing, repeated or non-decimal `content-length` value.
+/// HTTP/1.x with a minor version above 1 is treated as HTTP/1.1 (RFC 9110 §2.5); another major version gets 505.
+/// Refused with 400: more than 8 leading empty lines, a request line with an empty method or target or a malformed
+/// version, a field line without a colon, whitespace or CR in a field name or an empty name, obs-fold,
+/// `transfer-encoding`, and a missing, repeated or non-decimal `content-length` value.
 pub(crate) fn scan(input: &[u8], resume: usize) -> Scan<'_> {
     let Some(skipped) = leading_empty_lines(input) else {
-        return Scan::Invalid;
+        return Scan::Refused(Refusal::BadRequest);
     };
     let Some(end) = find_head_end(input, resume.max(skipped)) else {
         let resume = input.len().saturating_sub(HEAD_END.len() - 1).max(skipped);
@@ -63,16 +68,21 @@ pub(crate) fn scan(input: &[u8], resume: usize) -> Scan<'_> {
     let mut lines = input[skipped..end]
         .split(|&b| b == b'\n')
         .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
-    match (lines.next().and_then(request_line), fields(lines)) {
-        (Some(line), Some(fields)) => Scan::Complete(Request {
-            target: line.target,
-            head_only: line.head_only,
-            head_len: end + HEAD_END.len(),
-            body_len: fields.body_len,
-            close: fields.close || (line.http10 && !fields.keep_alive),
-        }),
-        _ => Scan::Invalid,
-    }
+    let line = match request_line(lines.next().unwrap_or_default()) {
+        Ok(line) => line,
+        Err(kind) => return Scan::Refused(kind),
+    };
+    let Some(fields) = fields(lines) else {
+        return Scan::Refused(Refusal::BadRequest);
+    };
+    Scan::Complete(Request {
+        target: line.target,
+        head_only: line.head_only,
+        head_len: end + HEAD_END.len(),
+        body_len: fields.body_len,
+        close: fields.close || (line.http10 && !fields.keep_alive),
+        http10: line.http10,
+    })
 }
 
 /// The offset of the blank line (`\r\n\r\n`) at or after `from`.
@@ -90,19 +100,34 @@ fn leading_empty_lines(input: &[u8]) -> Option<usize> {
     (lines <= MAX_LEADING_EMPTY_LINES).then_some(lines * CRLF.len())
 }
 
-fn request_line(line: &[u8]) -> Option<RequestLine<'_>> {
+fn request_line(line: &[u8]) -> Result<RequestLine<'_>, Refusal> {
     let mut parts = line.splitn(3, |&b| b == b' ');
-    let (method, target, version) = (parts.next()?, parts.next()?, parts.next()?);
-    let http10 = match version {
-        b"HTTP/1.1" => false,
-        b"HTTP/1.0" => true,
-        _ => return None,
+    let (Some(method), Some(target), Some(version)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(Refusal::BadRequest);
     };
-    Some(RequestLine {
+    if method.is_empty() || target.is_empty() {
+        return Err(Refusal::BadRequest);
+    }
+    Ok(RequestLine {
         target,
         head_only: method == b"HEAD",
-        http10,
+        http10: http10(version)?,
     })
+}
+
+/// `true` for HTTP/1.0, `false` for HTTP/1.1 and higher 1.x minors; 505 for another major, 400 when malformed.
+fn http10(version: &[u8]) -> Result<bool, Refusal> {
+    match version {
+        b"HTTP/1.0" => Ok(true),
+        [b'H', b'T', b'T', b'P', b'/', b'1', b'.', minor] if minor.is_ascii_digit() => Ok(false),
+        [b'H', b'T', b'T', b'P', b'/', major, b'.', minor]
+            if major.is_ascii_digit() && minor.is_ascii_digit() =>
+        {
+            Err(Refusal::VersionNotSupported)
+        }
+        _ => Err(Refusal::BadRequest),
+    }
 }
 
 /// Framing and persistence from the field lines; `None` when the head is refused.
@@ -127,12 +152,13 @@ fn fields<'a>(lines: impl Iterator<Item = &'a [u8]>) -> Option<Fields> {
     Some(fields)
 }
 
-/// Name and trimmed value of one field line; `None` for obs-fold, no colon or whitespace in the name.
+/// Name and trimmed value of one field line; `None` for obs-fold, no colon, an empty name, or whitespace or CR in the
+/// name.
 fn field_line(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let colon = line.iter().position(|&b| b == b':')?;
     let (name, value) = (&line[..colon], &line[colon + 1..]);
-    let whitespace = |b: &u8| matches!(b, b' ' | b'\t');
-    (!name.is_empty() && !name.iter().any(whitespace)).then_some((name, value.trim_ascii()))
+    let not_in_name = |b: &u8| matches!(b, b' ' | b'\t' | b'\r');
+    (!name.is_empty() && !name.iter().any(not_in_name)).then_some((name, value.trim_ascii()))
 }
 
 fn decimal(digits: &[u8]) -> Option<u64> {
@@ -150,11 +176,14 @@ fn has_token(list: &[u8], token: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{Request, Scan, scan};
+    use crate::cells::Refusal;
 
     /// Heads the scan refuses, one per rule in [`scan`]'s documentation.
     const INVALID: &[&[u8]] = &[
         b"GET /1k\r\n\r\n",
-        b"GET /1k HTTP/2.0\r\n\r\n",
+        b"GET /1k HTTP/9\r\n\r\n",
+        b"GET /1k HTTP/1.10\r\n\r\n",
+        b"GET /1k http/1.1\r\n\r\n",
         b"\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nGET / HTTP/1.1\r\n\r\n",
         b"POST / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n",
         b"POST / HTTP/1.1\r\ncontent-length: +1\r\n\r\n",
@@ -166,6 +195,9 @@ mod tests {
         b"POST / HTTP/1.1\r\ncontent-length : 1\r\n\r\n",
         b"POST / HTTP/1.1\r\nhost: a\r\n folded\r\n\r\n",
         b"POST / HTTP/1.1\r\nhost: a\r\n\tfolded\r\n\r\n",
+        b"GET  HTTP/1.1\r\n\r\n",
+        b" /1k HTTP/1.1\r\n\r\n",
+        b"GET /1k HTTP/1.1\r\ncontent-length\r: 5\r\n\r\n",
     ];
 
     fn request(target: &[u8], head_len: usize) -> Request<'_> {
@@ -175,6 +207,7 @@ mod tests {
             head_len,
             body_len: 0,
             close: false,
+            http10: false,
         }
     }
 
@@ -249,9 +282,31 @@ mod tests {
         for &input in INVALID {
             assert_eq!(
                 scan(input, 0),
-                Scan::Invalid,
+                Scan::Refused(Refusal::BadRequest),
                 "{}",
                 String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn versions_follow_rfc_9110() {
+        let get = |version: &str| format!("GET /1k {version}\r\n\r\n").into_bytes();
+        let http10 = get("HTTP/1.0");
+        let Scan::Complete(parsed) = scan(&http10, 0) else {
+            panic!("HTTP/1.0 is complete")
+        };
+        assert!(parsed.http10 && parsed.close);
+        let http12 = get("HTTP/1.2");
+        assert_eq!(
+            scan(&http12, 0),
+            Scan::Complete(request(b"/1k", http12.len()))
+        );
+        for version in ["HTTP/2.0", "HTTP/3.0"] {
+            assert_eq!(
+                scan(&get(version), 0),
+                Scan::Refused(Refusal::VersionNotSupported),
+                "{version}"
             );
         }
     }

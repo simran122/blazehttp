@@ -216,17 +216,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
 
     fn next_step(&mut self) -> Step {
         match scan(&self.buf[self.start..self.end], self.resume) {
-            Scan::Complete(r) => Step::Respond(Answer {
-                response: response_for(r.target, r.head_only),
-                head_len: r.head_len,
-                body_len: r.body_len,
-                close: r.close,
-            }),
+            Scan::Complete(r) => match response_for(r.target, r.head_only, r.http10) {
+                Ok(response) => Step::Respond(Answer {
+                    response,
+                    head_len: r.head_len,
+                    body_len: r.body_len,
+                    close: r.close,
+                }),
+                Err(kind) => Step::Refuse(kind),
+            },
             Scan::Partial { resume } => {
                 self.resume = resume;
                 Step::NeedBytes
             }
-            Scan::Invalid => Step::Refuse(Refusal::BadRequest),
+            Scan::Refused(kind) => Step::Refuse(kind),
         }
     }
 
@@ -333,6 +336,11 @@ mod tests {
 
     use super::{BATCH_BYTES, BUFFER_BYTES, Mode, run};
     use crate::cells::{Refusal, refusal, response_for};
+
+    /// The response a cell sends (never a refusal in these tests).
+    fn wire(target: &[u8], head_only: bool) -> &'static [u8] {
+        response_for(target, head_only, false).expect("an HTTP/1.1 request is answered")
+    }
 
     /// Body larger than the read buffer, so skipping it spans several reads.
     const BIG_BODY: usize = BUFFER_BYTES + 3_000;
@@ -496,11 +504,11 @@ mod tests {
         ]
         .concat();
         let responses: [&[u8]; 5] = [
-            response_for(b"/1k", false),
-            response_for(b"/1k-h20", false),
-            response_for(b"/1k-gzip", true),
-            response_for(b"/nope", false),
-            response_for(b"/1k-chunked", false),
+            wire(b"/1k", false),
+            wire(b"/1k-h20", false),
+            wire(b"/1k-gzip", true),
+            wire(b"/nope", false),
+            wire(b"/1k-chunked", false),
         ];
         (input.into_bytes(), responses.concat())
     }
@@ -518,7 +526,7 @@ mod tests {
 
     #[test]
     fn batches_stop_before_passing_the_byte_limit() {
-        let one = response_for(b"/1k", false);
+        let one = wire(b"/1k", false);
         let count = BATCH_BYTES / one.len() + 10;
         let mut script = Script::new(get("/1k").repeat(count).into_bytes(), Vec::new());
         serve(&mut script);
@@ -549,12 +557,12 @@ mod tests {
         let input = format!("GET /1k HTTP/1.1\r\nx-big: {filler}\r\n\r\n");
         let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
-        assert_eq!(script.output, response_for(b"/1k", false));
+        assert_eq!(script.output, wire(b"/1k", false));
     }
 
     #[test]
     fn a_large_response_is_written_alone() {
-        let (small, large) = (response_for(b"/1k", false), response_for(b"/1m", false));
+        let (small, large) = (wire(b"/1k", false), wire(b"/1m", false));
         let input = [get("/1k"), get("/1m"), get("/1k")].concat().into_bytes();
         let mut script = Script::new(input, Vec::new());
         serve(&mut script);
@@ -573,8 +581,8 @@ mod tests {
         let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
         let parts: [&[u8]; 3] = [
-            response_for(b"/1k", false),
-            response_for(b"/1k-h20", false),
+            wire(b"/1k", false),
+            wire(b"/1k-h20", false),
             refusal(Refusal::BadRequest),
         ];
         assert!(
@@ -586,7 +594,7 @@ mod tests {
 
     #[test]
     fn batches_stop_at_512_responses() {
-        let not_found = response_for(b"/x", false);
+        let not_found = wire(b"/x", false);
         let input = "GET /x HTTP/1.1\r\n\r\n".repeat(600);
         let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
@@ -621,7 +629,7 @@ mod tests {
     fn end_of_stream_closes_gracefully() {
         let mut script = Script::new(get("/1k").into_bytes(), Vec::new());
         serve(&mut script);
-        assert_eq!(script.output, response_for(b"/1k", false));
+        assert_eq!(script.output, wire(b"/1k", false));
         assert!(
             script.shut_down,
             "TLS needs close_notify on end of stream too"
@@ -637,7 +645,7 @@ mod tests {
         input.resize(input.len() + body_len, b'x');
         let mut script = Script::new(input.clone(), Vec::new());
         serve(&mut script);
-        assert_eq!(script.output, response_for(b"/1k", false));
+        assert_eq!(script.output, wire(b"/1k", false));
         assert_eq!(
             script.read,
             input.len(),
@@ -717,7 +725,7 @@ mod tests {
 
     #[test]
     fn a_refusal_respects_the_batch_response_limit() {
-        let not_found = response_for(b"/x", false);
+        let not_found = wire(b"/x", false);
         let input = format!("{}BROKEN\r\n\r\n", "GET /x HTTP/1.1\r\n\r\n".repeat(512));
         let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
