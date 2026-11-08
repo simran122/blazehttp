@@ -11,8 +11,10 @@ node bench/parsers/run.ts --cc gcc-12 --parsers picohttpparser,llhttp,beast-resp
 ```
 
 Output: a markdown table per section on stdout and `bench/results/<date>-<arch>-dev-parsers.jsonl` (one `meta` line
-with host, load, container flags, compiler choice, versions, commit and the dirty-file list with a diff hash, then one
-line per parser × workload). The runner refuses to overwrite an existing results file (`--out` names another).
+with host, load, container flags, compiler choice, versions, the source tree taken before any build (commit,
+dirty-file list, SHA-256 over the diff and untracked files) and each image's id and labels; images are stamped with
+`org.opencontainers.image.revision` = the commit, marked `+dirty.<hash>` for uncommitted work; then one line per
+parser × workload). The runner refuses to overwrite an existing results file (`--out` names another).
 
 ## Parsers
 

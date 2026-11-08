@@ -2,14 +2,16 @@
 // Usage: node bench/parsers/run.ts [--rounds 7] [--run-ms 300] [--feed-rounds 5] [--cpuset 2] [--cc gcc-14|gcc-12]
 //                                  [--parsers id,id] [--out <file.jsonl>] [--no-build]
 import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { loadavg, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
+import { dirtyDigest, revision } from './provenance.ts';
+import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
 import type { CheckReport, FeedMode } from './protocol.ts';
 import { feedTable, sampleKey, timedResults, timedTable } from './report.ts';
@@ -161,11 +163,12 @@ function run(command: string, args: readonly string[]): string {
 
 const imageOf = (h: Harness, cc: string): string => `blazehttp-parsers-${h.dir}${h.compiled ? `-${cc}` : ''}`;
 
-function build(h: Harness, cc: string): void {
+function build(h: Harness, cc: string, source: TreeState): void {
   process.stderr.write(`building ${imageOf(h, cc)}\n`);
   const args = h.compiled ? Object.entries(COMPILERS[cc] ?? {}).flatMap(([k, v]) => ['--build-arg', `${k}=${v}`]) : [];
+  const label = ['--label', `org.opencontainers.image.revision=${revision(source)}`];
   const dockerfile = join(HERE, h.dir, 'Dockerfile');
-  spawnBuild(['build', '-q', ...args, '-t', imageOf(h, cc), '-f', dockerfile, join(ROOT, h.context)]);
+  spawnBuild(['build', '-q', ...args, ...label, '-t', imageOf(h, cc), '-f', dockerfile, join(ROOT, h.context)]);
 }
 
 /** Image builds download toolchains (tens of MB each), so they get a longer timeout than a harness invocation. */
@@ -278,16 +281,33 @@ function versions(options: Options): Record<string, string> {
 }
 
 /** The working tree's state, so results from uncommitted code can be traced. */
-function tree(): { commit: string; dirtyFiles: string[]; dirtyDiffSha256: string | null } {
-  const dirtyFiles = run('git', ['status', '--porcelain'])
-    .split('\n')
-    .filter((line) => line !== '');
-  const diff = run('git', ['diff', 'HEAD']);
+/** The working tree's state, taken before any image is built, so results from uncommitted code can be traced. */
+function tree(): TreeState {
+  const lines = (text: string): string[] => text.split('\n').filter((line) => line !== '');
+  const untracked = lines(run('git', ['ls-files', '--others', '--exclude-standard'])).map((path) => ({
+    path,
+    content: readFileSync(join(ROOT, path)),
+  }));
   return {
     commit: run('git', ['rev-parse', 'HEAD']).trim(),
-    dirtyFiles,
-    dirtyDiffSha256: dirtyFiles.length === 0 ? null : createHash('sha256').update(diff).digest('hex'),
+    dirtyFiles: lines(run('git', ['status', '--porcelain'])),
+    dirtySha256: dirtyDigest(run('git', ['diff', 'HEAD']), untracked),
   };
+}
+
+/** Each image's id and labels (its `org.opencontainers.image.revision` says which tree built it). */
+function images(opts: Options): Record<string, { id: string; labels: Record<string, string> }> {
+  const harnesses = [...new Set(opts.parsers.map((p) => p.harness))];
+  return Object.fromEntries(
+    harnesses.map((h) => {
+      const [image] = JSON.parse(run('docker', ['image', 'inspect', imageOf(h, opts.cc)])) as {
+        Id: string;
+        Config: { Labels: Record<string, string> | null };
+      }[];
+      if (image === undefined) throw new Error(`no image ${imageOf(h, opts.cc)}`);
+      return [imageOf(h, opts.cc), { id: image.Id, labels: image.Config.Labels ?? {} }];
+    }),
+  );
 }
 
 function positive(text: string, what: string, min = 1): number {
@@ -338,7 +358,8 @@ function main(): void {
   // Benchmark host rule: never share the CPUs with containers this run did not start (and never stop them).
   const running = run('docker', ['ps', '--format', '{{.Names}} {{.Image}}']).trim();
   if (running !== '') throw new Error(`containers this run did not start are running; stop them first:\n${running}`);
-  if (opts.build) for (const h of new Set(opts.parsers.map((p) => p.harness))) build(h, opts.cc);
+  const source = tree();
+  if (opts.build) for (const h of new Set(opts.parsers.map((p) => p.harness))) build(h, opts.cc, source);
 
   const workDir = mkdtempSync(join(tmpdir(), 'blazehttp-parsers-'));
   try {
@@ -365,7 +386,8 @@ function main(): void {
       kind: 'meta',
       date,
       label: 'dev (not a gate run)',
-      ...tree(),
+      ...source,
+      images: images(opts),
       docker: {
         serverVersion: docker.ServerVersion,
         architecture: arch,
