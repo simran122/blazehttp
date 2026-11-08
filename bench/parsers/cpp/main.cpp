@@ -4,7 +4,8 @@
 // - beast-response-parser: http::response_parser<http::empty_body>, the API Beast's own clients use; it stores
 //   every field in an http::fields container (one allocation per field plus one for the container).
 // - beast-basic-parser: a class derived from http::basic_parser<false> (Beast's callback API, no container); the
-//   field callback does nothing on the timed path and records spans for the differential check.
+//   field callback records each name/value span into a reused list on the timed path, as every parser in the bench
+//   delivers its fields, and `check` prints from that same path.
 // Both derive the framing facts themselves (content_length(), chunked(), keep_alive()). A Beast parser handles
 // one message, so each head gets a new parser. Each engine is a type, so every loop calls it directly.
 #include <boost/beast/core/error.hpp>
@@ -71,19 +72,25 @@ std::size_t put_head(Parser& p, std::string_view head) {
     return n;
 }
 
+// Name/value spans into the parsed bytes; reserved once and reused, so recording them never allocates.
+using span_list = std::vector<std::pair<std::string_view, std::string_view>>;
+
 class span_parser final : public http::basic_parser<false> {
 public:
-    explicit span_parser(field_list* fields) : fields_(fields) { header_limit(::header_limit); }
+    explicit span_parser(span_list& spans) : spans_(spans) {
+        header_limit(::header_limit);
+        spans_.clear();
+    }
     int status = 0;
 
 private:
     using sv = boost::beast::string_view;
-    field_list* fields_;
+    span_list& spans_;
 
     void on_request_impl(http::verb, sv, sv, int, error_code&) override {}
     void on_response_impl(int code, sv, int, error_code&) override { status = code; }
     void on_field_impl(http::field, sv name, sv value, error_code&) override {
-        if (fields_ != nullptr) fields_->emplace_back(name, value);
+        spans_.emplace_back(name, value);
     }
     void on_trailer_field_impl(http::field, sv, sv, error_code&) override {}
     void on_header_impl(error_code&) override {}
@@ -138,19 +145,28 @@ struct beast_response_parser {
 
 struct beast_basic_parser {
     static constexpr std::string_view name = "beast-basic-parser";
+    // The connection's reused span list (the harness is single-threaded).
+    static span_list& reused() {
+        static span_list spans = [] {
+            span_list s;
+            s.reserve(100);
+            return s;
+        }();
+        return spans;
+    }
     static facts parse(std::string_view head) {
-        span_parser p(nullptr);
+        span_parser p(reused());
         std::size_t n = put_head(p, head);
         return facts_of(p, p.status, n);
     }
     static field_list fields(std::string_view head) {
+        parse(head);
         field_list out;
-        span_parser p(&out);
-        put_head(p, head);
+        for (auto const& [name, value] : reused()) out.emplace_back(name, value);
         return out;
     }
     static std::size_t feed(std::string_view input) {
-        span_parser p(nullptr);
+        span_parser p(reused());
         return feed_parser(p, input);
     }
 };

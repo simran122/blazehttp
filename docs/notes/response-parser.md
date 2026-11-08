@@ -629,14 +629,16 @@ absolute ns are ≈ 3× a quiet run and only per-round ratios are used). Median 
 |---|---|---|---|
 | httparse 1.10.1 | **1.16, 1.64, 1.73, 1.96, 2.02** | 0.70, 0.89, 0.87, 1.08, 0.86 | validates, slices into a caller array, + facts pass |
 | picohttpparser `dd573d8` | **1.21, 1.33, 1.78, 1.34, 1.57** | 0.78, 0.74, 0.80, 0.71, 0.73 | validates, pointers into a caller array, + facts pass |
-| llhttp 9.4.3 (strict) | **1.27, 1.08, 1.13, 1.13, 1.54** | 0.56, 0.63, 0.66, 0.65, 0.79 | state machine, facts built in |
-| Beast 1.92 `basic_parser` | 0.86, 0.51, 0.95, 0.93, 0.89 | 0.47, 0.31, 0.56, 0.46, 0.54 | virtual call per field, facts built in |
+| llhttp 9.4.3 (strict) | no field delivery — superseded: 1.27, 1.08, 1.13, 1.13, 1.54 | 0.56, 0.63, 0.66, 0.65, 0.79 | state machine, facts built in; field callbacks added in fix round 2 |
+| Beast 1.92 `basic_parser` | no field delivery — superseded: 0.86, 0.51, 0.95, 0.93, 0.89 | 0.47, 0.31, 0.56, 0.46, 0.54 | virtual call per field, facts built in; spans recorded since fix round 2 |
 | Beast 1.92 `response_parser` | 0.33, 0.35, 0.57, 0.42, 0.35 | 0.23, 0.22, 0.30, 0.23, 0.19 | builds `http::fields` (fields + 1 allocations) |
-| Zig 0.17.1 `std.http` | 0.22, 0.19, 0.27, 0.23, 0.21 | 0.15, 0.11, 0.18, 0.13, 0.14 | finds the end, splits lines; little validation |
+| Zig 0.17.1 `std.http` | 0.22, 0.19, 0.27, 0.23, 0.21 | 0.15, 0.11, 0.18, 0.13, 0.14 | finds the end, splits lines; little validation; hands no fields out |
 | Go 1.27.3 `net/http` | 0.08, 0.10, 0.07, 0.11, 0.10 | 0.04, 0.06, 0.04, 0.05, 0.07 | `*Response` + header map (10 / 40 allocations) |
 
-**With the per-field output, httparse, picohttpparser and llhttp are all ahead of us on every workload** (ours takes
-1.1–2.0× their time); we stay ahead of Beast, Zig and Go. The split costs as much as the parse (plain / with-fields =
+**With the per-field output, httparse and picohttpparser are ahead of us on every workload** (ours takes 1.2–2.0×
+their time). The llhttp and Beast `basic_parser` ratios are superseded: their timed paths delivered no fields in this
+run (fixed in fix round 2; numbers wait for the re-run). We stay ahead of Beast `response_parser`, Zig (which hands
+no fields out, so compare it with the plain row) and Go. The split costs as much as the parse (plain / with-fields =
 0.50–0.63): P0 scans the bytes twice where httparse scans once. Without the split we lead everyone except httparse on
 the 20-field ring. 1-byte feeds (a)–(d): we stay linear (0.08–0.66 ms), as do llhttp, picohttpparser (its `last_len`
 scan, then one parse) and Zig (0.07–0.74 ms), and Go (0.30–2.05 ms); httparse re-parses from byte 0 (161–429 ms) and

@@ -188,12 +188,15 @@ Record every measured idea. Keep only measured wins.
   |---|---|---|
   | httparse | **1.16 / 1.64 / 1.73 / 1.96 / 2.02** | 0.70 / 0.89 / 0.87 / 1.08 / 0.86 |
   | picohttpparser | **1.21 / 1.33 / 1.78 / 1.34 / 1.57** | 0.78 / 0.74 / 0.80 / 0.71 / 0.73 |
-  | llhttp | **1.27 / 1.08 / 1.13 / 1.13 / 1.54** | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
-  | Beast `basic_parser` | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
+  | llhttp (no field delivery — superseded) | 1.27 / 1.08 / 1.13 / 1.13 / 1.54 | 0.56 / 0.63 / 0.66 / 0.65 / 0.79 |
+  | Beast `basic_parser` (no field delivery — superseded) | 0.86 / 0.51 / 0.95 / 0.93 / 0.89 | 0.47 / 0.31 / 0.56 / 0.46 / 0.54 |
   | Beast `response_parser` | 0.33 / 0.35 / 0.57 / 0.42 / 0.35 | 0.23 / 0.22 / 0.30 / 0.23 / 0.19 |
   | Zig `std.http` | 0.22 / 0.19 / 0.27 / 0.23 / 0.21 | 0.15 / 0.11 / 0.18 / 0.13 / 0.14 |
   | Go `net/http` | 0.08 / 0.10 / 0.07 / 0.11 / 0.10 | 0.04 / 0.06 / 0.04 / 0.05 / 0.07 |
 
+  **Fix round 2 correction:** the llhttp and Beast `basic_parser` rows above are superseded. Their timed paths
+  delivered no fields (llhttp registered no field callbacks; Beast's callback recorded nothing), so those ratios
+  compare unequal work. Both now record name/value spans on the timed path; their numbers wait for the re-run.
   The split itself costs as much as the parse: plain / with-fields = 0.50–0.63. Allocations per head: 0 for every
   parser except Beast `response_parser` (4 / 21 / 15.2) and Go (10 / 40 / 31.7). Feeds (median ms, (a)/(b)/(c)/(d)):
   ours 0.52 / 0.66 / 0.41 / 0.076 (with fields 0.49 / 0.54 / 0.40 / 0.097), picohttpparser 0.56 / 0.56 / 0.74 / 0.082,
@@ -202,8 +205,8 @@ Record every measured idea. Keep only measured wins.
   above this noise (picohttpparser ratio on `1k-h20` 1.08 vs 1.33, llhttp 1.37 vs 1.08: they move in opposite
   directions between runs).
 - **Where we win / lose (headline, `blazehttp+fields`):** **httparse is ahead on every workload** (ours+fields takes
-  1.2–2.0× its time), and so are picohttpparser (1.2–1.8×) and llhttp (1.1–1.5×). We stay ahead of Beast (1.05–3× faster
-  across its two APIs), Zig `std.http` (3.7–5.4×) and Go `net/http` (9–14×). Without the split (`blazehttp`, what the engine pays when it needs
+  1.2–2.0× its time), and so is picohttpparser (1.2–1.8×). llhttp's row delivered no fields and is superseded until
+  the re-run. We stay ahead of Beast `response_parser` (1.75–3× faster), Zig `std.http` (3.7–5.4×) and Go `net/http` (9–14×). Without the split (`blazehttp`, what the engine pays when it needs
   only the framing facts) we are ahead of all of them except httparse on the 20-field ring (1.08). On 1-byte feeds we
   are linear and on par with the other resumable parsers; httparse and Beast are quadratic.
 - **What P1a must close:** the second pass. Our parser already finds every colon and line end; a span-emitting API

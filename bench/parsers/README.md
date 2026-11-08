@@ -16,23 +16,25 @@ line per parser × workload). The runner refuses to overwrite an existing result
 
 ## Parsers
 
-| id                      | language | API used (each parser's fastest idiomatic API)                | work per head                                                  |
-| ----------------------- | -------- | ------------------------------------------------------------- | -------------------------------------------------------------- |
-| `blazehttp`             | Rust     | `ResponseParser::new(Method::Get).parse(buf)`                 | validates every byte; framing facts; field block as a range    |
-| `blazehttp+fields`      | Rust     | `blazehttp` + `split_fields` into 100 name/value slots        | the above + per-field name/value slices, like httparse         |
-| `httparse`              | Rust     | `ParserConfig::parse_response_with_uninit_headers`, 100 slots | validates; slices into caller array; + same facts pass         |
-| `picohttpparser`        | C        | `phr_parse_response`, 100 slots                               | validates; pointers into caller array; + same facts pass       |
-| `llhttp`                | C        | `llhttp_execute`, strict mode, only `on_headers_complete`     | state machine; facts built in                                  |
-| `beast-response-parser` | C++      | `http::response_parser<http::empty_body>::put`                | builds `http::fields` (fields + 1 allocations); facts built in |
-| `beast-basic-parser`    | C++      | `http::basic_parser<false>` subclass                          | one virtual call per field; facts built in                     |
-| `zig-std-http`          | Zig      | `std.http.HeadParser.feed` + `Client.Response.Head.parse`     | finds the end; splits lines; no token/value validation         |
-| `go-net-http`           | Go       | `http.ReadResponse` on a reused `bufio.Reader`                | builds `*Response` + canonical `Header` map (allocates)        |
+| id                      | language | API used (each parser's fastest idiomatic API)                | work per head                                                    |
+| ----------------------- | -------- | ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `blazehttp`             | Rust     | `ResponseParser::new(Method::Get).parse(buf)`                 | validates every byte; framing facts; field block as a range      |
+| `blazehttp+fields`      | Rust     | `blazehttp` + `split_fields` into 100 name/value slots        | the above + per-field name/value slices, like httparse           |
+| `httparse`              | Rust     | `ParserConfig::parse_response_with_uninit_headers`, 100 slots | validates; slices into caller array; + same facts pass           |
+| `picohttpparser`        | C        | `phr_parse_response`, 100 slots                               | validates; pointers into caller array; + same facts pass         |
+| `llhttp`                | C        | `llhttp_execute`, strict mode, field callbacks                | state machine; field spans via callbacks; facts built in         |
+| `beast-response-parser` | C++      | `http::response_parser<http::empty_body>::put`                | builds `http::fields` (fields + 1 allocations); facts built in   |
+| `beast-basic-parser`    | C++      | `http::basic_parser<false>` subclass                          | one virtual call per field, spans kept; facts built in           |
+| `zig-std-http`          | Zig      | `std.http.HeadParser.feed` + `Client.Response.Head.parse`     | finds the end; splits lines; no validation; no fields handed out |
+| `go-net-http`           | Go       | `http.ReadResponse` on a reused `bufio.Reader`                | builds `*Response` + canonical `Header` map (allocates)          |
 
-**Which of our rows to compare:** our parser returns the field lines as one offset range; every other parser hands
-the caller each field (slices, pointers, callbacks or a container). `blazehttp+fields` adds the zero-allocation
-name/value split a consumer needs (`rust/src/engines.rs` `split_fields`, mirroring httparse's output), so it is the
-row to compare with the others. The plain `blazehttp` row is what the engine itself pays when it only needs the
-framing facts.
+**Which of our rows to compare:** our parser returns the field lines as one offset range. httparse,
+picohttpparser, llhttp, both Beast APIs and Go hand the caller each field on their timed path (slices, pointers,
+spans recorded from callbacks, or a container). `blazehttp+fields` adds the zero-allocation name/value split a
+consumer needs (`rust/src/engines.rs` `split_fields`, mirroring httparse's output), so it is the row to compare with
+those. Zig's `Head.parse` hands no fields out either (a caller iterates `Head.iterateHeaders()` separately, which the
+timed path does not do), so it is closer to the plain `blazehttp` row, which is what the engine itself pays when it
+only needs the framing facts.
 
 "Framing facts" are the length (`Content-Length`, chunked, or neither), and keep-alive: every parser produces them,
 natively or through the same extraction pass (`rust/src/engines.rs`, `c/pico.c`). Versions are pinned in each
