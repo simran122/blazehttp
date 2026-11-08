@@ -441,7 +441,248 @@ without re-parse, no OWS loop on the hot path, and strictness.
 
 ## 3. Writers and serialisers: why each one is fast
 
-_(in progress)_
+Same treatment as §2, one level deeper than `docs/notes/request-writer.md` §2 (branch `p0/writer`). Topics per
+writer: when validation runs (construction or write), pre-serialised blocks, integer formatting, the copy pattern,
+vectored vs copied output, word-at-a-time validation; then **what it takes to be faster than that writer with equal
+work** (equal work is defined in §3.12 and used by the race in §3.13). Our baseline (journal 2026-11-08, quiet
+round, `post1k`): full writer 74–79 ns; without name classification 58–65 ns (classification ≈ 15 ns); without any
+delta scan 44–46 ns (`token_len` + `value_len` ≈ 14–19 ns); copy floor ≈ 36 ns; the remaining ≈ 8–10 ns are the
+target check, limits, the authority compare, framing, the checked sum and `try_reserve_exact`.
+
+**Two corrections to `request-writer.md` §2** (verified at the pins):
+1. curl does **not** cut a custom header at the first newline: `Curl_add_custom_headers` uses `curlx_str_untilnl`
+   only to decide whether the value is blank (`lib/http.c` L1877) and then writes the whole original string with
+   `curlx_dyn_addf(req, "%s\r\n", origp)` (L1934). An embedded CRLF reaches the wire.
+2. http 1.5.0 has no `eq!`-macro perfect hash any more: `parse_hdr` lowercases into a 64-byte stack buffer and calls
+   `StandardHeader::from_bytes`, a `const fn` `match` on byte-string literals (`src/header/name.rs` L97–104,
+   L1073–1100).
+
+### 3.1 hyper `v1.12.0` + http `v1.5.0`
+
+- **Validation at construction, never at encode.** `HeaderValue::from_bytes` → `try_from_generic`, a branch-free
+  fold `bad |= !is_valid(b)` written "so the loop vectorizes" (`src/header/value.rs` L212–228), with `is_valid(b) =
+  b >= 32 && b != 127 || b == b'\t'` (L562–565) — arithmetic, not a table — then `Bytes::copy_from_slice`
+  (allocates). `from_static` validates in a `const fn` (L62–76). `HeaderName::from_bytes` maps every byte through
+  the 256-entry `HEADER_CHARS` table (lowercase or 0) into a `[MaybeUninit<u8>; 64]`, then `StandardHeader::
+  from_bytes`; a standard name is an enum (no allocation), a custom one is checked for 0 and allocated
+  (`name.rs` L1009–1150).
+- **Per request at encode** (`src/proto/h1/role.rs` `Client::encode` L1215–1262): no byte validation, but 2–4 hash
+  operations for framing (`content_length_parse_all`, `entry(TRANSFER_ENCODING)`, `set_content_length` inserting
+  `HeaderValue::from(len)` — which **allocates a 20-byte `BytesMut` per request** and formats with `itoa`
+  (`value.rs` L401–437) — and `connection_any_close`). `dst.reserve(30 + n × 30)` is a guess (L32, L1226); the
+  target goes through `write!(FastWrite(dst), "{} ", uri)` (L1231, with a `TODO … encode without std::fmt`); four
+  appends per field (`write_headers` L1629–1636). `HeaderMap` iteration walks the insertion-ordered `entries`
+  `Vec`, following `extra_values` only for repeated names (`src/header/map.rs` L2323–2353) — cheap. The cost is
+  building a map per request. Output: `WriteStrategy::Queue` → one `writev` of ≤ 64 slices (`io.rs` L59–64,
+  L278–316). No SIMD.
+- **To be faster than hyper with equal work.** Equal work = per request `HeaderName`/`HeaderValue::from_bytes` for
+  every delta field, a `Uri` parse, a new map, then encode: an allocation per field, per map and for
+  Content-Length, and a hash per name — we already do the same validation with 0 allocations (0.38–0.41×). Against
+  hyper's **encode-only** number (pre-built map, no validation) our *validating* writer is 1.16–1.22×; the equal
+  opponent of encode-only is our copy path (EW0, §3.12), ≈ 0.5×. To beat encode-only even while validating we must
+  remove the classification and line-search cost (§6), which hyper does not pay because each name became an enum
+  once.
+
+### 3.2 Go `go1.27.3` `(*Request).Write`
+
+- **Validation at write time, twice.** `Transport.roundTrip` runs `validateHeaders` (names: `isTokenTable` lookup;
+  values: reject `isCTL && !isLWS`; `transport.go` L594–608, `httpguts/httplex.go` L196–311). `(*Request).write`
+  (`request.go` L592–784) adds `PunycodeHostPort`, `ValidHostHeader` (Host blanked or error), `RequestURI()` (new
+  string), `stringContainsCTLByte` on the target; then `writeSubset` (`header.go` L190–225) checks every name
+  **again** and runs `headerNewlineToSpace.Replace` over every value (a second scan; allocates only when it
+  replaces). Excluded names (`Host`, `User-Agent`, `Content-Length`, …) are found by an `exclude[k]` map lookup —
+  one string hash per header (Go's name classification).
+- **Serialisation:** `fmt.Fprintf` for the request line and `Host`; keys **sorted every request** (pooled
+  `headerSorter`, L160–181); four `WriteString`s per field; `newTransferWriter` allocates; Content-Length is
+  `strconv.FormatInt(n,10)+"\r\n"` (allocates). Output: a 4 KiB `bufio.Writer`, one `Flush` per request (head and
+  small body coalesced). Measured earlier: 5 / 10 allocations (`get` / `post1k`).
+- **To be faster than Go:** it does more byte work than we do (two passes over names and values) plus `fmt`, a sort
+  and 5–10 allocations. We are ≈ 15–20× faster today; rules: never a second pass over values, never allocate per
+  request. Equal work for Go = `validateHeaders` + `Request.Write` (the bench must call both, since validation lives
+  in `roundTrip`).
+
+### 3.3 fasthttp `v1.77.0` `RequestHeader`
+
+- **Validation at set time, and it repairs instead of rejecting.** `Set`/`Add` → `initHeaderKV`
+  (`header.go` L2353, L4062–4083): `removeNewLines` uses two `bytes.IndexByte` and replaces every CR/LF with SP
+  (L4134–4160); NUL, DEL and other CTLs are **not** checked; `normalizeHeaderKey` uses `validHeaderFieldByte` only to
+  decide whether to canonicalise case (an invalid name is still stored, L4085–4132). Special names are classified at
+  set time (switch on `key[0] | 0x20`, then a `toLowerTable` compare, L1982–2045) into dedicated fields;
+  `Transfer-Encoding` is dropped. A non-special `Set` scans the existing headers linearly (`args.go` L449–463).
+- **Serialisation:** **pre-formatted bytes**: Content-Length is formatted once when the body is set
+  (`strconv.AppendUint` into a reused slice, `http.go` L2058–2067); `AppendBytes` (L3253–3305) only appends stored
+  bytes. The head is written **straight into the socket buffer's free space** (`w.AvailableBuffer()`, then
+  `w.Write(buf)`, L3193–3203) — no intermediate copy. Requests and writers are pooled; zero allocations in steady
+  state; a small body leaves in the same `bufio` flush.
+- **To be faster than fasthttp with equal work.** Its write path is a pure append of cached bytes, the same as our
+  copy floor. Equal work adds `httpguts.ValidHeaderFieldName/Value` before each `Set` (EW1) — so our validation must
+  cost about what two `IndexByte` per value cost: one branch-free pass over the whole delta (§6.2) and at most one
+  word compare per name (§6.1). Our `out` already is the buffer that is sent.
+
+### 3.4 undici `v8.12.4` (`writeH1`)
+
+- **Validation at `Request` construction:** path `invalidPathRegex = /[^!-ÿ]/` (`lib/core/request.js` L29,
+  L118–126); names are **interned first** — `processHeader` (L472–570) looks the name up in
+  `headerNameLowerCasedRecord`, a null-prototype record of every well-known name in original and lowercase spelling
+  (`lib/core/constants.js` L105–115), so a known name skips the token check; unknown names use a char table below 12
+  characters and `tokenRegExp` above (`lib/core/util.js` L728–748); values one `headerCharRegex` scan (L759–767).
+- **Serialisation:** string concatenation `header += …` (`lib/dispatcher/client-h1.js` L1343–1371), a cached
+  per-client `host:` line (`kHostHeader`, `client.js` L317), then `cork`, `write(head + "content-length: n\r\n\r\n",
+  'latin1')`, `write(body)`, `uncork` (L1536–1564): a latin1 encode plus one `writev`.
+- **To be faster than undici:** send bytes, not strings (the P2 layer must hand Rust one latin1 byte region);
+  borrow the interning idea — known names as small integer ids that Rust expands from its own table without checks
+  (§6.3).
+
+### 3.5 curl `curl-8_23_0`
+
+- **Validation:** none for custom header values (correction above; `lib/http.c` L1808–1942); some names are skipped
+  by `curlx_str_casecompare` chains (L1895–1925); each default header probes the custom list linearly with
+  `Curl_checkheaders` (`lib/transfer.c` L84–99): O(defaults × custom) per request.
+- **Serialisation:** a new `dynbuf` per request (`curlx_dyn_init` L3096, freed L3162) doubling from 32 B
+  (`lib/curlx/dynbuf.c` L29, L67–113; ≈ 5 reallocations for a 400 B head); ~20 `http_add_hd` slots, several and all
+  custom headers through `curlx_dyn_addf` (curl's printf, `dynbuf.c` L187–215); integers one digit at a time
+  (`lib/mprintf.c` L896–900). With a body, the head is copied into the 64 KiB `sendbuf` together with body bytes
+  (`lib/request.c` L380–425). The proxy h1 serialiser is `Curl_h1_req_write_head` (`lib/http1.c` L322–345) +
+  `Curl_dynhds_h1_dprint` (`lib/dynhds.c` L352–375).
+- **To be faster than curl:** it loses on allocations, printf and O(k·n) probing while validating less; nothing to
+  copy beyond coalescing head and body (which we do).
+
+### 3.6 h2o client (`lib/common/http1client.c` `build_request` L747–837) and server (`lib/http1.c`)
+
+- **Client:** no validation; names are interned tokens with class flags (`include/h2o/token.h` L32–48), so
+  classification is a pointer compare or a bit test; buffer from the request's pool, sized method + path +
+  authority + 512, doubled by `RESERVE` before each header (L753–767); `h2o_memcpy` plus single-byte stores for
+  `": "` and CRLF, no per-append capacity check (L774–783); `writev` of head and body (L839–895).
+- **Server, the two-pass pattern:** `flatten_headers_estimate_size` sums name + value + 4 per header plus fixed
+  bounds (L944–954), one pool allocation (L1090–1092), `flatten_headers` copies unchecked (L956–999). Token lookup:
+  switch on length, then the **last byte**, then `memcmp` (`token_table.h` L273+).
+- **To be faster than h2o:** without validation its copy equals our floor. Take the tokens (§6.3) and the
+  last-byte discriminator (at length 10, `connection`/`keep-alive`/`user-agent` end in `n`/`e`/`t`).
+
+### 3.7 Boost.Beast `boost-1.92.0` serializer
+
+- **Storage:** one allocation per field holding the pre-formatted `name: value\r\n` line
+  (`http/impl/fields.hpp` L291–305, L968–994); only size checks and a trim at insertion, **no CR/LF or CTL check**
+  (L974–985); `set` is `string_to_field` + an intrusive multiset `lower_bound` with `iequals` + an insertion-order
+  list (L584–599): O(log n) and one allocation per field. Content-Length via `raw_to_string`, one digit per
+  iteration (L934–945).
+- **Serialisation:** the head is never copied — `basic_fields::writer` (L32–222) is a `buffers_cat_view` of method,
+  target, `" HTTP/1.1\r\n"` and one buffer per field; the serializer appends the body buffers
+  (`http/impl/serializer.hpp` L86–106): a `writev` with one iovec per field. Chunk headers use `std::make_shared`
+  per chunk (`chunk_encode.hpp` L68–117).
+- **To be faster than Beast:** with equal work (build the message per request, then `buffer_copy` into a flat
+  buffer) its per-field allocations dominate; on a socket, one contiguous write should beat a 10–20-iovec `writev`
+  for small heads (unverified beyond 2 iovecs, `request-writer.md` §8.3). Our template is "format once" without the
+  per-field allocations and iovecs.
+
+### 3.8 nginx `release-1.31.8` `ngx_http_proxy_create_request`
+
+- **Compiled template, built once at config time:** `ngx_http_proxy_init_headers` (L4186+) compiles
+  `proxy_set_header` and the defaults (L761–772) into two bytecode arrays — `lengths` codes and `values` copy codes
+  with literal bytes inline — and a static hash of the names it sets.
+- **Two-pass write** (L1184–1600): pass 1 sums every length (request line, escapes, Host, script codes, incoming
+  headers not found by `ngx_hash_find` — classification is one probe because the request parser hashed the name
+  while scanning it); one exact `ngx_create_temp_buf(len)` (L1370); pass 2 `ngx_cpymem` (a byte loop below 17 bytes
+  on Intel, `ngx_string.h` L97–140) plus single-byte stores; the body is chained, not copied, and sent with
+  `writev`. No write-time validation (inputs were validated by its parser).
+- **To be faster than nginx:** we already use its pattern (sum, `try_reserve_exact`, appends); copy the
+  classification-during-scan idea (§6.1).
+
+### 3.9 cpp-httplib `v0.65.0` (commit `7e5d0683ac326788e52ce3c44585c1af24b04532`, resolved 2026-11-08)
+
+- **Validates twice:** `set_header` keeps a field only if `is_field_valid` (`httplib.h` L12136–12139,
+  L8513–8516); `check_and_write_headers` checks every field again (L13305–13318); `write_request_line` checks the
+  method (`is_token`) and target (`is_request_target`) (L8980–8992); the checks are branchy per-character loops
+  (L10620–10666).
+- **Serialisation:** headers in an `insertion_ordered_multimap` of `std::string` pairs; Content-Length via
+  `std::to_string` (L16725–16740); a temporary string for the request line and **per field** (L8986–9020) into a
+  `BufferStream`; **head and body in two sends** for a small POST (L16769–16773, L16855–16860).
+- **To be faster than cpp-httplib:** heavy allocation and copying; keep head and body in one write end to end.
+
+### 3.10 Zig `0.17.1` `std.http.Client` `Request.sendHead`
+
+- **Validation:** only in `request()` and only with `runtime_safety` (Debug/ReleaseSafe): names non-empty without
+  `:`, neither name nor value containing the two-byte `"\r\n"` — a lone CR or LF passes (`lib/std/http/Client.zig`
+  L1699–1711). **ReleaseFast checks nothing.**
+- **Serialisation** (L991–1090): `writeAll` per piece into a buffered `std.Io.Writer` (default 1024 B, L53,
+  L257–264); `writeVecAll` of 3 slices for overridable defaults (L1289–1299); Content-Length via `w.print("{d}")`.
+  `post1k` overflows the 1 KiB buffer (more than one drain; unverified).
+- **To be faster than Zig:** its CPU path is short because it checks nothing; with equal work (a Go-level validator
+  loop added) we need validation at about one vectorised pass; we also win on syscalls for `post1k`.
+
+### 3.11 Netty `netty-4.2.20.Final` `HttpRequestEncoder`
+
+- **Validation at set time, on by default:** `validateToken` for names, `validateValidHeaderValue` for values
+  (first byte ≥ 0x21 and not DEL, then `b < 0x20 && b != 0x09 || b == 0x7F` fails;
+  `DefaultHttpHeadersFactory.java` L30–74, `HttpHeaderValidationUtil.java` L104–139); `isConnectionHeader` is the
+  same length switch + `contentEqualsIgnoreCase` as our classifier (L50–74). Encode does not validate again.
+- **Serialisation:** an EWMA of past head sizes (start 256, weight 1/5, ×4/3) sizes one pooled buffer
+  (`HttpObjectEncoder.java` L66–83, L329–345, L635–637); small content (≤ max(128, estimate/8)) fused into the head
+  buffer (L58, L320–333); per field one `ensureWritable(name + value + 4)`, then absolute sets, `": "` and CRLF as
+  16-bit stores (`HttpHeadersEncoder.java` L32–46); request line `HttpRequestEncoder.java` L39–78.
+- **To be faster than Netty:** its encode is close to our floor; equal work = `DefaultHttpHeaders` with validation
+  plus encode; our classifier must cost less per candidate than `contentEqualsIgnoreCase` (§6.1).
+
+### 3.12 Equal work for writers (definitions)
+
+| Tier | Work per request | Ours | Others, lifted with their own code |
+|---|---|---|---|
+| **EW0** serialise only | request line, headers, framing, one buffer | copy floor | encode with pre-built, reused objects (hyper encode-only, fasthttp `AppendBytes`, Netty encode, h2o `build_request`, Beast `buffer_copy`, Zig ReleaseFast); Go has no EW0 (it cannot skip its checks) |
+| **EW1** Go-level checks | EW0 + token names, field-content values (reject CTL except HTAB, DEL), target CTL/SP check, on every per-request field | — | hyper: `from_bytes` + `Uri` parse + new map; Go: native (`validateHeaders` + `Write`); fasthttp: `httpguts` checks before `Set`; undici: `new Request`; Netty: default validating headers; cpp-httplib: native; h2o, Beast, Zig, curl: a Go-equivalent byte loop + tchar table in their language |
+| **EW2** ours | EW1 + forbidden names, singleton names, line count, authority binding, no repair | `write_request` | EW1 + their own classifier (Netty `isConnectionHeader`, fasthttp first-byte switch, hyper `contains_key` per forbidden name, Go `exclude` map) |
+
+Report three ratios per rival: **ours@EW2 / theirs@EW1** (we do more and must still win — the headline),
+ours@EW2 / theirs@EW2, and EW0 / EW0. Allocations per request are reported beside every number.
+
+### 3.13 Task 5c — cross-language writer race
+
+**Goal:** show, per rival, that `write_request` is faster with equal work (§3.12), on arm64 and x64, as
+`bench/parsers` does for parsers. It replaces the ad-hoc `bench/writer/` comparisons with one harness.
+
+**Rivals and versions** (pinned at the latest release, re-baselined at P1b and each release candidate, design
+§16.2):
+
+| Rival | Version | Timed API (in memory, reused sink, no socket) | Sink |
+|---|---|---|---|
+| hyper encoder | v1.12.0 + http v1.5.0 | **real hyper**, not an emulation: `client::conn::http1::handshake` over an in-memory duplex that captures written bytes, `SendRequest::send_request` per request (EW1: request built from bytes per op; EW0: pre-built `HeaderMap` cloned). Keep `bench/writer/hyper-emul` only as a cross-check whose output must equal real hyper's bytes | captured `Vec` |
+| Go net/http | go1.27.3 | `validateHeaders` (copied, it lives in `roundTrip`) + `req.Write(bw)` | reused 8 KiB `bufio.Writer` over `io.Discard`, `Flush` per op |
+| fasthttp | v1.77.0 | pooled `Request`, `Reset`, `SetRequestURI`, `SetMethod`, `Set` × n, `SetBody`, `req.Write(bw)` (EW1 adds `httpguts` checks) | `bufio.Writer` over `io.Discard` |
+| libcurl | curl-8_23_0 | `Curl_h1_req_write_head` + `Curl_dynhds` in a test build (EW0/EW1); the full easy-handle path only in the G0 end-to-end race | `dynbuf`, reset not freed |
+| h2o client | master `f35c735` | `build_request` (static in `http1client.c`: compiled from a vendored copy at the pin) with a pool cleared per op; EW1 adds a validator loop | pool |
+| Boost.Beast | boost-1.92.0 | `request<string_body>` built per op + `serializer` + `buffer_copy` | reused `flat_buffer` |
+| cpp-httplib | v0.65.0 | `Request` + `set_header` × n + `detail::write_request_line` + `detail::check_and_write_headers` + body append | `BufferStream` |
+| Zig std.http | 0.17.1 | port of `sendHead` into `Writer.fixed` (`ReleaseFast`; EW1 adds a validator loop) | fixed buffer |
+| undici | v8.12.4 | `new Request(...)` (internal `lib/core/request.js`) + `writeH1` with a stub socket whose `cork`/`write`/`uncork` copy into a reused `Buffer` | reused `Buffer` |
+| Netty | 4.2.20.Final | `EmbeddedChannel(new HttpRequestEncoder())`, `writeOutbound(DefaultFullHttpRequest)`, `readOutbound` + release, under JMH | pooled `ByteBuf` |
+
+**Harness shape — reuse `bench/parsers` as is:** one image per language (Rust, C/C++, Go, Zig, Node, Java),
+base images by digest, rival sources by SHA-256 and tag commit, `docker run --cpus=1 --cpuset-cpus=<n>
+--memory=2g --memory-swap=2g --network=none`, the runner refuses to start while another container runs, same CPU
+baseline everywhere (generic Armv8-A; the x64 baseline is decided with the x64 host), release flags per design
+§16.2 (Java: JIT after JMH warm-up, reported separately), rounds rotated by start position, median of per-round
+ratios, JSONL with provenance (`bench/results/<date>-<arch>-dev-writers.jsonl`), and `check`/`time` modes with the
+same protocol (`harness <writer> <mode> <workload> [run ms]`).
+
+**Differential gate before timing (the writer analogue of the parser gate):** in `check` mode every harness prints,
+per request, the bytes it produced; the runner parses each output with **our `ResponseParser`'s request twin, or
+httparse's `Request` parser, as the oracle** and requires: the same method, target, Content-Length and body; the
+same field multiset (names compared case-insensitively — Go and fasthttp canonicalise case — values byte-exact);
+no `transfer-encoding`; exactly one `content-length` where §6.5 of the writer note requires one. Byte counts of the
+field section may differ only by case and order. A second gate feeds the **injection vectors**
+(`tests/vectors/h1-request/`, CR/LF/NUL/DEL in values, bad names) through each rival's EW1 path and records which
+it rejects, repairs or passes — reported as a table, never timed.
+
+**Workloads** (exported once as JSON by `crates/engine-core/examples/h1_write_bench.rs`'s generator so every
+language loads identical requests): `get` (`GET /data`, template only), `post1k` (`POST /data`, defaults +
+`content-type: application/json` + `x-request-id` (36-character UUID) + `authorization: Bearer` + 40 characters,
+1 KiB JSON body), `varied` (the 256-request ring, fixed xorshift seed), plus `h20` (20 per-request fields, 400–800 B
+of headers — where validation cost dominates). Per-request inputs are fresh each op (cycled from the ring), so
+construction-time validators run per request.
+
+**Metrics:** ns per request (median, min–max over rounds), ratio to our copy floor and to ours, allocations per op
+(Go `-benchmem`, JMH `gc.alloc.rate.norm`, Rust counting allocator, C `--wrap=malloc`, Node heap delta).
+**Gate for Task 5c:** ours@EW2 faster than every rival@EW1 on every workload, arm64 and x64, CI lower bound per
+design §16.4 once run on the reference host; `post1k` ≤ 2.3× floor.
 
 ## 4. Papers and algorithms
 
