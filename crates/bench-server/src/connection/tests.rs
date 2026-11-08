@@ -1,17 +1,17 @@
 //! Unit tests for one connection, driven by a scripted peer on a paused clock.
 
+use std::future::Future;
 use std::io::{self, IoSlice};
 use std::pin::Pin;
+use std::sync::mpsc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use std::future::Future;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-
 use tokio::time::error::Elapsed;
 use tokio::time::{Sleep, timeout};
 
-use super::{BATCH_BYTES, BUFFER_BYTES, Mode, run};
+use super::{BATCH_BYTES, BUFFER_BYTES, LINGER_TIME, Mode, run};
 use crate::cells::{Refusal, refusal, response_for};
 
 /// The response a cell sends (never a refusal in these tests).
@@ -22,9 +22,11 @@ fn wire(target: &[u8], head_only: bool) -> &'static [u8] {
 /// Body larger than the read buffer, so skipping it spans several reads.
 const BIG_BODY: usize = BUFFER_BYTES + 3_000;
 
-/// Recorded output per script. A server that answers forever (a broken boundary scan) must fail the test within
-/// seconds and a few MiB, never grow until the machine runs out of memory.
+/// Recorded output per script, and recorded write calls. A server that answers forever (a broken boundary scan) or
+/// writes forever (a broken write loop, even with zero-byte writes) must fail the test within seconds and at most a
+/// few tens of MiB, never grow until the machine runs out of memory.
 const OUTPUT_CAP: usize = 64 << 20;
+const WRITES_CAP: usize = 100_000;
 
 /// A scripted peer: `input` arrives in reads that never cross a cut; writes are recorded per call, at most
 /// `max_write` bytes each and `cap` bytes in total (then it panics). Reads wait (virtual time) at each `pauses`
@@ -86,6 +88,10 @@ impl Script {
     }
 
     fn record(&mut self, bufs: &[IoSlice<'_>]) -> usize {
+        assert!(
+            self.writes.len() < WRITES_CAP,
+            "stub write-call cap of {WRITES_CAP} calls exceeded"
+        );
         let mut room = self.max_write;
         let before = self.output.len();
         for buf in bufs {
@@ -175,15 +181,48 @@ impl AsyncWrite for Script {
 /// (the clock is paused, so waiting costs no real time).
 const TEST_BOUND: Duration = Duration::from_secs(30);
 
-/// Runs one connection over `script` on a paused-clock runtime, bounded by [`TEST_BOUND`].
+/// Real time a scripted connection may take. The virtual-time bound cannot stop a synchronous spin (a loop that never
+/// awaits), so past this the process is aborted instead of hanging the test run at 100% of a core.
+const WATCHDOG: Duration = Duration::from_secs(60);
+
+/// Aborts the process unless dropped within [`WATCHDOG`].
+struct Watchdog {
+    /// Dropping it disconnects the channel, which disarms the watchdog thread.
+    _armed: mpsc::Sender<()>,
+}
+
+fn watchdog() -> Watchdog {
+    let (armed, disarmed) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if disarmed.recv_timeout(WATCHDOG) == Err(mpsc::RecvTimeoutError::Timeout) {
+            eprintln!(
+                "a scripted connection ran past the {WATCHDOG:?} watchdog (a spin?); aborting"
+            );
+            std::process::abort();
+        }
+    });
+    Watchdog { _armed: armed }
+}
+
+/// Runs one connection over `script` on a paused-clock runtime, bounded by [`TEST_BOUND`] of virtual time.
 fn drive(script: &mut Script, request_timeout: Duration) -> Result<io::Result<()>, Elapsed> {
+    drive_within(script, request_timeout, TEST_BOUND)
+}
+
+/// [`drive`] with a chosen virtual-time bound.
+fn drive_within(
+    script: &mut Script,
+    request_timeout: Duration,
+    bound: Duration,
+) -> Result<io::Result<()>, Elapsed> {
+    let _watchdog = watchdog();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
         .build()
         .expect("runtime");
     let mode = Mode::Answer { request_timeout };
-    runtime.block_on(async { timeout(TEST_BOUND, run(script, mode)).await })
+    runtime.block_on(async { timeout(bound, run(script, mode)).await })
 }
 
 fn serve(script: &mut Script) {
@@ -254,6 +293,29 @@ fn stub_fails_fast_past_its_output_cap() {
     let mut script = Script::new(get("/1m").into_bytes(), Vec::new());
     script.cap = 1024;
     serve(&mut script);
+}
+
+#[test]
+#[should_panic(expected = "write-call cap")]
+fn stub_fails_fast_past_its_write_call_cap() {
+    let mut script = Script::new(get("/1m").into_bytes(), Vec::new());
+    script.max_write = 1;
+    serve(&mut script);
+}
+
+/// After exactly 64 KiB of unread input the linger must stop at once: one more read on a quiet peer would hold the
+/// slot until the linger time runs out.
+#[test]
+fn lingering_stops_at_64_kib_without_another_read() {
+    let mut input = b"BROKEN\r\n\r\n".to_vec();
+    input.resize(BUFFER_BYTES * 20, b'x');
+    let mut script = Script::new(input, Vec::new());
+    script.stall_reads_at = Some(BUFFER_BYTES + 65_536);
+    let finished = drive_within(&mut script, Duration::from_secs(60), LINGER_TIME / 2);
+    finished
+        .expect("closed without waiting for more input")
+        .expect("connection");
+    assert_eq!(script.output, refusal(Refusal::BadRequest));
 }
 
 #[test]
