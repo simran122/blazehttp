@@ -1,13 +1,11 @@
 //! One client connection: read, answer every complete request with its pre-built bytes, one write per batch, close
-//! gracefully (design note §5). Generic over [`Transport`], so plain TCP and TLS share the code with static dispatch.
+//! gracefully (design note §5). Generic over the stream, so plain TCP and TLS share the code with static dispatch.
 
 use std::io::{self, IoSlice};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout, timeout_at};
-use tokio_rustls::server::TlsStream;
 
 use crate::cells::{Refusal, refusal, response_for};
 use crate::request::{Scan, scan};
@@ -24,21 +22,6 @@ const BATCH_RESPONSES: usize = 512;
 const LINGER_TIME: Duration = Duration::from_secs(1);
 const LINGER_BYTES: usize = 64 * 1024;
 
-/// A stream a connection can answer on, and how it writes a batch of pre-built responses.
-pub(crate) trait Transport: AsyncRead + AsyncWrite + Unpin {
-    /// `true`: one vectored write of the static responses, no copy. `false`: several responses are copied into one
-    /// buffer first (TLS, where rustls processes each slice of a vectored write separately; note §7.2).
-    const GATHER: bool;
-}
-
-impl Transport for TcpStream {
-    const GATHER: bool = true;
-}
-
-impl Transport for TlsStream<TcpStream> {
-    const GATHER: bool = false;
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Mode {
     /// Answer requests; a request head must arrive within the head timeout.
@@ -47,7 +30,10 @@ pub(crate) enum Mode {
     Stall,
 }
 
-pub(crate) async fn run<S: Transport>(stream: S, mode: Mode) -> io::Result<()> {
+pub(crate) async fn run<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    mode: Mode,
+) -> io::Result<()> {
     match mode {
         Mode::Answer { head_timeout } => Connection::new(stream, head_timeout).answer().await,
         Mode::Stall => drain(stream).await,
@@ -98,14 +84,12 @@ struct Connection<S> {
     skip: u64,
     batch: Vec<IoSlice<'static>>,
     batch_bytes: usize,
-    /// Copy buffer for transports that do not gather.
-    out: Vec<u8>,
     head_timeout: Duration,
     /// When the partial request head in the buffer must be complete.
     head_deadline: Option<Instant>,
 }
 
-impl<S: Transport> Connection<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
     fn new(stream: S, head_timeout: Duration) -> Self {
         Self {
             stream,
@@ -116,7 +100,6 @@ impl<S: Transport> Connection<S> {
             skip: 0,
             batch: Vec::new(),
             batch_bytes: 0,
-            out: Vec::new(),
             head_timeout,
             head_deadline: None,
         }
@@ -231,11 +214,7 @@ impl<S: Transport> Connection<S> {
         if self.batch.is_empty() {
             return Ok(());
         }
-        if S::GATHER {
-            self.write_gathered().await?;
-        } else {
-            self.write_copied().await?;
-        }
+        self.write_gathered().await?;
         self.batch.clear();
         self.batch_bytes = 0;
         // TLS streams may still hold ciphertext after a write (tokio-rustls); a no-op on TCP.
@@ -253,18 +232,6 @@ impl<S: Transport> Connection<S> {
             IoSlice::advance_slices(&mut slices, n);
         }
         Ok(())
-    }
-
-    /// One response straight from its static bytes; several copied into one buffer.
-    async fn write_copied(&mut self) -> io::Result<()> {
-        if let [response] = self.batch.as_slice() {
-            return self.stream.write_all(response).await;
-        }
-        self.out.clear();
-        for response in &self.batch {
-            self.out.extend_from_slice(response);
-        }
-        self.stream.write_all(&self.out).await
     }
 
     /// Moves a partial request to the front of the buffer.
@@ -301,7 +268,7 @@ mod tests {
 
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-    use super::{BATCH_BYTES, BUFFER_BYTES, Mode, Transport, run};
+    use super::{BATCH_BYTES, BUFFER_BYTES, Mode, run};
     use crate::cells::{Refusal, refusal, response_for};
 
     /// Body larger than the read buffer, so skipping it spans several reads.
@@ -313,7 +280,7 @@ mod tests {
 
     /// A scripted peer: `input` arrives in reads that never cross a cut, writes are recorded per call, up to `cap`
     /// bytes in total (then it panics).
-    struct Script<const GATHER: bool> {
+    struct Script {
         input: Vec<u8>,
         cuts: Vec<usize>,
         read: usize,
@@ -323,7 +290,7 @@ mod tests {
         cap: usize,
     }
 
-    impl<const GATHER: bool> Script<GATHER> {
+    impl Script {
         fn new(input: Vec<u8>, cuts: Vec<usize>) -> Self {
             let (read, output, writes, shut_down, cap) =
                 (0, Vec::new(), Vec::new(), false, OUTPUT_CAP);
@@ -353,7 +320,7 @@ mod tests {
         }
     }
 
-    impl<const GATHER: bool> AsyncRead for Script<GATHER> {
+    impl AsyncRead for Script {
         fn poll_read(
             mut self: Pin<&mut Self>,
             _: &mut Context<'_>,
@@ -373,7 +340,7 @@ mod tests {
         }
     }
 
-    impl<const GATHER: bool> AsyncWrite for Script<GATHER> {
+    impl AsyncWrite for Script {
         fn poll_write(
             mut self: Pin<&mut Self>,
             _: &mut Context<'_>,
@@ -404,11 +371,7 @@ mod tests {
         }
     }
 
-    impl<const GATHER: bool> Transport for &mut Script<GATHER> {
-        const GATHER: bool = GATHER;
-    }
-
-    fn serve<const GATHER: bool>(script: &mut Script<GATHER>) {
+    fn serve(script: &mut Script) {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
@@ -448,7 +411,7 @@ mod tests {
     fn every_split_point_gives_the_unsplit_output() {
         let (input, expected) = pipelined();
         for cut in 0..=input.len() {
-            let mut script = Script::<true>::new(input.clone(), vec![cut]);
+            let mut script = Script::new(input.clone(), vec![cut]);
             serve(&mut script);
             assert!(script.output == expected, "split at {cut}");
             assert!(script.shut_down, "split at {cut}");
@@ -456,18 +419,10 @@ mod tests {
     }
 
     #[test]
-    fn copying_transport_writes_the_same_bytes() {
-        let (input, expected) = pipelined();
-        let mut script = Script::<false>::new(input, Vec::new());
-        serve(&mut script);
-        assert!(script.output == expected, "copied output differs");
-    }
-
-    #[test]
     fn batches_stop_before_passing_the_byte_limit() {
         let one = response_for(b"/1k", false);
         let count = BATCH_BYTES / one.len() + 10;
-        let mut script = Script::<true>::new(get("/1k").repeat(count).into_bytes(), Vec::new());
+        let mut script = Script::new(get("/1k").repeat(count).into_bytes(), Vec::new());
         serve(&mut script);
         assert!(script.output == one.repeat(count), "batched output differs");
         // 64 KiB spelled out, so the test also pins the constant: every full batch holds as many 1 KiB responses as fit.
@@ -484,7 +439,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "stub output cap")]
     fn stub_fails_fast_past_its_output_cap() {
-        let mut script = Script::<true>::new(get("/1m").into_bytes(), Vec::new());
+        let mut script = Script::new(get("/1m").into_bytes(), Vec::new());
         script.cap = 1024;
         serve(&mut script);
     }
@@ -494,7 +449,7 @@ mod tests {
         // 16 KiB spelled out, so the test also pins the buffer size.
         let filler = "a".repeat(16 * 1024 - 100);
         let input = format!("GET /1k HTTP/1.1\r\nx-big: {filler}\r\n\r\n");
-        let mut script = Script::<true>::new(input.into_bytes(), Vec::new());
+        let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
         assert_eq!(script.output, response_for(b"/1k", false));
     }
@@ -503,7 +458,7 @@ mod tests {
     fn a_large_response_is_written_alone() {
         let (small, large) = (response_for(b"/1k", false), response_for(b"/1m", false));
         let input = [get("/1k"), get("/1m"), get("/1k")].concat().into_bytes();
-        let mut script = Script::<true>::new(input, Vec::new());
+        let mut script = Script::new(input, Vec::new());
         serve(&mut script);
         assert_eq!(script.writes, [small.len(), large.len(), small.len()]);
     }
@@ -517,7 +472,7 @@ mod tests {
             get("/1k"),
         ]
         .concat();
-        let mut script = Script::<true>::new(input.into_bytes(), Vec::new());
+        let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
         let parts: [&[u8]; 3] = [
             response_for(b"/1k", false),
@@ -535,7 +490,7 @@ mod tests {
     fn batches_stop_at_512_responses() {
         let not_found = response_for(b"/x", false);
         let input = "GET /x HTTP/1.1\r\n\r\n".repeat(600);
-        let mut script = Script::<true>::new(input.into_bytes(), Vec::new());
+        let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
         // 512 spelled out to pin the limit; 512 small 404s stay far below the byte limit.
         assert_eq!(script.writes, [512 * not_found.len(), 88 * not_found.len()]);
@@ -545,7 +500,7 @@ mod tests {
     fn closing_drains_at_most_64_kib_of_unread_input() {
         let mut input = b"BROKEN\r\n\r\n".to_vec();
         input.resize(BUFFER_BYTES * 20, b'x');
-        let mut script = Script::<true>::new(input, Vec::new());
+        let mut script = Script::new(input, Vec::new());
         serve(&mut script);
         assert_eq!(script.output, refusal(Refusal::BadRequest));
         // The first read fills the buffer; lingering then reads 64 KiB (spelled out to pin the limit) and stops.
@@ -558,7 +513,7 @@ mod tests {
             "GET /1k HTTP/1.1\r\nx-big: {}\r\n\r\n",
             "a".repeat(BUFFER_BYTES)
         );
-        let mut script = Script::<true>::new(input.into_bytes(), Vec::new());
+        let mut script = Script::new(input.into_bytes(), Vec::new());
         serve(&mut script);
         assert_eq!(script.output, refusal(Refusal::HeadTooLarge));
         assert!(script.shut_down);
@@ -566,7 +521,7 @@ mod tests {
 
     #[test]
     fn end_of_stream_without_a_request_writes_nothing() {
-        let mut script = Script::<true>::new(Vec::new(), Vec::new());
+        let mut script = Script::new(Vec::new(), Vec::new());
         serve(&mut script);
         assert_eq!(script.output, b"");
         assert!(!script.shut_down);
