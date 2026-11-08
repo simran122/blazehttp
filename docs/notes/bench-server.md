@@ -15,20 +15,23 @@ secondary source, not checked.
   (`tests/fixtures/h1-heads/{1k,1k-h20}.http` + `tests/fixtures/bodies/1k.json`). Per request the server does: find
   `\r\n\r\n`, take the target between the first two spaces, look it up in a 5-entry table, write the bytes.
 - **Pipelining:** every complete request in a read is answered, and the responses of one read go out as **one
-  write**: one vectored write of the static responses, with no copy, on both ports (`writev` on TCP; rustls takes the
-  slices directly on TLS, which measured cheaper than copying them into one buffer, §7.2). A batch that already holds
-  a response stops before it would pass
-  64 KiB or 512 responses (below `IOV_MAX`), so a large response such as `/1m` is always written alone.
+  write**: one vectored write of the static responses, with no copy of the bodies, on both ports (`writev` on TCP;
+  on TLS rustls collects the slices into a small list of references per call, which measured cheaper than copying the
+  responses into one buffer, §7.2). A batch that already holds a response stops before it would pass 64 KiB or 512
+  responses (below `IOV_MAX`), so a large response such as `/1m` is always written alone; a refusal obeys the same
+  limits.
 - Bounded memory and connections (G6):
   - a fixed 16 KiB read buffer per connection; a head that does not fit gets a pre-built `431` and the connection closes;
   - at most `max_connections` open connections per port (default 1024, `--max-connections`); a permit is taken before
     `accept`, so extra clients wait in the kernel backlog;
-  - a request head must complete within `head_timeout` (default 10 s) of its first byte, and a TLS handshake within the
-    same time (stall mode is exempt);
+  - a request (head and declared body) must complete within `request_timeout` (default 10 s) of its first byte, each
+    batch must be written within the same time, and a TLS handshake too (stall mode is exempt). An idle keep-alive
+    connection with nothing buffered (empty lines alone do not count) is not timed: the connection cap bounds those;
   - a `content-length` request body is skipped by counting (no buffering).
-- Refusals: a head the scan refuses (§5) gets a pre-built `400` with `connection: close`. Every close is graceful: the
-  server shuts down its write side (TLS sends `close_notify`), then drains unread input for at most 1 s and 64 KiB, so
-  the kernel does not reset the connection and destroy responses the client has not read yet.
+- Refusals: a head the scan refuses (§5) gets a pre-built `400`, `431` or `505` with `connection: close`. Every close
+  is graceful (after a refusal, the client's close once its declared body has been read, a timeout, or end of stream):
+  the server shuts down its write side (TLS sends `close_notify`), then drains unread input, all within 1 s and at most
+  64 KiB, so the kernel does not reset the connection and destroy responses the client has not read yet.
 - TLS is pinned so every client negotiates the same work: rustls 0.23 with the **ring** provider (as the Rust
   competitors use, §16.2), **TLS 1.3 only, `TLS13_AES_128_GCM_SHA256`, X25519 only**
   (`benchmark_crypto_provider()`, also used by the tests' client and available to the Rust harness clients). The
@@ -41,7 +44,10 @@ secondary source, not checked.
   - `stop` is any future; when it completes, `serve` stops accepting, ends every connection task (`JoinSet`) and
     returns.
   - The thread count is a binary flag (`--threads`, it sizes the runtime `main` builds), not a `ServerConfig` field.
+    The binary spawns `serve` onto those workers, so the main thread only waits.
   - `serve` should run on a runtime of its own: a client sharing its workers would be charged the server's work.
+  - `serve` refuses a `max_connections` outside `1..=Semaphore::MAX_PERMITS` with `InvalidInput` before binding;
+    `--cert-out` without `--tls` is a usage error.
   - The binary listens on loopback by default (`127.0.0.1:8080`); the harness passes `0.0.0.0:…` explicitly.
   - It prints `ready plain=<addr> [tls=<addr>]` when it accepts connections.
   - `ServerConfig`, `Bound`, `TlsBound` and `Cell` are passive value types with public fields (design §13.2 rule 1
@@ -52,8 +58,9 @@ secondary source, not checked.
   - The connection is generic over tokio's `AsyncRead + AsyncWrite` (a scripted stub tests it), and `Listen` wraps
     `TcpListener` so a fake listener can test the accept-retry path: plain trait seams (§13.2 rule 2) with static
     dispatch.
-- Verification that the server is not the bottleneck: §7 (dev, Docker on the owner's Mac, `--cpus=4`, wrk at c = 50),
-  and in every harness run the server container's cgroup `cpu.stat` (§6).
+- Verification that the server is not the bottleneck: the 1-CPU-client bound and per-cell capacities in §7.3 (dev,
+  Docker on the owner's Mac), and in every harness run the per-run < 60% assertion on the server container's cgroup
+  `cpu.stat` (§6, Task 10).
 
 ## 2. How the fastest fixed-response servers work
 
@@ -74,7 +81,7 @@ per-request composition rule (it would only add server CPU).
 
 | Crate (locked) | API used | Source |
 |---|---|---|
-| tokio 1.54.1 | `runtime::Builder::new_multi_thread().worker_threads(n)`; `TcpListener::bind/accept`; `TcpStream::set_nodelay`; `AsyncReadExt::read`, `AsyncWriteExt::{write_all, flush}`; `sync::oneshot` | [4], [5]; registry source |
+| tokio 1.54.1 | `runtime::Builder::new_multi_thread().worker_threads(n)`; `TcpListener::bind/accept`; `TcpStream::set_nodelay`; `AsyncReadExt::read`, `AsyncWriteExt::{write_vectored, flush, shutdown}`; `sync::{oneshot, Semaphore}`; `task::JoinSet`; `time::{timeout, timeout_at, sleep}` | [4], [5]; registry source |
 | tokio-rustls 0.26.6 (`default-features = false`, `ring`; no `tls12`) | `TlsAcceptor::from(Arc<ServerConfig>)`, `.accept(tcp)`; `poll_shutdown` sends `close_notify` (`src/server.rs:534`); client side in tests `TlsConnector` | registry source |
 | rustls 0.23.46 | `ServerConfig::builder_with_provider(provider).with_protocol_versions(&[&version::TLS13])`, then `with_no_client_auth().with_single_cert(vec![cert], key)`; `alpn_protocols`; the provider is `CryptoProvider { cipher_suites: [ring::cipher_suite::TLS13_AES_128_GCM_SHA256], kx_groups: [ring::kx_group::X25519], ..ring::default_provider() }` | registry source `src/crypto/ring/mod.rs:32,93,172`, `src/builder.rs:207` |
 | rcgen 0.14.10 (`default-features = false`, `pem`, `ring`) | `generate_simple_self_signed(names) -> CertifiedKey { cert, signing_key }`; `cert.der()`, `cert.pem()`, `signing_key.serialize_der()` (PKCS#8) | registry source `src/lib.rs:128`, `src/certificate.rs:41` |
@@ -111,33 +118,43 @@ request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells)
 
 ## 5. Request handling (exact)
 
-1. Read into the connection buffer (16 KiB). While a partial head is buffered, the read is bounded by the head
-   deadline; when it expires, the connection closes.
+1. Read into the connection buffer (16 KiB). While a request is started (part of a head buffered, or body bytes still
+   owed), the read is bounded by the request deadline set at its first byte; when it expires, the connection closes.
+   Empty lines alone do not start a request.
 2. If bytes of a previous request body are still owed, drop them first.
 3. Skip up to 8 leading empty lines (RFC 9112 §2.2), then find `\r\n\r\n` from the resume point. If there is none,
    keep reading; a full buffer gets `431` and the connection closes.
-4. Request line: the target is the bytes between the first and second space. The version must be `HTTP/1.1` or
-   `HTTP/1.0`. The method matters only for `HEAD`, which gets the cell's pre-built head slice.
+4. Request line: method and target must be non-empty; the target is the bytes between the first and second space.
+   Versions follow RFC 9110 §2.5: `HTTP/1.0`; `HTTP/1.1` and higher 1.x minors are served as HTTP/1.1; another major
+   (`HTTP/2.0`) gets `505`; anything else `400`. The method matters only for `HEAD`, which gets the cell's pre-built
+   head slice.
 5. Field lines:
-   - A line starting with SP/HTAB (obs-fold), a line with no colon, or whitespace or an empty name before the colon
+   - A line starting with SP/HTAB (obs-fold), a line with no colon, or an empty name or whitespace or CR in the name
      → `400`.
    - `content-length`: digits only, at most once, else `400`. The value is the number of body bytes to skip.
    - `transfer-encoding` → `400`. Chunked request bodies are not supported yet, and refusing loudly beats mis-framing
      the requests that follow. TODO(#16): the G1 streaming-upload cell needs them.
-   - `connection`: the `close` token, or HTTP/1.0 without `keep-alive`, closes the connection after this response.
-6. Look the target up in the cell table; an unknown target gets the pre-built 404.
-7. When no complete request is left in the buffer, write the batch, `flush()` it (TLS), and compact the leftover
-   bytes.
-8. After a `400`, a `431`, a client's close or a head timeout: close the write side (TLS `close_notify`), linger up to
-   1 s / 64 KiB reading, then drop the connection.
+   - `connection`: the `close` token, or HTTP/1.0 without `keep-alive`, closes the connection after this response
+     **and its declared body** (the body is read, not treated as junk, so a client that writes it all first gets its
+     response and a clean close). The pre-built responses do not echo `connection: close` or `keep-alive` (RFC 9112
+     §9.6 SHOULD), deliberately: the bytes stay identical for every client. HTTP/1.0 support is best effort (an
+     HTTP/1.0 keep-alive client is kept open but not told so); the benchmark clients all speak HTTP/1.1.
+6. Look the target up in the cell table; an unknown target gets the pre-built 404. An HTTP/1.0 request for the chunked
+   cell gets `505` (RFC 9112 §6.1 forbids a chunked response to HTTP/1.0).
+7. When no complete request is left in the buffer, write the batch and `flush()` it (TLS) within the request timeout
+   (a peer that never reads cannot hold the connection), then compact the leftover bytes.
+8. After a `400`/`431`/`505`, the client's close (once its body is read), a request timeout or end of stream: close
+   the write side (TLS `close_notify`) and read unread input, both within 1 s and at most 64 KiB, then drop the
+   connection.
 
-Accept loop: transient accept errors are retried after 10 ms and printed once per kind. These are resource limits
-(`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`), connections lost in the queue (`ECONNABORTED`, `ECONNRESET`), and on Linux
-the network errors `accept(2)` passes on from the new socket (`EPROTO`, `ENETDOWN`, `ENOPROTOOPT`, `EHOSTDOWN`,
-`ENONET`, `EHOSTUNREACH`, `EOPNOTSUPP`, `ENETUNREACH`). Any other accept error ends `serve`.
+Accept loop: transient accept errors are printed once per kind and retried. Running out of a resource (`EMFILE`,
+`ENFILE`, `ENOBUFS`, `ENOMEM`) pauses 10 ms first; a connection lost in the queue (`ECONNABORTED`, `ECONNRESET`, and on
+Linux the network errors `accept(2)` passes on from the new socket: `EPROTO`, `ENETDOWN`, `ENOPROTOOPT`, `EHOSTDOWN`,
+`ENONET`, `EHOSTUNREACH`, `EOPNOTSUPP`, `ENETUNREACH`) is retried at once, as Go's accept loop does. Any other accept
+error ends `serve`.
 
 `--stall`: the connection is accepted (TLS handshake done on the TLS port) and read until EOF, and nothing is ever
-written. This is the G2 stalled-server cell, and it is exempt from the head and handshake timeouts.
+written. This is the G2 stalled-server cell, and it is exempt from the request and handshake timeouts.
 
 ## 6. Measuring server CPU from outside
 
@@ -183,7 +200,7 @@ Reading:
 The question was how a batch of several responses is written on TLS: one vectored write of the static slices
 (gather), or a copy into one buffer and one `write_all` (copy). Only pipelined requests make multi-response batches,
 so wrk ran with 16 requests per write (`pipeline.lua`). The test was HTTPS `/1k`, c = 50, six rounds with the order
-alternated, same method as §7.
+alternated in rounds 4–6 (rounds 1–3 ran copy first), same method as §7.
 
 | Strategy | Server CPU µs / request, rounds 1–6 | Median |
 |---|---|---|
@@ -215,7 +232,8 @@ Reading (honest version):
 - **The bound that holds for the gate cells:**
   - A 1-CPU client makes the same `read`/`write`/epoll calls per request, so it pays about 8.5 µs of kernel time
     alone. That caps it at about 115,000 req/s, which keeps this server at about 30% of 4 CPUs on `/1k`
-    (115,000 × 10 µs ≈ 1.15 CPU-s per second). The bound is under 40% even at the c = 500 cost.
+    (115,000 × 10 µs ≈ 1.15 CPU-s per second), and under 40% even at the 13.5 µs per request measured at c = 500
+    in §7.1.
   - The G0 reference cell needs at least 63,790 req/s, about 16% of the server's 4 CPUs.
 - Multi-CPU load generators, HTTPS at c = 500, and `/1m` can approach or pass 60%. The harness's per-run assertion
   that server CPU stays under 60% (Task 10, §16.2) remains the real guard: a run that breaks it is discarded, never
@@ -260,5 +278,5 @@ the fixture cannot drift.
 8. rustls 0.23.46 — https://docs.rs/rustls/0.23.46/rustls/server/struct.ServerConfig.html (verified in registry source)
 9. tokio-rustls 0.26.6 — https://docs.rs/tokio-rustls/0.26.6/tokio_rustls/ (verified in registry source)
 10. rcgen 0.14.10 — https://docs.rs/rcgen/0.14.10/rcgen/fn.generate_simple_self_signed.html (verified in registry source)
-11. flate2 1.1.11 — https://docs.rs/flate2/1.1.11/flate2/write/struct.GzEncoder.html (verified in registry source)
+11. flate2 1.1.11 `read::GzDecoder` (tests only) — https://docs.rs/flate2/1.1.11/flate2/read/struct.GzDecoder.html (verified in registry source)
 12. TechEmpower Round 23 announcement — https://github.com/TechEmpower/FrameworkBenchmarks/issues/9589 (unverified: the results page was not opened)

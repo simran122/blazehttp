@@ -638,6 +638,10 @@ export function g0Verdict(blazeCpu: readonly number[], rivalCpu: readonly number
 - `noiseCpu` is Δ busy jiffies from the VM's `/proc/stat` minus the server's and client's cgroup usage, averaged over the run in CPUs. It must be ≤ 0.10.
 - The 1-minute load average before the start must be ≤ 1.0.
 - Invalid rounds are re-run, up to 3 extra times per round. Then the cell reports `insufficient valid rounds`.
+- `bench-server` binds loopback by default, so the harness starts it with `--plain 0.0.0.0:…` / `--tls 0.0.0.0:…`
+  (and `--cert-out` for clients that verify the certificate), waits for its `ready` line, and runs clients in the
+  server's network namespace (`--network container:<server>`; the Docker bridge adds ≈ 50% server CPU per request,
+  `docs/notes/bench-server.md` §7.1).
 
 **Gate mode vs dev mode:**
 - Gate mode refuses to start outside the configured window (`BENCH_WINDOW`, unset until the owner chooses).
