@@ -1,0 +1,9 @@
+{"kind": "meta", "run": "gcc12", "sampler": "sysctl -n vm.loadavg on the macOS host every 5 s (1-minute load average)", "roundWindow": "from the runner's \"differential gate passed\" (round 1) or previous \"round N/7 done\" stderr line to this round's \"round N/7 done\" line, each timestamped when written", "feedWindow": "from \"round 7/7 done\" to the end of the run (the 1-byte feed phase)", "noisyRule": "noisy when load1Max > 6.0", "rawSamples": "bench/results/2026-11-08-arm64-dev-parsers-load-samples.txt", "windowEdges": "both ends inclusive: a sample on a boundary counts in both adjacent windows"}
+{"kind": "round-load", "run": "gcc12", "round": 1, "startUnix": 1794152997, "endUnix": 1794153021, "samples": 5, "load1Max": 9.31, "load1Mean": 8.56, "noisy": true}
+{"kind": "round-load", "run": "gcc12", "round": 2, "startUnix": 1794153021, "endUnix": 1794153046, "samples": 5, "load1Max": 10.31, "load1Mean": 9.72, "noisy": true}
+{"kind": "round-load", "run": "gcc12", "round": 3, "startUnix": 1794153046, "endUnix": 1794153065, "samples": 4, "load1Max": 9.26, "load1Mean": 8.92, "noisy": true}
+{"kind": "round-load", "run": "gcc12", "round": 4, "startUnix": 1794153065, "endUnix": 1794153083, "samples": 3, "load1Max": 8.57, "load1Mean": 8.24, "noisy": true}
+{"kind": "round-load", "run": "gcc12", "round": 5, "startUnix": 1794153083, "endUnix": 1794153102, "samples": 4, "load1Max": 8.43, "load1Mean": 7.85, "noisy": true}
+{"kind": "round-load", "run": "gcc12", "round": 6, "startUnix": 1794153102, "endUnix": 1794153120, "samples": 4, "load1Max": 9.38, "load1Mean": 8.56, "noisy": true}
+{"kind": "round-load", "run": "gcc12", "round": 7, "startUnix": 1794153120, "endUnix": 1794153139, "samples": 4, "load1Max": 10.94, "load1Mean": 10.14, "noisy": true}
+{"kind": "feed-phase-load", "run": "gcc12", "startUnix": 1794153139, "endUnix": 1794153193, "samples": 11, "load1Max": 11.14, "load1Mean": 10.31, "noisy": true}
