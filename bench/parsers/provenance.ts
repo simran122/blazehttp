@@ -78,8 +78,12 @@ export function readUntracked(root: string, path: Buffer): UntrackedFile {
     : { path, kind: 'file', content: readFileSync(full) };
 }
 
-/** Error codes that mean an entry vanished or changed type after git listed it: the tree is changing under us. */
-const RACE_CODES: ReadonlySet<string> = new Set(['ENOENT', 'EISDIR', 'ENOTDIR']);
+/**
+ * Error codes that mean an entry vanished or changed type after git listed it, so the tree is changing under us:
+ * ENOENT (deleted), EISDIR (now a directory), ENOTDIR (a parent is now a file), EINVAL (`readlink` on an entry that
+ * stopped being a link between `lstat` and `readlink`).
+ */
+const RACE_CODES: ReadonlySet<string> = new Set(['ENOENT', 'EISDIR', 'ENOTDIR', 'EINVAL']);
 
 const raceCode = (error: unknown): string | undefined =>
   error instanceof Error && 'code' in error && typeof error.code === 'string' && RACE_CODES.has(error.code)

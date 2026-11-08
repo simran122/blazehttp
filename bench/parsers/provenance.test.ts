@@ -202,7 +202,7 @@ describe('readUntrackedAll', () => {
     );
   });
 
-  it.each(['EISDIR', 'ENOTDIR'])('reports %s (an entry that changed type) as a moving tree', (code) => {
+  it.each(['EISDIR', 'ENOTDIR', 'EINVAL'])('reports %s (an entry that changed type) as a moving tree', (code) => {
     expect(() => readUntrackedAll(root(), [Buffer.from('x')], failing(code))).toThrow(`("x": ${code}); run again`);
   });
 
