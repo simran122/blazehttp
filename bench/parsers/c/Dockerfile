@@ -16,8 +16,8 @@ ARG LLHTTP_COMMIT=0e815792b167a9bd8ace259b95b7da953776c288
 ARG LLHTTP_SHA256=1eb813c7437b31a87496a1cd3ed79f00746720f5e7e29c79b42c02cb69f36c39
 # Same CPU baseline as every other harness (design §16.2): generic Armv8-A. SIMD as upstream ships it for this target:
 # picohttpparser's only SIMD path is SSE4.2 (x86), so arm64 runs its scalar code; llhttp compiles its NEON span
-# (__ARM_NEON is defined for Armv8-A) but uses it only under LENIENT_HEADER_VALUE_RELAXED, so the strict default
-# measured here is scalar. -DNDEBUG removes assertions from the timed path, as a release build does.
+# (__ARM_NEON is defined for Armv8-A) and uses it in the strict header_value state too (llhttp.c L2789-2829), so
+# header values are vectorised here; names stay scalar (tchar needs more ranges than its NEON path takes). -DNDEBUG removes assertions from the timed path, as a release build does.
 ARG CFLAGS="-O3 -DNDEBUG -march=armv8-a -flto=auto -std=c17"
 
 RUN apt-get update \

@@ -62,8 +62,8 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
 - C/C++ compiler: GCC 14.2 (Debian 13) by default, pulled through the ECR mirror of Docker Hub's official Debian
   image because Docker Hub pulls hung on the bench host. `--cc gcc-12` builds the Debian 12 / GCC 12.2 variant used by
   the first dev run, so the compiler's effect can be measured.
-- SIMD as upstream ships it for the target: picohttpparser's only SIMD path is SSE4.2 (x86), llhttp's NEON span runs
-  only under `LENIENT_HEADER_VALUE_RELAXED` (not the strict default), httparse picks NEON at compile time, Zig's
+- SIMD as upstream ships it for the target: picohttpparser's only SIMD path is SSE4.2 (x86), llhttp's NEON span runs in
+  the strict `header_value` state too (`llhttp.c` L2789–2829 at `release/v9.4.3`), httparse picks NEON at compile time, Zig's
   `HeadParser` uses `@Vector`.
 - Limits raised where a default would reject the 60 KB feed inputs (Beast `header_limit`); nothing else is tuned.
 - Each harness calls its parser directly in the timed loop (no indirect call per head) and folds the facts into a

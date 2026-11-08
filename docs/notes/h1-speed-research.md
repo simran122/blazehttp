@@ -916,9 +916,13 @@ differential risk (SIMD note §3.9) shrinks to "the fast path accepts only what 
 
 No peer-reviewed paper on SIMD HTTP/1 parsing or serialisation was found (survey of arXiv, ACM DL, USENIX, IEEE,
 2026-11-08). Industrial work: Cloudflare's 2014 picohttpparser AVX2 bitmaps (SIMD note); QUICHE Balsa (Envoy's
-HTTP/1 parser) is not vectorised; Bun's client uses picohttpparser; uWS uses SWAR + a fence. Small open-source
-projects (cursed-http, simdhttp, xocomil, simdzone for DNS zone files) report SIMD parsers; their numbers are
-unverified and listed only in `ideas.md`.
+HTTP/1 parser) is not vectorised (survey statement, unverified); Bun's client uses picohttpparser; uWS uses SWAR + a
+fence. Open-source projects found by search and **not read** (unverified, listed in `ideas.md` for a later look):
+[Kourier](https://kourier-server.github.io) (C++ server, "uses SIMD instructions extensively" in a strict parser),
+[hparse](https://github.com/floatdrop/hparse) (Zig, SIMD, streaming), [xocomil](https://docs.rs/crate/xocomil/0.3.0)
+(Rust request parser and response writer; SIMD use not stated) and [simdzone](https://github.com/NLnetLabs/simdzone)
+(DNS zone files, simdjson-style). Two names reported by the papers survey (cursed-http, simdhttp) could not be found
+by search and are dropped.
 
 ## 5. Our parser: candidates
 
@@ -1322,70 +1326,92 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, and li
   workload, both arches). **Expected x64 position:** the writer has no SIMD in P0, so its position against Go,
   hyper, fasthttp and the C/C++ writers should match arm64's; a rival with SSE-specific write paths was not found.
 
-## 7. Measurement plan (summary)
+## 7. Measurement plan (the single summary; details in §5.7, §6.7, §3.13)
 
-| What | Where | Workloads | Arches | Method |
+| What | Where | Workloads | Arches | Statistic / acceptance |
 |---|---|---|---|---|
-| Parser candidates P-A/P-B | `h1_parse_bench` example (A/B), then `bench/parsers` | 1k, 1k-h20, ring64, mixed, trickle, + varied-256 | arm64 ref (nightly window), x64 VM | §5.7 |
-| Parser P-C/P-D | P1a criterion, then `bench/parsers` | same | both | §5.7 |
-| Writer W-A/W-B/W-C | `h1_write_bench` example (A/B + ablations) | get, post1k, varied, + h20 | both | §6.7 |
-| Writer W-D | P1a criterion | same | both | §6.7 |
-| Cross-language writer race | Task 5c harness (§3.13) | get, post1k, varied, h20 | both | EW0/EW1/EW2 |
-| Branch claims | `perf stat` on the x64 VM | 1k-h20, varied-256, post1k | x64 | instructions, branches, branch-misses per op |
+| P-A, P-B (keep or drop) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | faster in ≥ 4 alternated rounds |
+| Parser race (4c, then P1a) | `bench/parsers` + fasthttp, nginx rows + bootstrap CI | same | arm64 ref + x64 VM | CI upper bound of ours/theirs < 1.0 per rival and cell, 10 rounds |
+| P-C, P-D | P1a criterion, then the race | same | both | as above (final gate) |
+| W-A, W-B (keep or drop) | `h1_write_bench` A/B + ablations | get, post1k, varied, h20 | both | faster; `post1k` ≤ 2.3× floor; 0 allocations |
+| Writer race (5c) | §3.13 harness | get, post1k, varied, h20 | both | CI upper bound of ours@EW2/theirs@EW1 < 1.0 per runnable rival |
+| W-D | P1a criterion | post1k, h20 | both | kept only where faster than W-A/W-B |
+| Branch claims | `perf stat` | 1k-h20, varied-256, post1k | x64 VM | instructions, branches, branch-misses per op |
 
-Every kept change goes to `docs/perf/journal.md` with numbers; anything not measured stays in `ideas.md`. No number
-in this note is a measurement made for it (the only runs were the compile-only asm check and the Python
-differential check).
+Every kept change goes to `docs/perf/journal.md` with numbers; anything not measured stays in `ideas.md`.
 
 ## 8. Decision table
 
-Ranked within each component by expected gain per risk (all gains are estimates until §7 runs).
+Ranked within each component by expected gain per risk. Every effect is an estimate until §7 runs.
 
-| Rank | Candidate | Component | Expected effect (unverified) | Risk | Build in |
+| Rank | Candidate | Component | Expected effect (estimate) | Risk | Build in |
 |---|---|---|---|---|---|
-| 1 | **P-A spans in G** | parser | removes the second pass: ratio vs httparse with fields from 1.16–2.02 to ≈ 0.74–1.13 | none new | **Task 4c** (first step) |
-| 2 | **P-B line kernel** (locals, STOP search + table fold, `u64` prefix, shared classifier) | parser | ≈ −15–25% scalar; target: beat httparse on the 20-field ring too | medium (equivalence on partial input; fuzz) | **Task 4c** (second step, kept only if measured faster) |
-| 3 | P-B padded window (fence) | parser | removes tails; small | API change (`padded_len`) | Task 4c option, measured; else P1a |
-| 4 | **P-D bit-stream validator + flatten** | parser | ≈ 0.4–0.6 cycles per byte; ≤ 0.85× httparse with margin; predictor-independent | `unsafe` only in `classify_block`; acceptance-only fast path | **P1a** (lead) |
-| 5 | P-C stage-1 + `tzcnt` walk | parser | measured 0.42× on varied heads (dev) | lower complexity than P-D | P1a (fallback / A/B baseline for P-D) |
-| 1 | **W-A known-name classifier + shared STOP search** | writer | `post1k` ≈ 1.7–1.9× floor | low | **Task 5b** |
-| 2 | **W-B layout hints + one vectorisable fold** | writer | `post1k` ≈ 1.5–1.7× floor | wire-format change (P2), hints untrusted | **Task 5b** if the P2 contract change is accepted; else P2 |
-| 3 | W-C interned name ids | writer | known names cost ≈ 0 | spec-generated table; JS/Rust drift | P2 |
-| 4 | **W-D SIMD delta validation (+ optional fused copy)** | writer | validation ≈ 5–10 ns | `unsafe` only in `engine-simd` | **P1a** |
-| — | Task 5c cross-language writer race | writer | proves "every rival" | none | **Task 5c** (after 5b) |
-| — | Add fasthttp + nginx rows to `bench/parsers` | parser race | closes "every Go / C server parser" | none | with Task 4c |
+| 1 | **P-A spans in the scan** (caller-owned `FieldSpans`) | parser | removes the second pass: vs httparse 0.83–0.99 (parity on 20-field cells), vs pico 0.71–0.84, vs llhttp 0.51–0.60 | none new | **Task 4c**, step 1 |
+| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | ≈ 0.6–0.8× httparse on both arches; ≈ 0.6–0.9× pico with SSE4.2 | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, step 2 (kept only if faster) |
+| 3 | P-B padded window (fence) | parser | removes scalar tails; small | API change; fence rules (§5.3) | Task 4c option, measured; else P1a |
+| 4 | **P-D bit-stream validator** (6-bit state, line-start hand-off, scalar error re-run) | parser | ≈ 0.4–0.6× httparse, predictor-independent; closes any cell P-B leaves | `unsafe` only in `engine-simd` kernels; acceptance-only fast path | **P1a** (lead) |
+| 5 | P-C stage-1 + `tzcnt` walk | parser | measured 0.42–0.55× on varied heads (dev) | simpler than P-D | P1a (A/B baseline for P-D) |
+| 1 | **W-A shared classifier + STOP search + authority id** | writer | `post1k` ≈ 1.9–2.1× floor | low | **Task 5b** |
+| 2 | **W-B layout hints, tiled folds** | writer | `post1k` ≈ 1.6–1.8× floor | P2 wire-format change; hints untrusted | **Task 5b** if the P2 change is accepted; else P2 |
+| 3 | W-C interned name ids | writer | known names cost ≈ 0 | generated table; JS/Rust drift | P2 |
+| 4 | W-D SIMD writer-form validator (+ optional fused copy) | writer | ≈ 14 ns at 100 B, ≈ 45–50 ns at 400 B: pays only on large deltas | `unsafe` only in `engine-simd`; `out.clear()` on errors | **P1a**, kept only where faster |
+| — | Task 5c cross-language writer race (+ bootstrap CI in the shared runner) | writer | the "every writer" evidence | curl micro row time-boxed | **Task 5c** (after 5b) |
+| — | fasthttp + nginx parser rows; bootstrap CI in `bench/parsers` | parser race | the "every parser" evidence | none | **Task 4c** |
 
 **What each task builds:**
-- **Task 4c (parser, scalar, P0):** P-A first (spans in the scan, `FieldSpan` u16 ×4, OWS trimmed), then P-B
-  (one loop body per line on locals, STOP search + branch-free tchar fold, `u64` status-prefix compare, shared
-  `field_name.rs` classifier), each kept only if measured faster on the §5.7 workloads; add the `varied-256` ring and
-  the fasthttp/nginx rows to `bench/parsers`.
-- **Task 5b (writer, P0):** W-A (shared classifier, STOP search, authority by id with Task 6), and W-B if the P2
-  contract change (per-line hints) is accepted by the controller; `post1k` ≤ 2.3× floor.
-- **Task 5c:** the cross-language writer race (§3.13).
-- **P1a (SIMD):** `engine-simd::classify_block` (NEON; SSE2 + SSSE3/AVX2), then P-D for the parser (P-C as its
-  A/B baseline) and W-D for the writer, both with the scalar path as error oracle and tail handler.
+- **Task 4c (parser, scalar, P0):** P-A, then P-B, each kept only if faster in the A/B; the bootstrap CI in
+  `bench/parsers/stats.ts`; the `varied-256` ring; the fasthttp and nginx rows; the survey of the Jetty/JDK/.NET
+  response parsers (§10); span tests (§5.1). Acceptance: §5.7 (misses reported with data, closed in P1a).
+- **Task 5b (writer, P0):** W-A (with Task 6 for the authority id), and W-B if the P2 contract change is accepted;
+  `post1k` ≤ 2.3× floor. W-D is not part of 5b.
+- **Task 5c:** the writer race (§3.13), replacing `bench/writer/`.
+- **P1a (SIMD):** `engine-simd` `Classifier`/`BlockMasks` (NEON; SSSE3/AVX2; scalar), the class tables moved into
+  `engine-simd`, P-D for the parser (P-C as its A/B baseline), W-D where it pays.
 
 ## 9. Sources
 
-All accessed 2026-11-08. Source code: verified at the commits of §1 (line numbers in §2–§3). Rust: verified by
-compile on 1.99.1.
+All accessed 2026-11-08. Source code: verified at the commits of §1 (file and line in §2–§3). Rust std: version
+1.99.1 pages.
 
 | # | Source | Link | Status |
 |---|---|---|---|
-| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014 | https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles/byte) |
-| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | (PDF fetched by the papers survey; cited in #1) | verified (primary text, abstract and shuffle mechanism) |
-| 3 | Langdale, Lemire, *Parsing Gigabytes of JSON per Second*, VLDB J. 2019 | https://arxiv.org/abs/1902.08318 | verified (SIMD note) |
-| 4 | simdjson `v5.1.1` `bitmask.h` (prefix_xor via clmul), `json_structural_indexer.h` (`bit_indexer`) | https://github.com/simdjson/simdjson/tree/40a686ab89dc5ee58ec10d0514dd5c99abbc472b | verified (source) |
-| 5 | simdutf `v9.3.3` `src/generic/ascii_validation.h` (validate, then locate on error) | https://github.com/simdutf/simdutf/blob/59589cd3df6823cbfdbd253cde3377e7c3e1fe9b/src/generic/ascii_validation.h | verified (source) |
-| 6 | Vectorscan `5.4.13` `src/nfa/sheng_impl.h` (SHENG pshufb DFA) | https://github.com/VectorCamp/vectorscan/blob/acd7363aadea43da9c5246542d9969db843dd132/src/nfa/sheng_impl.h | verified (source) |
+| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 | https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf ; https://dblp.org/rec/conf/IEEEpact/CameronSSH0HL14 | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles per byte) |
+| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | cited as [11] in #1; PDF read by the papers survey | verified (primary text: abstract and shuffle mechanism) |
+| 3 | Langdale, Lemire, *Parsing Gigabytes of JSON per Second*, VLDB Journal 28(6), 2019 | https://arxiv.org/abs/1902.08318 | verified (SIMD note) |
+| 4 | simdjson `v5.1.1`: `include/simdjson/haswell/bitmask.h`, `include/simdjson/arm64/bitmask.h`, `src/generic/stage1/json_structural_indexer.h` | https://github.com/simdjson/simdjson/tree/40a686ab89dc5ee58ec10d0514dd5c99abbc472b | verified (source) |
+| 5 | simdutf `v9.3.3` `src/generic/ascii_validation.h` | https://github.com/simdutf/simdutf/blob/59589cd3df6823cbfdbd253cde3377e7c3e1fe9b/src/generic/ascii_validation.h | verified (source) |
+| 6 | Vectorscan `5.4.13` `src/nfa/sheng_impl.h` | https://github.com/VectorCamp/vectorscan/blob/acd7363aadea43da9c5246542d9969db843dd132/src/nfa/sheng_impl.h | verified (source) |
 | 7 | Wang et al., *Hyperscan*, NSDI 2019 | https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf | verified (SIMD note) |
 | 8 | Langdale, simdcsv README | https://github.com/geofflangdale/simdcsv/blob/a9494a85c83525bb42ba368d8f9bcf3acf53a8d1/README.md | verified (text) |
 | 9 | Krasnov (Cloudflare), *Improving PicoHTTPParser further with AVX2*, 2014 | https://blog.cloudflare.com/improving-picohttpparser-further-with-avx2/ | verified (SIMD note); numbers unverified for us |
-| 10 | uops.info `PCMPESTRI`, `PSHUFB`, `PMOVMSKB` | https://uops.info/ | verified (SIMD note) |
-| 11 | Rust std 1.99.1: `u64::carrying_add`, `slice::as_chunks`, `Vec::set_len` (unsafe), `Vec::spare_capacity_mut` | https://doc.rust-lang.org/std/ | `carrying_add` and `as_chunks` verified by compile under `forbid(unsafe_code)`; `set_len` unsafe and `spare_capacity_mut` returning `MaybeUninit` from the std page index (verified) |
-| 12 | Rust Reference, `target_feature` (no inlining into callers without the feature) | https://doc.rust-lang.org/reference/attributes/codegen.html | verified (SIMD note) |
-| 13 | Compile-only asm check (scratch crate `asmcheck`, rustc 1.99.1, aarch64 generic, x86-64 baseline and v3) | session scratchpad `h1-research/asmcheck` | verified (run 2026-11-08) |
-| 14 | ScanThru differential check `tools/scanthru_check.py` (200,000 mutated heads + boundary sweep) | session scratchpad | verified (run 2026-11-08) |
-| 15 | Prior art: cursed-http, simdhttp, xocomil, simdzone (SIMD parsers); QUICHE Balsa | reported by the papers survey | unverified → `ideas.md` |
-| 16 | Every parser and writer of §1 | §1 link bases | verified (source at the pins) |
+| 10 | uops.info `PCMPESTRI`, `PSHUFB`, `PMOVMSKB` | https://uops.info/html-instr/PCMPESTRI_XMM_XMM_I8.html | verified (SIMD note) |
+| 11 | Rust 1.99.1: `u64::carrying_add` (stable since 1.91.0), `slice::as_chunks`, `Vec::set_len` (`unsafe`), `Vec::spare_capacity_mut` | https://doc.rust-lang.org/1.99.1/std/primitive.u64.html#method.carrying_add ; https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.as_chunks ; https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.set_len ; https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.spare_capacity_mut | verified (docs; `carrying_add` also by compile under `forbid(unsafe_code)`) |
+| 12 | Rust Reference 1.99.1, code generation attributes (`target_feature`) | https://doc.rust-lang.org/1.99.1/reference/attributes/codegen.html | verified (SIMD note) |
+| 13 | Compile-only asm check | `spike/h1-research/asmcheck` (commands in its `Cargo.toml`) | verified (run 2026-11-08) |
+| 14 | Executable model of P-D and W-D | `spike/h1-research/scanthru_model.py` (seed 9112; output in §4.1) | verified (run 2026-11-08) |
+| 15 | Quiet parser race, 2026-11-08 | branch `p0/parser-bench-rerun` (PR #21), `docs/notes/response-parser.md` §8.6, `bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl` | verified (recorded run; dev numbers) |
+| 16 | Prior art: Kourier, hparse, xocomil, simdzone; QUICHE Balsa | links in §4.6 | unverified (not read) |
+| 17 | Every parser and writer of §1 | §1 link bases | verified (source at the pins) |
+
+## 10. Deferred, hand-offs and pre-existing issues
+
+**Deferred (with owner task):**
+- Survey of the Jetty `HttpParser`, JDK `Http1HeaderParser` and .NET `HttpConnection` response parsers (added to G0
+  by PR #20) — Task 4c research step; race rows only if one is plausibly faster than httparse.
+- The writer EW1 hyper row and the Netty/Jetty JMH rows — Task 5c.
+- JS-side cost of W-B hints and the `Uint16Array` span hand-off — P2.
+- Design §16 parser and writer micro-gate rows (§0.3 item 5) — the Task 4c / 5c docs PRs.
+
+**Hand-offs to other branches (not editable here):**
+- `request-writer.md` L77, L94, L119 (branch `p0/writer`): curl does not cut custom headers at a newline (§3 intro)
+  — Task 5 fix list.
+- `docs/superpowers/plans/2026-11-06-p0-foundations.md` L344, `response-parser.md` L320 and `request-writer.md` §8.4
+  must be updated when §5.1 (caller-owned spans) and Task 5c land.
+- `response-parser.md` §8.6 on `milestone/p0` still shows the noisy 2026-11-07 table; PR #21 replaces it.
+
+**Pre-existing issues found by the review, fixed on this branch:** `bench/parsers/README.md` and
+`bench/parsers/c/Dockerfile` said llhttp's NEON path runs only under `LENIENT_HEADER_VALUE_RELAXED` (strict
+`header_value` has NEON too, `llhttp.c` L2789–2829); `simd-scanning-research.md` linked simdjson through `/master/`
+and claimed the `engine-core` tables are the source of truth for `engine-simd` without resolving the crate direction
+(now: tables move to `engine-simd`, §5.5); `response-parser.md` L49 linked llhttp's generated C by tag name instead of
+commit.

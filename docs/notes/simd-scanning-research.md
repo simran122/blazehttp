@@ -148,7 +148,7 @@ Each entry: source → mechanism → cost → fit for short HTTP spans → safe 
   costs 0.5–1 cycle/byte excluding UTF-8 validation; "running time is split evenly between our two stages".
   simdjson requires `SIMDJSON_PADDING` bytes after the input because it "may access bytes beyond the end of the
   string but before the end of the allocated memory"
-  ([basics.md](https://raw.githubusercontent.com/simdjson/simdjson/master/doc/basics.md), verified).
+  ([basics.md](https://raw.githubusercontent.com/simdjson/simdjson/40a686ab89dc5ee58ec10d0514dd5c99abbc472b/doc/basics.md), verified).
 - **Cloudflare, *Improving PicoHTTPParser further with AVX2*, V. Krasnov, 2014-12-18 (verified text,
   [link](https://blog.cloudflare.com/improving-picohttpparser-further-with-avx2/)):** a single-match AVX2 version
   "gave no throughput gain because HTTP fields are short"; the fix built **bitmaps for 128 bytes at a time** for
@@ -192,7 +192,8 @@ Each entry: source → mechanism → cost → fit for short HTTP spans → safe 
 - **Constraint for `engine-simd`:** a vector path must accept exactly the bytes the table accepts, at every lane,
   every alignment and every block/tail boundary — a one-byte disagreement (e.g. treating `0x7F` or `0x0B` as valid
   in one path only) is a request/response-splitting differential between our own two code paths. Hence: the
-  `[bool; 256]` tables stay the single source of truth; every SIMD classifier is tested against them exhaustively
+  `[bool; 256]` tables stay the single source of truth (they move into `engine-simd`, the lower crate, and `engine-core`
+  re-exports them: `docs/notes/h1-speed-research.md` §5.5); every SIMD classifier is tested against them exhaustively
   (§6.3).
 
 ## 4. Measurements (dev, arm64)
@@ -390,7 +391,7 @@ None of this is required for P0; the P0 design is sound. Each item is cheap and 
 | 18 | Rust 1.89.0 release notes (AVX-512 intrinsics and target features) | https://blog.rust-lang.org/2025/08/07/Rust-1.89.0/ | 2026-11-06 | verified (lists AVX512 intrinsics under stabilized APIs) |
 | 19 | Miri README (target features, cross-interpretation, "very few AVX512 intrinsics") | https://github.com/rust-lang/miri | 2026-11-06 | verified |
 | 20 | Miri intrinsic shims at `5f09e81` (`src/intrinsics/aarch64.rs`, `x86/{ssse3,sse42,avx2}.rs`) | https://github.com/rust-lang/miri/tree/5f09e816076dcd5c0f4cc941a37407754ddfb193/src/intrinsics | 2026-11-06 | verified (source) + run (§5) |
-| 21 | simdjson `doc/basics.md` (padding) | https://raw.githubusercontent.com/simdjson/simdjson/master/doc/basics.md | 2026-11-06 | verified |
+| 21 | simdjson `doc/basics.md` (padding) | https://raw.githubusercontent.com/simdjson/simdjson/40a686ab89dc5ee58ec10d0514dd5c99abbc472b/doc/basics.md | 2026-11-06 | verified |
 | 22 | Kallus et al., *The HTTP Garden*, arXiv 2405.17737, 2024 | https://arxiv.org/abs/2405.17737 | 2026-11-06 | verified (abstract) |
 | 23 | Jabiyev et al., *T-Reqs*, CCS 2021 | https://github.com/bahruzjabiyev/t-reqs | 2026-11-06 | verified (repo description) |
 | 24 | HDiff, DSN 2022 | (described in #22) | 2026-11-06 | unverified (secondary) |
