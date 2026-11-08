@@ -775,7 +775,209 @@ unverified and listed only in `ideas.md`.
 
 ## 5. Our parser: candidates
 
-_(in progress)_
+### 5.0 Where the time goes today (from measured data; no new runs)
+
+- **The split is a second pass.** `blazehttp+fields` costs 1.6–2.0× plain `blazehttp` (plain / with-fields =
+  0.50–0.63, parser note §8.6): the bench's `split_fields` re-reads every field byte (`memchr` CR, `position` `:`, OWS
+  trim; `bench/parsers/rust/src/engines.rs` L78–103) although `value()` already held all four boundaries
+  (§2.14).
+- **Projection once spans are fused** (plain ratios × an assumed 1.05 for four stores per field; not a
+  measurement): vs httparse 0.74 / 0.93 / 0.91 / **1.13** / 0.90 (1k, 1k-h20, 1k × 64, 1k-h20 × 64, mixed); vs
+  picohttpparser ≈ 0.75–0.84. Every rival in §2 except httparse on the 20-field ring would be behind us; that cell
+  needs the loop-structure work (P-B) or SIMD (P-C/P-D).
+- **Safe-Rust bitmaps do not pay** (compile-only check, 2026-11-08, scratch crate `asmcheck`, rustc 1.99.1, fat LTO,
+  `codegen-units = 1`, `--emit asm` for `aarch64-apple-darwin -C target-cpu=generic` and `x86_64-unknown-linux-gnu`
+  baseline and `x86-64-v3`): a 64-byte `fold(|m, (i, &b)| m | (u64::from(b == c) << i))` stays a scalar byte loop
+  (`ldrb`, `cmp`, `cset`, `lsl`, `orr` per byte) on every target; a 16-byte-chunk form is unrolled scalar; an exact
+  SWAR equality mask with a multiply gather costs 76 (aarch64) / 110 (x86_64) instructions per class per 64 B. Five
+  classes ≈ 5–7 instructions per byte — slower than the current ≈ 1 cycle per byte. **Bitmaps need explicit SIMD
+  (`engine-simd`).** A branch-free `fold` with table lookups compiles to a tight loop with no data-dependent branch
+  (`ldrb`, `ldrb [table]`, `and`, `subs`, `b.ne`).
+
+### 5.1 The span output (shared by every candidate)
+
+```rust
+/// One field line as offsets from the start of its head (u16: a head is ≤ 64 KiB, design §5.2).
+#[derive(Clone, Copy)]
+pub struct FieldSpan { pub name_start: u16, pub name_end: u16, pub value_start: u16, pub value_end: u16 }
+const _: () = assert!(H1_LIMITS.max_head_bytes <= u16::MAX as usize + 1);
+```
+- The parser owns `[FieldSpan; MAX_HEADER_FIELDS]` (800 B; reused for every response on the connection) and
+  `ResponseHead` gains `fields: u16` (count). Spans are written when a line's CRLF is confirmed, so a `Partial`
+  return never exposes half a line, and a resumed call continues writing at `fields`.
+- `value_start` skips leading OWS; `value_end` trims trailing OWS backwards from the CR (both SP/HTAB only; obs-text
+  never trimmed) — the httparse/pico output, and the bench's `split_fields`.
+- **Our own idea:** the array is laid out to cross the napi boundary as a `Uint16Array` (4 × u16 per field) so the JS
+  layer builds `headers` without scanning the bytes again (P2 hand-off; the gain on the JS side is unmeasured).
+- Offsets are relative to the head's own start; after an `Interim` the caller drops the consumed bytes and the
+  final head starts at 0 again (unchanged contract).
+
+### 5.2 Candidate P-A — "spans in G" (minimal change)
+
+Keep Design G (parser note §6.3) unchanged; in `value()` at the confirmed CRLF, write the span (four stores + the
+OWS trims) and increment `fields`.
+
+- **Pseudocode:** `Value: e = pos + value_len(rest); [CR, LF, ..] at e → vs = skip_ows(colon+1, e); ve =
+  trim_ows_back(vs, e); spans[fields-1] = (line_start, colon, vs, ve); facts.field(...)`.
+- **Time:** O(head bytes); per field + 4 stores + two OWS checks (usually 1 byte each). **Space:** +800 B per
+  connection. **Branches per byte:** unchanged ≈ 0.6 (names ≈ 1 per byte, values ≈ 1 per 8 bytes, ≈ 8 per line for
+  dispatch, CRLF and facts).
+- **Better than httparse because:** no restart from 0 (linear under a trickle), facts fused at the CRLF (httparse +
+  hyper pay a second pass over the `Header` array), exact `trailing_zeros` stop.
+- **Risks:** none new for security (spans are derived from bytes the parser has already validated); partial input
+  unaffected (spans written only after the CRLF). Does not fix the 20-field ring (projection 1.13× httparse).
+
+### 5.3 Candidate P-B — "line kernel" (scalar, safe Rust; our own design)
+
+The references' common structure (§2.14: one loop body per line, cursor in locals) plus two ideas of ours:
+decoupling **locate** (the critical path) from **validate** (off the critical path), and a **stop-set** search
+for names.
+
+```text
+fn scan_lines(window, mut st: LineState /* pos, line_start, fields, facts */) -> Outcome {
+    loop {                                   // locals only; nothing written to self inside the loop
+        let rest = window[st.pos..];
+        match rest { [CR, LF, ..] => return HeadEnd(st.pos + 2),  [] | [CR] => return More(st),
+                     [CR, ..] => return Err(Malformed), _ => {} }
+        // 1. locate the colon: first byte in STOP = {≤ 0x20, ≥ 0x7F, ':'} (SWAR, lowest flag exact)
+        let n = stop_len(rest);                      // 8 B per step; CR/LF/SP/HTAB/NUL/DEL/obs-text/':' all stop
+        if n == rest.len() { return More(st) }       // partial name (validated so far: see "partial input")
+        if rest[n] != b':' || n == 0 { return Err(Malformed) }
+        // 2. validate the name off the critical path: branch-free table fold, result checked once per line
+        let name_ok = all_tchar(&rest[..n]);         // catches "(),/;<=>?@[\]{} and '"' which STOP lets through
+        // 3. value: today's SWAR value_len (stops at the first non-field-content byte, which must be CR)
+        let e = n + 1 + value_len(&rest[n + 1..]);
+        match rest.get(e..) { Some([CR, LF, ..]) => {}, Some([] | [CR]) => return More(st), _ => return Err(Malformed) }
+        if !name_ok { return Err(Malformed) }
+        // 4. emit span + facts (name dispatch by length + folded-word compare, §6.1, shared module)
+        st.emit(line_start = st.pos, colon = st.pos + n, value_end = st.pos + e)?;   // field count, CL/TE/Connection
+        st.pos += e + 2;
+    }
+}
+```
+- **Equivalence with G (proof sketch):** STOP ⊂ not-tchar, so "first byte outside tchar is `:` and the name is
+  non-empty" ⇔ "first STOP byte is `:`, the name is non-empty and every byte before it is tchar". On partial input
+  G rejects a delimiter such as `(` as soon as it arrives while P-B would wait for a STOP byte, so P-B validates the
+  newly scanned name bytes before returning `More` (incrementally, `validated_to`, so 1-byte feeding stays linear)
+  — whole and split parsing still agree byte for byte (parser note §6.3 invariant). The scalar `value_len` is kept
+  as is.
+- **Phase machine only at the edges:** `step()` enters `scan_lines` with locals and writes `phase/pos/line_start/
+  colon` back only on `More`; the status line keeps its 12-byte prefix check (a single `u64` + `u32` compare is
+  equivalent for the complete prefix and is httparse's trick). `checked_add` chains inside the loop are replaced by
+  offsets bounded once per call (`window.len() ≤ 65,536`, so `usize` arithmetic on offsets < window length cannot
+  overflow — one assert at entry instead of ≈ 8 per field; the lint `arithmetic_side_effects` then needs
+  `wrapping_add` with that bound as the documented reason, the same pattern as `value_len`).
+- **Padded window (uWS fence, safe form):** if the connection's pooled read buffer keeps ≥ 8 initialised slack
+  bytes past the data with a sentinel CR, the SWAR loops run over `as_chunks::<8>()` with no scalar tail, and
+  results are clamped to the received length. This changes the parser API (`parse(buf, padded_len)`); measured
+  separately.
+- **Time:** O(head bytes), each byte loaded once by a locate scan and once by the validate fold (both in L1).
+  **Space:** + `validated_to` (2 B). **Branches per byte:** names ≈ 1 per 8 bytes (+ 1 exit), values ≈ 1 per 8
+  bytes (+ 1 exit), ≈ 5 per line fixed → ≈ 0.25–0.3 per byte (from ≈ 0.6). **Data-dependent exits per line:** 2
+  (colon search, value search) as today, but each loop has 1–3 trips instead of 6–27.
+- **Better than httparse because:** same one-loop-per-line shape, but resumable, facts fused, exact `tzcnt` stops,
+  and on x86 no per-call runtime dispatch (SWAR inlines). On arm64 its NEON name LUT is 16 B per step against our
+  8 B STOP search + table fold: P-B alone may tie it on the 20-field ring (unverified).
+- **Risks:** (1) security: STOP must contain every byte outside tchar that could end a line or hide a separator
+  (CR, LF, SP, HTAB, NUL, CTLs, DEL, ≥ 0x80) — it does by construction (≤ 0x20 ∪ ≥ 0x7F), and the table fold is the
+  final word; exhaustive 256 × lane tests and the differential fuzz target (parser note §9.7) against G; (2) no
+  `unsafe`; (3) partial input as above; (4) clippy rule 9 (function ≤ 60 lines): `scan_lines` splits into
+  `locate_name`, `scan_value`, `emit` with `#[inline]`, measured.
+
+### 5.4 Candidate P-C — stage-1 bitmaps + per-line `tzcnt` walk (P1a, `engine-simd`)
+
+The SIMD note's lead candidate (§3.6, §6.1), now with spans:
+- **Stage 1** (`engine-simd`, `unsafe` inside, safe API): `classify_block(&[u8; 64]) -> BlockMasks { not_tchar,
+  not_field_content, cr, lf, colon, ows }` — NEON `tbl` nibble LUT for tchar + range compares, `vpaddq` ×3 mask
+  reduction; x86 SSE2 (baseline) for the range classes and SSSE3/AVX2 `pshufb` for tchar, dispatched once per call.
+- **Stage 2** (safe, `engine-core`): per line `name_end = next_set(not_tchar, line_start)`, check `colon` bit,
+  `value_start = next_clear(ows, colon + 1)`, `value_end = next_set(not_field_content, colon + 1)`, check `cr` and
+  `lf` bits, span, facts. `next_set(m, p) = p + (m >> (p % 64)).trailing_zeros()` with a block refill.
+- **Time:** stage 1 ≈ 90–100 vector ops per 64 B (≈ 1.5 per byte, throughput-bound); stage 2 ≈ 15 scalar ops and 3
+  dependent `tzcnt` per line. **Branches per byte:** ≈ 0.13 (per line ≈ 5, per block ≈ 1). **Space:** six `u64`
+  for the current block (lazy) or per window.
+- **Measured precedent (dev, SIMD note §4):** 0.42× the scalar chain on varied heads, 1.04× on one repeated head
+  (whole head); lazy per block 0.88× repeated.
+- **Risks:** a dependent `tzcnt` chain per line remains (latency ≈ 3–4 × 3 cycles per line); dispatch must be per
+  call, not per span (SIMD note §6.1); trickle: classify only complete 64-byte blocks, scalar for the tail (keeps
+  1-byte feeds linear and cheap).
+
+### 5.5 Candidate P-D — bit-stream line validator (P1a; our own design on Parabix ScanThru)
+
+Stage 1 as P-C (five classes: LF, CR, `:`, tchar, field-content; OWS optional). Stage 2 replaces the per-line walk
+with **block-parallel validation** (§4.1, verified by the differential check) and **index extraction**:
+
+```text
+carry: lf_in, cr_in, name_c, colon_c, value_c          // 5 bits, the whole resumable state of the validator
+for each complete 64-B block (base):
+    S  = (LF << 1) | lf_in                              // line starts
+    A  = (CR << 1) | cr_in                              // byte after a CR
+    (s1, name_c)  = (S & T).carrying_add(T, name_c);   N = s1 & !T        // ScanThru names → byte after the name
+    P  = (N << 1) | colon_c                             // byte after that (the colon's successor)
+    (s2, value_c) = P.carrying_add(V, value_c);        E = s2 & !V        // ScanThru values → byte after the value
+    err = (N & !COLON) | (E & !CR) | (A ^ LF) | (S & !(T | CR))
+    H  = S & CR                                         // an empty line: end of head (limit masks bits after it)
+    err &= mask_up_to(H) & received
+    if err != 0 { hand the block to the scalar parser (it reports the first error exactly) }
+    flatten(S & !CR) → name_start[]; flatten(N) → colon[]; flatten(P) → value_from[]; flatten(E) → value_end[]
+    // four independent index streams (simdjson bit_indexer: fixed unconditional writes, popcount advance)
+    lf_in = LF >> 63; cr_in = CR >> 63; colon_c = N >> 63
+spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end[k]));   facts per field (scalar)
+```
+- **What it validates:** exactly §5.2's field-line grammar: token names ending at `:`, field-content values ending
+  at CR, CR always followed by LF and LF always preceded by CR (`A ⊕ LF`), no line starting with a non-tchar (obs-fold,
+  leading SP, `:`), end of head at `CRLF CRLF`. The status line stays scalar (12-byte prefix + reason as one
+  field-content run).
+- **Time:** stage 1 ≈ 90–100 vector ops per 64 B; validator ≈ 32 `u64` ops per 64 B; flatten ≈ 4 × (popcount +
+  8 unconditional writes) per block; per field ≈ 6 scalar ops for OWS and the span; facts by length switch. ≈ 2.5–3
+  ops per byte, almost all independent → estimated ≈ 0.4–0.6 cycles per byte (unverified). **Branches per byte:**
+  ≈ 0.05 (per block: error test, flatten overflow, loop; per field: the facts length switch). **No dependent chain
+  between lines**: lines in a block are validated simultaneously. **Space:** 5 carry bits + four ≤ 16-entry index
+  buffers on the stack.
+- **Better than httparse because:** httparse is a serial per-span chain (find name end → find value end → next
+  line), 16 B per step, restart from 0. P-D has no per-span dependency at all, and its cost does not depend on the
+  branch predictor learning the head (the SIMD note's varied-head finding).
+- **Our own additions** beyond Parabix/simdjson: (1) error handling by scalar re-run (§4.3), so the fast path is
+  only an acceptance filter and the scalar parser keeps all error semantics; (2) causal checks → resume by carry
+  checkpoint at the last complete block, re-classify ≤ 63 bytes; (3) spans for JS as `u16` offsets straight from the
+  four index streams.
+- **Risks:** (1) security — the acceptance filter must never accept what the scalar parser rejects: the five
+  classes come from the `[bool; 256]` tables (single source of truth), exhaustive 256 × lane × alignment tests per
+  `classify_block`, the Python reference ported as a Rust test, and the fuzz target runs SIMD vs scalar vs httparse;
+  (2) `unsafe` only in `classify_block` (fixed-size `&[u8; 64]` loads: in-bounds by type; feature detection in the
+  dispatcher); the validator and flatten are safe `u64` code in `engine-core`; (3) partial input: blocks are
+  processed only when complete (or when the head ends inside the block); the tail and trickles go through the
+  scalar parser — the switch point is a block boundary, so state is the 5 carry bits plus the scalar parser's state
+  at that offset; (4) body bytes: a block straddling the head end loads up to 63 body bytes into registers (masked
+  out; never interpreted) — documented change to the parser note's "body bytes are never examined", which was a
+  semantic rule; (5) facts must still see every field: the per-field scalar dispatch runs on the extracted spans
+  (O(fields)).
+
+### 5.6 Rejected
+
+- **Per-span 16-byte SIMD (httparse shape):** slower in our dependent chain (SIMD note §4.2).
+- **SHENG / data-parallel FSM:** dependent shuffle per byte (§4.4).
+- **Safe-Rust bitmaps in `engine-core`:** no auto-vectorisation (§5.0).
+- **Name hashing during the scan (nginx):** a serial multiply per byte; a length switch is cheaper for 3 names.
+
+### 5.7 Measurement plan (parser)
+
+- **Equal work:** every row produces status, version, head length, per-field name/value spans with OWS trimmed,
+  framing facts and keep-alive (the bench README's `+fields` rows). Once P-A lands, `blazehttp+fields` is retired:
+  our row emits spans itself; the plain row stays as "facts only" for Zig.
+- **Workloads:** `1k` (3 fields, 109 B), `1k-h20` (20 fields, 779 B), `ring64` (both, 64 digit variants),
+  `mixed` (64 heads over the three fixtures), `trickle` (feeds (a)–(d), 1 byte per call, ≤ 1 ms each), **plus a
+  `varied-256` ring** (names shuffled, value lengths 0.5–1.5×; the SIMD note's ring) because `ring64` varies only
+  digits and lets the predictor learn the lengths.
+- **Arches:** arm64 (reference Mac, Docker, nightly window, generic Armv8-A) and x64 (VM; baseline decided with the
+  x64 host, every rival built for the same baseline).
+- **Tools:** `crates/engine-core/examples/h1_parse_bench.rs` for same-container A/B of P-A vs P-B variants
+  (alternated binaries, ≥ 4 rounds, as the journal does); `bench/parsers` for the cross-language race (+ fasthttp,
+  nginx rows, §2.13); P1a criterion for P-C vs P-D. Secondary metrics on the x64 VM: `perf stat -e
+  instructions,branches,branch-misses` per head (validates the branches-per-byte claims); `--emit asm` audit of each
+  kernel (no panic paths, §8.5 of the parser note).
+- **Gates:** with fields, faster than every rival on every workload and both arches (design §16.4 statistics on the
+  reference host); P1a ≤ 0.85× httparse on `1k-h20` (parser note §8.4).
 
 ## 6. Our writer: candidates
 
