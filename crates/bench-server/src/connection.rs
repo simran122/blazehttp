@@ -532,6 +532,16 @@ mod tests {
     }
 
     #[test]
+    fn batches_stop_at_512_responses() {
+        let not_found = response_for(b"/x", false);
+        let input = "GET /x HTTP/1.1\r\n\r\n".repeat(600);
+        let mut script = Script::<true>::new(input.into_bytes(), Vec::new());
+        serve(&mut script);
+        // 512 spelled out to pin the limit; 512 small 404s stay far below the byte limit.
+        assert_eq!(script.writes, [512 * not_found.len(), 88 * not_found.len()]);
+    }
+
+    #[test]
     fn closing_drains_at_most_64_kib_of_unread_input() {
         let mut input = b"BROKEN\r\n\r\n".to_vec();
         input.resize(BUFFER_BYTES * 20, b'x');
