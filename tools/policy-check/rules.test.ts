@@ -114,3 +114,14 @@ test('eslint directives are found per comment, not per line', () => {
   expect(ts('// eslint-disable-line x -- a // eslint-disable-next-line y -- b')).toEqual(['eslint-directive@1']);
   expect(ts('const re = /\\/\\/ eslint-disable/;\nconst t = `/* eslint-disable */${String(re)}`;')).toEqual([]);
 });
+test('every script extension is checked, JSX comments included and JSX text excluded', () => {
+  for (const path of ['a.cjs', 'a.cts', 'a.jsx', 'a.tsx']) {
+    expect(ts('/* eslint-disable */', path), path).toEqual(['eslint-directive@1']);
+    expect(v(path, '// TODO: later'), path).toEqual(['todo-needs-issue']);
+  }
+  expect(ts('const j = <div>{/* eslint-disable z */}</div>;', 'a.tsx')).toEqual(['eslint-directive@1']);
+  expect(ts('const j = <p>/* eslint-disable */ is text</p>;', 'a.jsx')).toEqual([]);
+});
+test('an unclosed rust attribute counts to the end of the file', () => {
+  expect(v('a.rs', '#[allow(clippy::x')).toEqual(['rust-allow-attribute']);
+});

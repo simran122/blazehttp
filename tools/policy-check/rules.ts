@@ -15,7 +15,7 @@ export type Context = { packageVersion: string };
 type Rule = (path: string, content: string, ctx: Context) => Violation[];
 
 /** Rules apply only to code and config files, never to prose docs. */
-const CHECKED_FILE = /\.(rs|ts|mts|js|mjs|toml|yml|yaml|json)$/;
+const CHECKED_FILE = /\.(rs|[cm]?[jt]sx?|toml|yml|yaml|json)$/;
 
 const FORBIDDEN_LINTS = /^(deprecated|dead_code|unused\w*)$/;
 const HTTP_ENGINE_CRATES = new Set(['hyper', 'hyper-util', 'reqwest', 'ureq', 'isahc', 'h2']);
@@ -162,7 +162,8 @@ const noHttpEngineDep: Rule = (path, content) => {
   });
 };
 
-const SCRIPT_FILE = /\.(ts|mts|js|mjs)$/;
+/** JS and TS in every module flavour: `.js .mjs .cjs .jsx`, `.ts .mts .cts .tsx`. */
+const SCRIPT_FILE = /\.[cm]?[jt]sx?$/;
 /** TypeScript script kind by file extension; anything else parses as TypeScript. */
 const SCRIPT_KIND: ReadonlyMap<string, ts.ScriptKind> = new Map([
   ['tsx', ts.ScriptKind.TSX],
@@ -188,15 +189,23 @@ const scriptComments = (
   const kind = SCRIPT_KIND.get(path.slice(path.lastIndexOf('.') + 1)) ?? ts.ScriptKind.TS;
   const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, kind);
   const byStart = new Map<number, ts.CommentRange>();
+  /** JSX text spans: the trivia scan after a `>` would read text such as `/* x *\/` there as a comment. */
+  const jsxTexts: (readonly [number, number])[] = [];
   const visit = (node: ts.Node): void => {
-    if (node.kind === ts.SyntaxKind.JsxText) return;
+    if (node.kind === ts.SyntaxKind.JsxText) {
+      jsxTexts.push([node.pos, node.end]);
+      return;
+    }
     const leading = ts.getLeadingCommentRanges(content, node.pos) ?? [];
     const trailing = ts.getTrailingCommentRanges(content, node.end) ?? [];
     for (const range of [...leading, ...trailing]) byStart.set(range.pos, range);
     node.getChildren(source).forEach(visit);
   };
   visit(source);
-  return { source, ranges: [...byStart.values()] };
+  // ponytail: linear scan of JSX text spans per comment; files here have few of either.
+  const inJsxText = (range: ts.CommentRange): boolean =>
+    jsxTexts.some(([start, end]) => range.pos >= start && range.pos < end);
+  return { source, ranges: [...byStart.values()].filter((range) => !inJsxText(range)) };
 };
 
 /** A comment ESLint would not read as a directive, or the one accepted `eslint-disable-next-line` form. */
