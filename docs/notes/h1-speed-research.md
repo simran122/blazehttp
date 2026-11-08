@@ -243,7 +243,167 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   full re-parse per read. Beating pico beats h2o. Worth reusing: the *length → one discriminating byte → compare*
   shape for name dispatch (§5, §6).
 
-### 2.6 What every fast parser does that we do not (against `crates/engine-core/src/h1/parser/mod.rs`)
+### 2.6 nginx `release-1.31.8` (C; upstream responses in the proxy)
+
+- **Status line** (`src/http/ngx_http_parse.c` `ngx_http_parse_status_line` L1675–1892): `for (p = b->pos; p <
+  b->last; p++) switch (state)` over 13 states, one byte per step behind a jump table (the comment at L105 says so).
+  `HTTP/` is five one-compare states; major 1–999 and minor 0–999 (L1758–1811, so `HTTP/2.0` passes); any number of
+  SPs before the code (L1815–1817); after the code SP, `.` (IIS `403.1`), CR or bare LF (L1833–1849); the reason
+  accepts every byte except CR/LF, NUL and CTLs included (L1852–1861). On buffer end it saves `r->state` and returns
+  `NGX_AGAIN` (L1875–1878). The proxy copies the reason into the pool and falls back to HTTP/0.9 on a parse error
+  (`ngx_http_proxy_module.c` L1823–1865).
+- **Field lines** (`ngx_http_parse_header_line` L870–1145, one call per line): **one table, two jobs** —
+  `lowcase[256]` maps `A-Z` to `a-z`, `a-z0-9-` to themselves and everything else to 0, so one load validates the
+  common name alphabet and yields the lowercased byte (L889–897, L964–971); the name is **hashed during the scan**
+  (`ngx_hash(key, c) = key * 31 + c`, `ngx_hash.h` L114) and its lowercase copied into `lowcase_header[32]`.
+  Looseness that buys speed: other name bytes only set `r->invalid_header`, which the proxy never reads (L953–955,
+  L1022); only SP is skipped after the colon (HTAB becomes a value byte, L1029, L1043–1046); in values only SP, CR,
+  LF and NUL are special (L1051–1068), so the loop is 4 compares per byte with no table; bare LF ends lines and the
+  head (L918–920, L1000–1004); `CR CR LF` accepted (L1101–1107). Obs-fold is rejected (a line starting with SP fails
+  `ch <= 0x20`, L948–951). Output: pointer pairs plus the hash written into the request as it scans; fully
+  resumable, nothing re-scanned (state, hash and lowercase index saved, L1123–1128, restored L899–901).
+- **Lookup and framing** (`ngx_http_upstream.c`): `ngx_hash_find` — bucket `key % size`, length, bytes
+  (`ngx_hash.c` L12–49) — costs one modulo and one bucket because the hash was built during the scan; the proxy
+  layer allocates one pool block per field and copies name, value and lowercase name (proxy L1908–1938). Duplicate
+  `Content-Length`, CL with TE, and TE other than `chunked` are errors (upstream.c L5008–5045, L5489–5530).
+- **Chunked** (`ngx_http_parse_chunked` L2216–2485): chunk data is never scanned (L2339–2341); extensions and
+  trailers are skipped to CR **without validation** (L2322–2330, L2398–2406); `ctx->length` keeps the minimum bytes
+  still needed, a read-sizing hint (L2427–2471).
+- **Why it is fast:** no separate end-of-head pass and no re-parse; a 4-compare value loop; one load to validate
+  and lowercase a name byte; header dispatch reduced to one bucket probe. **Why not faster:** one byte per step behind
+  an indirect jump, no SWAR/SIMD, a serial multiply chain for the hash, an allocation and 2–3 copies per field in
+  the proxy.
+- **To be faster than nginx with equal work.** It skips: CTL rejection in values and reason, non-token name
+  rejection, HTAB as OWS, bare-LF and `CR CR LF` rejection. Our values already scan 8 bytes per step against its 1;
+  our per-byte name loop costs about the same as its loop minus the hash and lowercase store, and a word-at-a-time
+  name search (§5) puts us clearly ahead. Do not add a second pass for spans. Expected comfortable win (unverified;
+  nginx is not in the race).
+
+### 2.7 fasthttp `v1.77.0` (Go)
+
+- **Driver** (`header.go` `Read`/`tryRead` L2711–2773): on `ErrNeedMore` it retries with one more buffered byte and
+  **re-parses from byte 0** (`h.parse(b)`, L2767). v1.77 adds `blockTerminated`, a `bytes.Contains(b[start:],
+  "\r\n\r\n")` that searches only bytes not searched before (L37–39, L58–67), so a split head costs one partial
+  attempt, an incremental terminator search and one full parse.
+- **Status line** (`parseFirstLine` L3450–3507): `bytes.IndexByte` (assembly SIMD) for `\n` (bare LF accepted,
+  L4050–4060), `' '` and the code end; multiple SPs skipped; reason not validated; protocol and reason copied.
+- **Field lines** (`headerscanner.go` `next` L41–152): the name is a byte loop testing `== ':'` then
+  `validHeaderFieldByteTable[c]` (the 77 token characters, `bytesconv_table.go` L11); spaces inside and before the
+  colon are accepted and trimmed (L109–113; header.go L3632, L3642–3646). OWS loop (L121–123). **Values: 8 bytes per
+  step with validation folded in** (`scanValueLine` L359–394): `anyByteIsCTL(w)` (`swar.go` L48–51: `x := w ^
+  0x7f…; ((w − 0x20…) &^ w | (x − 0x01…) &^ x) & 0x80… != 0`) — the same formula as our `value_len`; a flagged word
+  drops to a byte loop (HTAB counts as a CTL here, so any word with a TAB takes the slow loop). Trailing OWS and CR
+  trimmed backwards (L131–137). It needs the byte after each LF to rule out obs-fold (L138–145), and **accepts
+  obs-fold by joining continuation lines in place, overwriting the input** (L190–293).
+- **Dispatch and storage** (header.go L3618–3764, `args.go`): switch on `key[0] | 0x20`, then a length check and a
+  per-byte `toLowerTable` compare (cookie.go L742–752); special headers copied into dedicated fields; duplicate CL
+  and TE are errors, only `chunked`; **CL with TE accepted, TE wins** (L3676–3679, L3725); other headers are copied
+  and canonicalised into slots reused from the previous response (`appendArgNormalized`, args.go L472–519): zero
+  allocations in steady state but **two copies per field**; lookup by a linear `bytes.Equal` scan.
+- **To be faster than fasthttp with equal work.** It skips bare-LF, space-in-name, obs-fold and CL+TE rejection and
+  reason validation (all free in our grammar). Its scans are the same kind as ours, so we win by never copying and
+  never re-scanning. A ready SWAR lowercase is `lowercaseWord` (swar.go L60–65). Not in the race; it is the right
+  "fastest Go" row (§2.13).
+
+### 2.8 Seastar `seastar-25.05.0` (C++, Ragel)
+
+- The grammar is Ragel regular expressions (`src/http/response_parser.rl` L91–119: `tchar`, `field_vchar = graph |
+  obs_text`, `header_1st = (field ':' sp_ht* <: value crlf) %assign_field`) compiled with `ragel -G2`
+  (`CMakeLists.txt` L428): every state is a label with compare/jump trees, one transition per byte, no SIMD.
+- Resumable through `_fsm_cs` (`include/seastar/core/ragel.hh` L101–142); a token split across buffers is rebuilt
+  by copying (`sstring_builder`, L69–96). **Every token becomes an `sstring`** (L45–84); duplicate names are merged
+  as `old + "," + value` (L63–72), so two `Content-Length: 5` become `"5,5"`. The header map is an
+  `unordered_map<sstring, sstring, case_insensitive_hash, …>` (`reply.hh` L149) whose hash takes the key **by value**
+  and calls `tolower` per byte (`string_utils.hh` L57–62).
+- Strict on names (`tchar+ ':'`), values (no CTLs) and CRLF; loose on start-line separators (Ragel `space` accepts
+  `\t\v\f\n\r`, L115), the reason (`(any − cr − lf)*`), obs-fold (joined) and duplicates (merged).
+- **To be faster than Seastar:** it spends one transition per byte plus ≥ 2 allocations and a map insert per field;
+  any span-emitting parser that never allocates wins by a wide margin (estimate, unverified).
+
+### 2.9 Bun `bun-v1.4.4` (client in Rust over picohttpparser; uWS fork for its server)
+
+- **Client** (`src/picohttp/lib.rs` L42–80, `src/http/lib.rs`): `phr_parse_response` through FFI into a
+  `#[repr(C)]` ptr/len array; pico built at commit `f4d94b48` with a chunked-decoder patch
+  (`scripts/build/deps/picohttpparser.ts` L13–31), x64 with `-march=nehalem` (SSE4.2, so `pcmpestri` is compiled
+  in; `scripts/build/flags.ts` L73–76), arm64 scalar. **It passes `last_len = 0` on every call** (http/lib.rs
+  L3818, L3826–3830): every short read re-parses from 0 and pico's `is_complete` shortcut is never used. Obs-fold is
+  rejected in the wrapper (picohttp/lib.rs L519–531). Name dispatch hashes each lowercased name with Wyhash and
+  compares it with `hash_header_const(b"Content-Length")`-style values that are **computed at run time** (the comment
+  says Wyhash is not a const fn; L684–689, L1032–1039, L5010–5103); names are matched by 64-bit hash only.
+  Conflicting CLs rejected (L5019–5031), `Connection: close` sticky (L5070–5077).
+- **Server** (`packages/bun-uws/src/HttpParser.h`): uWS's fence (L1257–1260) and `hasLess` SWAR value scan
+  (L1047–1064, L760–762); Bun keeps wire casing (upstream lowercases in place), raises the field limit to 200, and in
+  native mode accepts DEL (L1058–1061). Requests only.
+- **To be faster than Bun:** its client is picohttpparser plus a Wyhash per field plus a full re-parse per short
+  read, so beating pico while emitting spans beats Bun's client.
+
+### 2.10 Netty `netty-4.2.20.Final` (Java)
+
+- `HttpObjectDecoder` (`codec-http/src/main/java/io/netty/handler/codec/http/HttpObjectDecoder.java`) switches on
+  a `State` (L371–424). Each line: `buffer.indexOf` for LF (L1315), `strictCRLFCheck` rejects a bare LF by default
+  (`DEFAULT_STRICT_LINE_PARSING = true`, L156–157, L1327–1335), then the line is copied into a scratch buffer
+  (L1347–1348). `indexOf` is SWAR (`ByteBufUtil.firstIndexOf` L574–612): `SWARUtil.applyPattern` = `input = word ^
+  pattern; tmp = (input & 0x7F7F…) + 0x7F7F…; ~(tmp | input | 0x7F7F…)` — an **exact** per-byte zero test with no
+  false positives (`common/src/main/java/io/netty/util/internal/SWARUtil.java` L38–42), index `trailing zeros >>> 3`
+  (L54–57).
+- `splitHeader` (L1162–1209) loops byte by byte to the colon and, **for responses, tolerates whitespace before the
+  colon** (L1179–1185); the name becomes a new `AsciiString` (copy; the response decoder interns nothing), the value
+  a new `String` (L1148–1160, L1205–1213); obs-fold accepted by concatenation (L780–785); framing is read **after**
+  all lines are stored, by map lookups (`getAll(CONTENT_LENGTH)`, `contains(TRANSFER_ENCODING)`, L813–842). Complete
+  lines are never re-parsed; a partial line is re-searched from its start on every call (L1315).
+- **To be faster than Netty:** three copies and two allocations per field plus a map dominate; spans with no copies
+  win by several times (estimate). Worth taking: the exact SWAR equality test.
+
+### 2.11 Go `go1.27.3` (`net/http` client: `ReadResponse` → `textproto`)
+
+- `bufio.Reader.ReadSlice('\n')` uses `bytes.IndexByte` (assembly SIMD) and never re-searches searched bytes
+  (`src/bufio/bufio.go` L348–387); `ReadLine` drops `\n` or `\r\n` (bare LF accepted, L405–438). The status line is
+  a `string` allocation, `strings.Cut`, `Atoi` (`src/net/http/response.go` L158–189).
+- `upcomingHeaderKeys` **pre-counts** the buffered lines (`src/net/textproto/reader.go` L630–652) to size one shared
+  `[]string` backing array and the map (L531–540) — a whole extra pass to save allocations.
+- Per line: `IndexByte(':')` (L619–624); obs-fold joined (L136–188); `canonicalMIMEHeaderKey` validates, then
+  canonicalises in place, then probes the `commonHeader` interning map without allocating (L757–804); value
+  validated byte by byte (L567–571), trimmed, allocated (L579), inserted into the map (L581–604). The token test is a
+  **128-bit bitmask held in two `u64` constants** (`((1<<c) & lo) | ((1<<(c-64)) & hi)`, L693–745) — branch-free, no
+  memory load; in Rust it needs `checked_shl` or a guarded `u128` shift, about the cost of our table.
+- **To be faster than Go:** already ≈ 10× in the race (parser note §8.6). Its cost is 1–2 allocations per field,
+  a map insert and ≈ 6 passes per line. Rule for us: no per-field allocation on the engine path.
+
+### 2.12 Zig `0.17.1` (`std.http`)
+
+- **`HeadParser.feed`** (`lib/std/http/HeadParser.zig` L20–328) only finds the end of the head, resumably (state
+  `start`/`seen_n`/`seen_r`/`seen_rn`/`seen_rnr` carried across calls, L5–12): per 16-byte block it compares with
+  splats of `\r` and `\n`, ORs, and **counts** matches with `@reduce(.Add)` (L119–123). Zero matches: skip. 1–3:
+  only the last 1–3 bytes are checked to carry state (L126–168). ≥ 4: an `inline for` over offsets compares each
+  4-byte window as a `u32` against `\r\n\r\n` (and its top half against `\n\n`) (L169–183). The integer views
+  (`int16/24/32`, L330–347) give the partial-terminator states from the same load.
+- **`Response.Head.parse`** (`lib/std/http/Client.zig` L515–612) is a second pass: `splitSequence("\r\n")`, one
+  `u64` compare for `HTTP/1.x`, `parseInt3` with **no digit check** (L697–702), `splitScalar(':')`, `trim(" \t")`,
+  a chain of up to 7 `eqlIgnoreCase` calls. **No name or value validation**; a bare LF inside a value is kept.
+  Fields are not returned; `iterateHeaders` re-splits on demand (`HeaderIterator.zig` L13–48), a third pass.
+- **Suspected bug (by reading, bare-LF terminator only):** with ≤ 3 CR/LF bytes in a block only the tail is
+  checked, so a `\n\n` in the middle of a block (e.g. `HTTP/1.0 200\n\nAB…`) is missed. CRLF heads are unaffected.
+- **To be faster than Zig:** it validates nothing and hands no fields out, so the fair row is our plain parser
+  (bench README). Our single pass must cost no more than its two; its end scan is 16 B per step, but the split
+  walks every byte again.
+
+### 2.13 Parsers not yet in the race
+
+The race (`bench/parsers/`) has httparse, picohttpparser, llhttp, Beast (two APIs), Zig and Go. Candidates:
+
+| Parser | Response-head API to time | Container build | Plausibly faster than httparse? |
+|---|---|---|---|
+| **fasthttp** v1.77.0 | `ResponseHeader.Read` on a reused, `Reset` `bufio.Reader`, fields via `VisitAll` | trivial (the Go image, module pinned) | no, but the fastest Go row; several × `net/http` (estimate) |
+| **nginx** release-1.31.8 | `ngx_http_parse_status_line`, then `ngx_http_parse_header_line(r, b, 1)` until `NGX_HTTP_PARSE_HEADER_DONE`, recording pointer pairs; facts by the shared extraction pass | moderate: configure + build at the tag, link the harness to `ngx_http_parse.o` and core objects | unlikely (1 B/step), but the "C server state machine" reference |
+| **Netty** 4.2.20.Final | `EmbeddedChannel(new HttpResponseDecoder())`, `writeInbound`/`readInbound`, JMH | JDK + Maven image; JIT and GC noise | no (allocates per field) |
+| **Seastar** 25.05.0 | `http_response_parser p; p.init(); p(temporary_buffer<char>(head)); get_parsed_response()` | heavy (Ragel 6.10, Seastar, fmt, boost; tight under the 2 GiB cap) | no (allocates per field) |
+| **uWebSockets** v20.81.0 | `HttpParser::getHeaders` / `consumePostPadded` — **requests only** | easy (header-only) | plausibly, on requests (fence + SWAR); not applicable to responses |
+
+h2o's client and Bun's client are picohttpparser (already in the race). **No response-head parser plausibly faster
+than httparse was found outside the race.** For completeness the race should add fasthttp (cheap, closes "every Go
+parser") and nginx (the C server reference); Netty and Seastar are optional rows for the leaderboard (G8), not gates.
+
+### 2.14 What every fast parser does that we do not (against `crates/engine-core/src/h1/parser/mod.rs`)
 
 1. **Spans are stored at the CRLF, in the same pass, everywhere** (httparse L1241, pico L357, uWS L445; llhttp by
    callback). Our `value()` holds `line_start`, `colon` and the value end at the CRLF, hands them to `facts.field`
