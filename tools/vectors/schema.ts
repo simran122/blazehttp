@@ -70,6 +70,8 @@ interface RequestVectorCase {
     readonly target: string;
     readonly templateHost: string;
     readonly templateFields: string;
+    /** The field count JS serialised into `templateFields`, not the number of CRLFs present. */
+    readonly templateFieldLines: number;
     readonly headers: string;
     /** The field count the JS layer passes with `headers`, not the number of CRLFs present. */
     readonly headerLines: number;
@@ -95,8 +97,10 @@ export type VectorIndex = Readonly<Record<string, readonly string[]>>;
 const ENGINE_ERROR_SET: ReadonlySet<string> = new Set(ENGINE_ERRORS);
 const METHOD_SET: ReadonlySet<string> = new Set(METHODS);
 const REUSE_SET: ReadonlySet<string> = new Set<Reuse>(['allowed', 'closeAfterExchange']);
-/** `RequestParts::header_lines` is a `u16`. */
-const MAX_HEADER_LINES = 65_535;
+/** `RequestParts::header_lines` and `HeaderTemplate::new`'s `field_lines` are `u16`s. */
+const MAX_LINE_COUNT = 65_535;
+/** The request's line counts, in schema order. */
+const REQUEST_COUNTS = ['templateFieldLines', 'headerLines'] as const;
 /** The request's byte strings, in schema order. */
 const REQUEST_TEXTS = ['target', 'templateHost', 'templateFields', 'headers', 'body'] as const;
 const MIN_STATUS = 100;
@@ -104,6 +108,8 @@ const MAX_STATUS = 599;
 /** A code point that is not one latin1 byte. */
 const NOT_LATIN1 = /[\u{100}-\u{10ffff}]/u;
 const isLatin1 = (text: string): boolean => !NOT_LATIN1.test(text);
+/** A UTF-16 surrogate without its pair: not a code point, so no bytes in any encoding. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 /** A latin1 byte that UTF-8 would encode differently: the reason to choose `latin1`. */
 const HIGH_BYTE = /[\x80-\xff]/u;
 
@@ -148,8 +154,13 @@ export const parseNativeExpect = (value: unknown, at: string): NativeExpect => {
   return ENGINE_ERROR_SET.has(error) ? { error } : fail(`${at}.error`, `${error} is not an engine error`);
 };
 
-/** `texts` are the case's byte strings as `[path, text]`; `latin1` needs every one latin1 and one byte ≥ 0x80. */
+/**
+ * `texts` are the case's byte strings as `[path, text]`. Every one must be well-formed UTF-16 (a lone surrogate has no
+ * UTF-8 or latin1 bytes, so the Rust loader would reject it); `latin1` needs every one latin1 and one byte ≥ 0x80.
+ */
 const parseEncoding = (value: unknown, texts: readonly (readonly [string, string])[], at: string): InputEncoding => {
+  const broken = texts.find(([, text]) => LONE_SURROGATE.test(text));
+  if (broken !== undefined) fail(broken[0], 'a lone surrogate');
   if (value === 'utf8') return value;
   if (value !== 'latin1') return fail(`${at}.inputEncoding`, 'expected utf8 or latin1');
   const wide = texts.find(([, text]) => !isLatin1(text));
@@ -212,22 +223,26 @@ const parseRequestExpect = (value: unknown, at: string): RequestExpect => {
   return { bytes: asString(written['bytes'], `${at}.bytes`), reuse: reuse as Reuse };
 };
 
+/** A line count: an integer in `0..=65535` (a `u16` in Rust; serde rejects `1.5`, `-1` and `65536`). */
+const parseLineCount = (value: unknown, at: string): number => {
+  const ok = typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_LINE_COUNT;
+  return ok ? value : fail(at, `expected an integer in 0..=${String(MAX_LINE_COUNT)}`);
+};
+
 const parseRequest = (value: unknown, at: string): RequestVectorCase['request'] => {
-  const r = asObject(value, at, ['method', ...REQUEST_TEXTS, 'headerLines'], ['connAuthority']);
+  const r = asObject(value, at, ['method', ...REQUEST_TEXTS, ...REQUEST_COUNTS], ['connAuthority']);
   const method = asString(r['method'], `${at}.method`);
   if (!METHOD_SET.has(method)) fail(`${at}.method`, `${method} is not a generated Method`);
-  const lines = r['headerLines'];
-  if (typeof lines !== 'number' || !Number.isInteger(lines) || lines < 0 || lines > MAX_HEADER_LINES) {
-    fail(`${at}.headerLines`, `expected an integer in 0..=${String(MAX_HEADER_LINES)}`);
-  }
+  const [templateFieldLines, headerLines] = REQUEST_COUNTS.map((k) => parseLineCount(r[k], `${at}.${k}`));
   const [target, templateHost, templateFields, headers, body] = REQUEST_TEXTS.map((k) => asString(r[k], `${at}.${k}`));
   return {
     method,
     target: String(target),
     templateHost: String(templateHost),
     templateFields: String(templateFields),
+    templateFieldLines: Number(templateFieldLines),
     headers: String(headers),
-    headerLines: lines as number,
+    headerLines: Number(headerLines),
     body: String(body),
     ...(r['connAuthority'] === undefined ? {} : { connAuthority: asString(r['connAuthority'], `${at}.connAuthority`) }),
   };
@@ -254,7 +269,7 @@ const parseRequestCase = (value: unknown, at: string): RequestVectorCase => {
   };
 };
 
-/** A vector file whose cases are parsed by `parseCase`; `label` prefixes error messages. */
+/** A vector file whose cases are each parsed by `parseOne`, with unique names; `label` prefixes error messages. */
 const parseFile = <C extends { readonly name: string }>(
   data: unknown,
   label: string,
@@ -281,11 +296,19 @@ export function parseRequestVectorFile(data: unknown, label: string): RequestVec
   return parseFile(data, label, parseRequestCase);
 }
 
-/** The case schema of a vector file, chosen by its directory under `tests/vectors` (docs/notes/vectors.md). */
+/**
+ * The case schema of a vector file, chosen by the name of the directory that holds it (docs/notes/vectors.md: every
+ * vector file sits exactly one level below `tests/vectors`, in a directory named after its case kind).
+ */
 const FILE_PARSERS: Readonly<Record<string, (data: unknown, label: string) => VectorFile | RequestVectorFile>> = {
   'h1-response': parseVectorFile,
   'h1-request': parseRequestVectorFile,
 };
+
+/** Loads a response vector file (`h1-response/`), e.g. for the llhttp importer. */
+export function loadResponseVectorFile(path: string): VectorFile {
+  return parseVectorFile(JSON.parse(readFileSync(path, 'utf8')), path);
+}
 
 /** Loads a vector file and validates it with the schema of its directory (`h1-response/` or `h1-request/`). */
 export function loadVectorFile(path: string): VectorFile | RequestVectorFile {

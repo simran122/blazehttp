@@ -10,6 +10,9 @@ pub const HOST: &[u8] = b"127.0.0.1:3999";
 /// The client's default fields of every set's template.
 pub const DEFAULTS: &[u8] =
     b"accept: application/json, text/plain, */*\r\nuser-agent: blazehttp/0.0.0\r\naccept-encoding: gzip, br\r\n";
+/// The number of fields in [`DEFAULTS`].
+pub const DEFAULT_LINES: u16 = 3;
+const POST_BODY_LEN: usize = 1024;
 const VARIANTS: usize = 64;
 const VARIED: usize = 256;
 const VARIED_METHODS: [Method; 7] = [
@@ -28,19 +31,18 @@ pub struct Request {
     pub target: Vec<u8>,
     /// `("name: value\r\n")*`.
     pub headers: Vec<u8>,
-    /// The field count JS would pass, counted once here so timed loops do not re-count it.
+    /// The number of fields generated into `headers` (as JS counts entries, never from the bytes).
     pub header_lines: u16,
     pub body: Vec<u8>,
 }
 
 impl Request {
-    fn new(method: Method, target: Vec<u8>, headers: Vec<u8>, body: Vec<u8>) -> Self {
-        let lines = headers.windows(2).filter(|w| w == b"\r\n").count();
+    fn new(method: Method, target: Vec<u8>, fields: &[String], body: Vec<u8>) -> Self {
         Self {
             method,
             target,
-            headers,
-            header_lines: u16::try_from(lines).expect("few lines"),
+            headers: fields.concat().into_bytes(),
+            header_lines: u16::try_from(fields.len()).expect("few fields"),
             body,
         }
     }
@@ -72,7 +74,7 @@ pub fn get() -> Vec<Request> {
             Request::new(
                 Method::Get,
                 format!("/data/{i:02}").into_bytes(),
-                Vec::new(),
+                &[],
                 Vec::new(),
             )
         })
@@ -83,17 +85,24 @@ pub fn get() -> Vec<Request> {
 pub fn post1k() -> Vec<Request> {
     (0..VARIANTS)
         .map(|i| {
-            let headers = format!(
-                "content-type: application/json\r\nx-request-id: 7f3c9a2e-{i:04}-4b8d-9e1f-2a6c8d0b4e{i:02}\r\n\
-                 authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJiZW5jaCJ9.c2lnbmF0dXJl{i:02}\r\n"
-            );
-            let item = format!("{{\"id\":{i},\"name\":\"item-{i}\",\"tags\":[\"a\",\"b\"],\"v\":1.5}},");
-            let mut body = format!("{{\"items\":[{}", item.repeat(1024 / item.len())).into_bytes();
-            body.resize(1023, b' ');
-            body.push(b']');
-            Request::new(Method::Post, b"/api/items".to_vec(), headers.into_bytes(), body)
+            let fields = [
+                "content-type: application/json\r\n".to_owned(),
+                format!("x-request-id: 7f3c9a2e-{i:04}-4b8d-9e1f-2a6c8d0b4e{i:02}\r\n"),
+                format!("authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJiZW5jaCJ9.c2lnbmF0dXJl{i:02}\r\n"),
+            ];
+            Request::new(Method::Post, b"/api/items".to_vec(), &fields, json_body(i))
         })
         .collect()
+}
+
+/// A valid JSON object of exactly `POST_BODY_LEN` bytes: an array of items, padded with whitespace.
+fn json_body(i: usize) -> Vec<u8> {
+    let item = format!("{{\"id\":{i},\"name\":\"item-{i}\",\"tags\":[\"a\",\"b\"],\"v\":1.5}}");
+    let items = vec![item.as_str(); (POST_BODY_LEN - 16) / (item.len() + 1)].join(",");
+    let mut body = format!("{{\"items\":[{items}").into_bytes();
+    body.resize(POST_BODY_LEN - 2, b' ');
+    body.extend_from_slice(b"]}");
+    body
 }
 
 /// The varied ring of 256 requests.
@@ -101,21 +110,18 @@ pub fn varied() -> Vec<Request> {
     let mut state = 0x9E37_79B9_7F4A_7C15_u64;
     (0..VARIED)
         .map(|i| {
-            let fields = next(&mut state, 7);
-            let headers: Vec<u8> = (0..fields)
-                .flat_map(|f| {
-                    format!("x-field-{f}: {}\r\n", "v".repeat(4 + next(&mut state, 77)))
-                        .into_bytes()
-                })
+            let count = next(&mut state, 7);
+            let mut fields: Vec<String> = (0..count)
+                .map(|f| format!("x-field-{f}: {}\r\n", "v".repeat(4 + next(&mut state, 77))))
                 .collect();
             let target = [&b"/"[..], &vec![b'p'; 7 + next(&mut state, 193)]].concat();
             let body = vec![b'b'; next(&mut state, 2049)];
-            Request::new(
-                VARIED_METHODS[i % VARIED_METHODS.len()],
-                target,
-                headers,
-                body,
-            )
+            let method = VARIED_METHODS[i % VARIED_METHODS.len()];
+            // OPTIONS content needs a content-type (RFC 9110 §9.3.7).
+            if method == Method::Options && !body.is_empty() {
+                fields.push("content-type: application/octet-stream\r\n".to_owned());
+            }
+            Request::new(method, target, &fields, body)
         })
         .collect()
 }

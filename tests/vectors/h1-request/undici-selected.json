@@ -16,6 +16,7 @@
         "target": "/x",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-type: application/json\r\n\r\nGET /foo2 HTTP/1.1\r\n",
         "headerLines": 1,
         "body": ""
@@ -33,6 +34,7 @@
         "target": "/endpoint",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-type: text/html\r\nX-Injected: true\r\n",
         "headerLines": 1,
         "body": "hello"
@@ -50,6 +52,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-type: application/json\r\nhost: 12 \r\n\r\naaa:aaa\r\n",
         "headerLines": 2,
         "body": "asd"
@@ -67,6 +70,7 @@
         "target": "/",
         "templateHost": "12 \r\n\r\naaa:aaa",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-type: application/json\r\n",
         "headerLines": 1,
         "body": "asd"
@@ -84,6 +88,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "x-safe: legit\r\ntransfer-encoding: chunked\r\n",
         "headerLines": 1,
         "body": ""
@@ -101,6 +106,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "x-safe: legit\r\nx-injected: yes\r\n",
         "headerLines": 1,
         "body": ""
@@ -118,6 +124,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "x-safe: legit\r\nx-injected: via-array\r\n",
         "headerLines": 1,
         "body": ""
@@ -135,6 +142,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "x-safe: legit\r\nx-injected: via-array-primitive\r\n",
         "headerLines": 1,
         "body": ""
@@ -152,6 +160,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "x-num: 123\r\nx-bool: true\r\n",
         "headerLines": 2,
         "body": ""
@@ -170,6 +179,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: asd\r\n",
         "headerLines": 1,
         "body": ""
@@ -187,6 +197,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 1.1\r\n",
         "headerLines": 1,
         "body": ""
@@ -204,6 +215,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 10abc\r\n",
         "headerLines": 1,
         "body": ""
@@ -221,6 +233,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: -1\r\n",
         "headerLines": 1,
         "body": ""
@@ -238,6 +251,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "transfer-encoding: chunked\r\n",
         "headerLines": 1,
         "body": ""
@@ -255,6 +269,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: asd\r\n",
         "headerLines": 1,
         "body": ""
@@ -272,6 +287,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "connection: invalid header with spaces\r\n",
         "headerLines": 1,
         "body": ""
@@ -289,6 +305,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "keep-alive: timeout=5\r\n",
         "headerLines": 1,
         "body": ""
@@ -306,6 +323,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "expect: 100-continue\r\n",
         "headerLines": 1,
         "body": ""
@@ -323,6 +341,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "Expect: 100-continue\r\n",
         "headerLines": 1,
         "body": ""
@@ -340,6 +359,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "expect: asd\r\n",
         "headerLines": 1,
         "body": ""
@@ -357,6 +377,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: websocket\r\n\r\nSET pwned true\r\n",
         "headerLines": 1,
         "body": ""
@@ -374,6 +395,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: websocket\rinjected\r\n",
         "headerLines": 1,
         "body": ""
@@ -391,6 +413,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: websocket\ninjected\r\n",
         "headerLines": 1,
         "body": ""
@@ -408,6 +431,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: websocket\u0000injected\r\n",
         "headerLines": 1,
         "body": ""
@@ -425,6 +449,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: websocket\r\n\r\nGET /smuggled HTTP/1.1\r\n",
         "headerLines": 1,
         "body": ""
@@ -442,6 +467,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "upgrade: websocket\r\n",
         "headerLines": 1,
         "body": ""
@@ -459,6 +485,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "Content-Length: 5\r\ncontent-length: 0\r\n",
         "headerLines": 2,
         "body": "hello"
@@ -476,6 +503,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 5\r\ncontent-length: 0\r\n",
         "headerLines": 2,
         "body": "hello"
@@ -493,6 +521,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "Host: example.com\r\nhost: evil.com\r\n",
         "headerLines": 2,
         "body": ""
@@ -510,6 +539,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "host: example.com\r\nhost: evil.com\r\n",
         "headerLines": 2,
         "body": ""
@@ -527,6 +557,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 10\r\n",
         "headerLines": 1,
         "body": "asd"
@@ -544,6 +575,7 @@
         "target": "/put0",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -562,6 +594,7 @@
         "target": "/head",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -580,6 +613,7 @@
         "target": "/get",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -598,6 +632,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-type: application/json\r\n",
         "headerLines": 1,
         "body": "{\"query\":\"{user}\"}"
@@ -616,6 +651,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -634,6 +670,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": "hello"
@@ -652,6 +689,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 10\r\n",
         "headerLines": 1,
         "body": "asd"

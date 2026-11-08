@@ -15,5 +15,13 @@ pub(crate) mod grammar;
 mod parser;
 mod writer;
 
+use crate::generated::spec::{EngineDetail, ErrorCode, TooLargeDetail};
+
+/// A caller broke a component's contract (for the writer: the JS layer's validation was bypassed); never a peer's
+/// fault. Shared by the parser and the writer.
+const INTERNAL: ErrorCode = ErrorCode::Engine(EngineDetail::Internal);
+/// A head (response) or the request fields exceed their byte limit.
+const HEADERS_TOO_LARGE: ErrorCode = ErrorCode::TooLarge(TooLargeDetail::Headers);
+
 pub use parser::{Framing, HttpVersion, ParseStatus, ResponseHead, ResponseParser};
 pub use writer::{HeaderTemplate, MAX_P0_REQUEST_BYTES, RequestParts, Reuse, write_request};

@@ -7,17 +7,17 @@ use super::vectors::{VectorCase, bytes};
 
 /// One response vector case.
 #[derive(Debug)]
-pub struct Case {
+pub struct ResponseCase {
     pub name: String,
     pub input: Vec<u8>,
     pub method: String,
-    pub expect: Expect,
+    pub expect: ResponseExpect,
 }
 
 /// The native engine's expected result; `Error` holds `ErrorCode`'s display form, e.g. `PROTOCOL/malformed-response`.
 /// Header names, values and the body are bytes, decoded with the case's `inputEncoding`.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Expect {
+pub enum ResponseExpect {
     Ok {
         status: u16,
         headers: Vec<(Vec<u8>, Vec<u8>)>,
@@ -63,14 +63,14 @@ struct RawOk {
     keep_alive: bool,
 }
 
-impl VectorCase for Case {
+impl VectorCase for ResponseCase {
     type Raw = RawCase;
 
     fn decode(raw: RawCase) -> Self {
         let encoding = raw.input_encoding.as_str();
         let name = raw.name.as_str();
         let expect = match raw.expect.native {
-            RawNative::Ok(ok) => Expect::Ok {
+            RawNative::Ok(ok) => ResponseExpect::Ok {
                 status: ok.status,
                 headers: ok
                     .headers
@@ -80,7 +80,7 @@ impl VectorCase for Case {
                 body: bytes(ok.body, encoding, name),
                 keep_alive: ok.keep_alive,
             },
-            RawNative::Error(error) => Expect::Error(error),
+            RawNative::Error(error) => ResponseExpect::Error(error),
         };
         Self {
             input: bytes(raw.input, encoding, name),

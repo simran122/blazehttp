@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { asObject, asRecord } from '../json-guards.ts';
 import { LICENCE_TEXTS } from './notices.ts';
 import {
+  loadResponseVectorFile,
   type NativeExpect,
   parseNativeExpect,
   parseVectorFile,
@@ -623,9 +624,7 @@ export function importLlhttp(files: readonly LlhttpInput[], ctx: ImportContext):
 if (import.meta.main) {
   const refresh = process.argv.includes('--refresh');
   const paths = STEMS.map((stem) => join(OUT_DIR, `llhttp-${stem}.json`));
-  const previous = paths.map((path) =>
-    existsSync(path) ? parseVectorFile(JSON.parse(readFileSync(path, 'utf8')), path) : undefined,
-  );
+  const previous = paths.map((path) => (existsSync(path) ? loadResponseVectorFile(path) : undefined));
   const recorded = new Set(
     previous.flatMap((file) => (file?.source.tag === undefined ? [] : [`${file.source.tag} ${file.source.commit}`])),
   );

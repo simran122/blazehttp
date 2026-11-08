@@ -13,7 +13,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use engine_core::h1::{HeaderTemplate, Reuse, write_request};
-use write_rings::{DEFAULTS, HOST, Request};
+use write_rings::{DEFAULT_LINES, DEFAULTS, HOST, Request};
 
 const RUNS: usize = 7;
 const BLOCKS_PER_RUN: u32 = 4;
@@ -148,7 +148,7 @@ fn measure(
 }
 
 fn main() {
-    let template = HeaderTemplate::new(HOST, DEFAULTS, &[]).expect("valid template");
+    let template = HeaderTemplate::new(HOST, DEFAULTS, DEFAULT_LINES, &[]).expect("valid template");
     let template_bytes = [&b"host: "[..], HOST, b"\r\n", DEFAULTS].concat();
     let sets = [
         ("get", write_rings::get()),
