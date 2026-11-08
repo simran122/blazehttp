@@ -10,7 +10,7 @@ import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
-import { dirtyDigest, readUntracked, revision, sourceChange, staleImages, untrackedPaths } from './provenance.ts';
+import { dirtyDigest, readUntrackedAll, revision, sourceChange, staleImages, untrackedPaths } from './provenance.ts';
 import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
 import type { CheckReport, FeedMode } from './protocol.ts';
@@ -290,8 +290,9 @@ function versions(options: Options): Record<string, string> {
 
 /** The working tree's state, taken before any image is built, so results from uncommitted code can be traced. */
 function tree(): TreeState {
-  const untracked = untrackedPaths(runBytes('git', ['ls-files', '-z', '--others', '--exclude-standard'])).map((path) =>
-    readUntracked(ROOT, path),
+  const untracked = readUntrackedAll(
+    ROOT,
+    untrackedPaths(runBytes('git', ['ls-files', '-z', '--others', '--exclude-standard'])),
   );
   return {
     commit: run('git', ['rev-parse', 'HEAD']).trim(),

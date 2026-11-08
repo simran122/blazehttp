@@ -78,6 +78,37 @@ export function readUntracked(root: string, path: Buffer): UntrackedFile {
     : { path, kind: 'file', content: readFileSync(full) };
 }
 
+/** Error codes that mean an entry vanished or changed type after git listed it: the tree is changing under us. */
+const RACE_CODES: ReadonlySet<string> = new Set(['ENOENT', 'EISDIR', 'ENOTDIR']);
+
+const raceCode = (error: unknown): string | undefined =>
+  error instanceof Error && 'code' in error && typeof error.code === 'string' && RACE_CODES.has(error.code)
+    ? error.code
+    : undefined;
+
+/**
+ * Reads every untracked entry with `read` (`readUntracked`; injectable for tests). An entry that vanished or changed
+ * type since git listed it is reported as a moving tree; any other error is rethrown unchanged.
+ */
+export function readUntrackedAll(
+  root: string,
+  paths: readonly Buffer[],
+  read: (root: string, path: Buffer) => UntrackedFile = readUntracked,
+): UntrackedFile[] {
+  return paths.map((path) => {
+    try {
+      return read(root, path);
+    } catch (error) {
+      const code = raceCode(error);
+      if (code === undefined) throw error;
+      throw new Error(
+        `the source tree changed while it was read (${JSON.stringify(path.toString())}: ${code}); run again on a still tree`,
+        { cause: error },
+      );
+    }
+  });
+}
+
 /** The revision an image is stamped with (`org.opencontainers.image.revision`): the commit, marked when dirty. */
 export function revision(tree: TreeState): string {
   return tree.dirtySha256 === null ? tree.commit : `${tree.commit}+dirty.${tree.dirtySha256.slice(0, 12)}`;

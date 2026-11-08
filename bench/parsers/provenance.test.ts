@@ -5,7 +5,15 @@ import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { dirtyDigest, readUntracked, revision, sourceChange, staleImages, untrackedPaths } from './provenance.ts';
+import {
+  dirtyDigest,
+  readUntracked,
+  readUntrackedAll,
+  revision,
+  sourceChange,
+  staleImages,
+  untrackedPaths,
+} from './provenance.ts';
 import type { UntrackedFile } from './provenance.ts';
 
 const file = (path: string, content: string): UntrackedFile => ({
@@ -159,5 +167,34 @@ describe('sourceChange', () => {
     expect(sourceChange(clean, { commit: 'abc', dirtyFiles: [' M x'], dirtySha256: '0123456789abcdef' })).toContain(
       'abc → abc+dirty.0123456789ab',
     );
+  });
+});
+
+describe('readUntrackedAll', () => {
+  const root = mkdtempSync(join(tmpdir(), 'provenance-race-'));
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+  writeFileSync(join(root, 'kept.txt'), 'kept');
+  const failing = (code: string) => (): UntrackedFile => {
+    throw Object.assign(new Error(code), { code });
+  };
+
+  it('reads entries that are still there', () => {
+    expect(readUntrackedAll(root, [Buffer.from('kept.txt')])).toEqual([file('kept.txt', 'kept')]);
+  });
+
+  it('reports an entry deleted after git listed it as a moving tree', () => {
+    expect(() => readUntrackedAll(root, [Buffer.from('deleted.txt')])).toThrow(
+      'the source tree changed while it was read ("deleted.txt": ENOENT); run again on a still tree',
+    );
+  });
+
+  it.each(['EISDIR', 'ENOTDIR'])('reports %s (an entry that changed type) as a moving tree', (code) => {
+    expect(() => readUntrackedAll(root, [Buffer.from('x')], failing(code))).toThrow(`("x": ${code}); run again`);
+  });
+
+  it('rethrows any other error unchanged', () => {
+    expect(() => readUntrackedAll(root, [Buffer.from('x')], failing('EACCES'))).toThrow(/^EACCES$/);
   });
 });
