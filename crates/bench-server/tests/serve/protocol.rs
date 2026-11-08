@@ -69,24 +69,38 @@ async fn http10_closes_unless_keep_alive() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn unsupported_versions_get_505_and_close() {
+async fn other_major_versions_get_505_and_close() {
+    let server = start(config(false)).await;
+    let mut stream = connect(server.bound.plain).await;
+    let request = "GET /1k HTTP/2.0\r\n\r\n";
+    assert_eq!(
+        until_close(&mut stream, request.as_bytes()).await,
+        VERSION_NOT_SUPPORTED
+    );
+}
+
+/// HTTP/1.0 cannot receive chunked framing (RFC 9112 §6.1), so the chunked cell's body comes close-delimited.
+#[tokio::test(flavor = "multi_thread")]
+async fn http10_gets_the_chunked_cell_close_delimited() {
     let server = start(config(false)).await;
     let chunked = cells()
         .iter()
-        .find(|cell| cell.chunked)
-        .expect("a chunked cell")
-        .path;
-    for request in [
-        format!("GET {chunked} HTTP/1.0\r\n\r\n"),
-        "GET /1k HTTP/2.0\r\n\r\n".to_owned(),
-    ] {
-        let mut stream = connect(server.bound.plain).await;
-        assert_eq!(
-            until_close(&mut stream, request.as_bytes()).await,
-            VERSION_NOT_SUPPORTED,
-            "{request}"
-        );
-    }
+        .find(|cell| cell.path == "/1k-chunked")
+        .expect("the chunked cell");
+    let mut stream = connect(server.bound.plain).await;
+    let response = until_close(
+        &mut stream,
+        format!("GET {} HTTP/1.0\r\n\r\n", chunked.path).as_bytes(),
+    )
+    .await;
+    let text = String::from_utf8_lossy(&response);
+    assert!(text.starts_with("HTTP/1.1 200 OK\r\n"), "{text}");
+    assert!(
+        !text.to_ascii_lowercase().contains("transfer-encoding"),
+        "{text}"
+    );
+    let payload = &cells()[0].response[cells()[0].head_len..];
+    assert!(response.ends_with(payload), "the 1 KiB payload, unframed");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -10,7 +10,7 @@ mod request;
 mod server;
 mod tls;
 
-pub use cells::{Cell, cells};
+pub use cells::{Cell, CloseDelimited, cells};
 pub use manifest::cells_json;
 pub use server::{Bound, ServerConfig, TlsBound, serve};
 pub use tls::benchmark_crypto_provider;

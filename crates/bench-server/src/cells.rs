@@ -31,8 +31,25 @@ pub struct Cell {
     pub head_len: usize,
     /// FNV-1a 64 of the decoded body (no chunked framing, no gzip): the bytes a client's application receives.
     pub body_fnv: u64,
-    /// The body uses chunked framing, which an HTTP/1.0 client cannot receive (RFC 9112 §6.1).
-    pub chunked: bool,
+    /// For a chunked cell, the response HTTP/1.0 clients get instead (they cannot receive chunked framing, RFC 9112
+    /// §6.1): the same body, close-delimited.
+    pub close_delimited: Option<CloseDelimited>,
+}
+
+/// A response whose body ends when the connection closes (no `content-length`, no `transfer-encoding`; RFC 9112 §6.3
+/// rule 8). A passive value type with public fields (design §13.2 rule 1 carve-out).
+#[derive(Debug)]
+pub struct CloseDelimited {
+    pub response: Vec<u8>,
+    /// Bytes of `response` up to and including the blank line: the answer to a `HEAD` request.
+    pub head_len: usize,
+}
+
+/// The bytes to send for a request, and whether the connection must close after them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Served {
+    pub(crate) bytes: &'static [u8],
+    pub(crate) close: bool,
 }
 
 /// Why a request is answered with an error and the connection closed.
@@ -42,7 +59,7 @@ pub(crate) enum Refusal {
     BadRequest,
     /// 431: a request head larger than the read buffer.
     HeadTooLarge,
-    /// 505: an HTTP major version other than 1, or HTTP/1.0 asking for a chunked cell.
+    /// 505: an HTTP major version other than 1.
     VersionNotSupported,
 }
 
@@ -68,21 +85,30 @@ pub(crate) fn prebuild() {
 }
 
 /// The pre-built response for a request target (only its head for `HEAD`); unknown targets get a pre-built 404. An
-/// HTTP/1.0 request for a chunked cell is refused with 505.
-pub(crate) fn response_for(
-    target: &[u8],
-    head_only: bool,
-    http10: bool,
-) -> Result<&'static [u8], Refusal> {
-    match CATALOG
+/// HTTP/1.0 request for a chunked cell gets the close-delimited variant, and the connection closes after it.
+pub(crate) fn response_for(target: &[u8], head_only: bool, http10: bool) -> Served {
+    let keep = |bytes: &'static [u8]| Served {
+        bytes,
+        close: false,
+    };
+    let Some(cell) = CATALOG
         .cells
         .iter()
         .find(|cell| cell.path.as_bytes() == target)
-    {
-        Some(cell) if http10 && cell.chunked => Err(Refusal::VersionNotSupported),
-        Some(cell) if head_only => Ok(&cell.response[..cell.head_len]),
-        Some(cell) => Ok(&cell.response),
-        None => Ok(&CATALOG.not_found),
+    else {
+        return keep(&CATALOG.not_found);
+    };
+    match &cell.close_delimited {
+        Some(variant) if http10 => {
+            let bytes = if head_only {
+                &variant.response[..variant.head_len]
+            } else {
+                &variant.response[..]
+            };
+            Served { bytes, close: true }
+        }
+        _ if head_only => keep(&cell.response[..cell.head_len]),
+        _ => keep(&cell.response),
     }
 }
 
@@ -129,7 +155,12 @@ impl Catalog {
             Cell::new("/1k", HEAD_1K, PAYLOAD, PAYLOAD),
             Cell::new("/1k-h20", HEAD_1K_H20, PAYLOAD, PAYLOAD),
             Cell::new("/1k-gzip", &gzip_head, PAYLOAD_GZIP, PAYLOAD),
-            Cell::chunked("/1k-chunked", &chunked_head, PAYLOAD),
+            Cell::chunked(
+                "/1k-chunked",
+                &chunked_head,
+                &head("200 OK", &[("content-type", JSON), ("date", DATE)]),
+                PAYLOAD,
+            ),
             Cell::new("/1m", &big_head, &big, &big),
         ];
         Self {
@@ -150,14 +181,18 @@ impl Cell {
             response: [head, wire_body].concat(),
             head_len: head.len(),
             body_fnv: fnv1a64(body),
-            chunked: false,
+            close_delimited: None,
         }
     }
 
-    /// A cell whose `body` goes out in chunked framing.
-    fn chunked(path: &'static str, head: &[u8], body: &[u8]) -> Self {
+    /// A cell whose `body` goes out in chunked framing, with a close-delimited variant (`plain_head`) for HTTP/1.0.
+    fn chunked(path: &'static str, head: &[u8], plain_head: &[u8], body: &[u8]) -> Self {
+        let variant = CloseDelimited {
+            response: [plain_head, body].concat(),
+            head_len: plain_head.len(),
+        };
         Self {
-            chunked: true,
+            close_delimited: Some(variant),
             ..Self::new(path, head, &frame_chunked(body), body)
         }
     }
@@ -219,7 +254,7 @@ mod tests {
     use flate2::read::GzDecoder;
 
     use super::{
-        CATALOG, DATE, HEAD_1K, JSON, PAYLOAD, PAYLOAD_GZIP, Refusal, cells, fnv1a64, head,
+        CATALOG, DATE, HEAD_1K, JSON, PAYLOAD, PAYLOAD_GZIP, Refusal, Served, cells, fnv1a64, head,
         prebuild, refusal, response_for,
     };
     use crate::request::find_head_end;
@@ -314,7 +349,7 @@ mod tests {
     #[test]
     fn head_only_responses_end_at_the_blank_line() {
         for cell in cells() {
-            let head = response_for(cell.path.as_bytes(), true, false).expect("answered");
+            let head = response_for(cell.path.as_bytes(), true, false).bytes;
             assert_eq!(head, split(&cell.response).0, "{}", cell.path);
             assert_eq!(cell.head_len, head.len(), "{}", cell.path);
         }
@@ -325,18 +360,56 @@ mod tests {
     }
 
     #[test]
-    fn http10_gets_505_for_chunked_cells_only() {
+    fn http10_gets_chunked_cells_close_delimited() {
         for cell in cells() {
             let answer = response_for(cell.path.as_bytes(), false, true);
-            if cell.chunked {
-                assert_eq!(answer, Err(Refusal::VersionNotSupported), "{}", cell.path);
-            } else {
-                assert_eq!(answer, Ok(cell.response.as_slice()), "{}", cell.path);
-            }
+            let Some(variant) = &cell.close_delimited else {
+                assert_eq!(
+                    answer,
+                    Served {
+                        bytes: &cell.response,
+                        close: false
+                    },
+                    "{}",
+                    cell.path
+                );
+                continue;
+            };
+            assert_eq!(
+                answer,
+                Served {
+                    bytes: &variant.response,
+                    close: true
+                },
+                "{}",
+                cell.path
+            );
+            let head = &variant.response[..variant.head_len];
+            assert!(
+                !String::from_utf8_lossy(head).contains("transfer-encoding"),
+                "{}",
+                cell.path
+            );
+            assert_eq!(
+                &variant.response[variant.head_len..],
+                PAYLOAD,
+                "{}",
+                cell.path
+            );
+            let head_only = response_for(cell.path.as_bytes(), true, true);
+            assert_eq!(
+                head_only,
+                Served {
+                    bytes: head,
+                    close: true
+                },
+                "{}",
+                cell.path
+            );
         }
         assert!(
-            cells().iter().any(|cell| cell.chunked),
-            "the chunked cell is marked"
+            cells().iter().any(|cell| cell.close_delimited.is_some()),
+            "the chunked cell has a variant"
         );
     }
 

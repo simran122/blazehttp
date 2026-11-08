@@ -22,6 +22,9 @@ pub(crate) struct Request<'a> {
     pub(crate) close: bool,
     /// An HTTP/1.0 request (it cannot receive a chunked response, RFC 9112 §6.1).
     pub(crate) http10: bool,
+    /// The head parsed, but the request is refused (an unsupported HTTP major version): answer with this refusal
+    /// once the declared body is read, then close.
+    pub(crate) refusal: Option<Refusal>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +43,15 @@ struct RequestLine<'a> {
     target: &'a [u8],
     head_only: bool,
     http10: bool,
+}
+
+impl RequestLine<'_> {
+    /// Stands in for a request line whose version is refused: no target is looked up.
+    const REFUSED: RequestLine<'static> = RequestLine {
+        target: b"",
+        head_only: false,
+        http10: false,
+    };
 }
 
 /// What the field lines say about framing and persistence.
@@ -68,20 +80,25 @@ pub(crate) fn scan(input: &[u8], resume: usize) -> Scan<'_> {
     let mut lines = input[skipped..end]
         .split(|&b| b == b'\n')
         .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
-    let line = match request_line(lines.next().unwrap_or_default()) {
-        Ok(line) => line,
-        Err(kind) => return Scan::Refused(kind),
-    };
+    let line = request_line(lines.next().unwrap_or_default());
     let Some(fields) = fields(lines) else {
         return Scan::Refused(Refusal::BadRequest);
+    };
+    let (line, refusal) = match line {
+        Ok(line) => (line, None),
+        Err(Refusal::VersionNotSupported) => {
+            (RequestLine::REFUSED, Some(Refusal::VersionNotSupported))
+        }
+        Err(kind) => return Scan::Refused(kind),
     };
     Scan::Complete(Request {
         target: line.target,
         head_only: line.head_only,
         head_len: end + HEAD_END.len(),
         body_len: fields.body_len,
-        close: fields.close || (line.http10 && !fields.keep_alive),
+        close: refusal.is_some() || fields.close || (line.http10 && !fields.keep_alive),
         http10: line.http10,
+        refusal,
     })
 }
 
@@ -211,6 +228,7 @@ mod tests {
             body_len: 0,
             close: false,
             http10: false,
+            refusal: None,
         }
     }
 
@@ -306,11 +324,16 @@ mod tests {
             Scan::Complete(request(b"/1k", http12.len()))
         );
         for version in ["HTTP/2.0", "HTTP/3.0"] {
+            let input = get(version);
+            let Scan::Complete(refused) = scan(&input, 0) else {
+                panic!("{version}: the head parses")
+            };
             assert_eq!(
-                scan(&get(version), 0),
-                Scan::Refused(Refusal::VersionNotSupported),
+                refused.refusal,
+                Some(Refusal::VersionNotSupported),
                 "{version}"
             );
+            assert!(refused.close, "{version}");
         }
     }
 }

@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::{Instant, timeout, timeout_at};
 
-use crate::cells::{Refusal, refusal, response_for};
+use crate::cells::{Refusal, Served, refusal, response_for};
 use crate::request::{Scan, scan};
 
 /// Read buffer per connection, which also bounds a request head (G6).
@@ -216,15 +216,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
 
     fn next_step(&mut self) -> Step {
         match scan(&self.buf[self.start..self.end], self.resume) {
-            Scan::Complete(r) => match response_for(r.target, r.head_only, r.http10) {
-                Ok(response) => Step::Respond(Answer {
-                    response,
+            Scan::Complete(r) => {
+                let served = match r.refusal {
+                    Some(kind) => Served {
+                        bytes: refusal(kind),
+                        close: true,
+                    },
+                    None => response_for(r.target, r.head_only, r.http10),
+                };
+                Step::Respond(Answer {
+                    response: served.bytes,
                     head_len: r.head_len,
                     body_len: r.body_len,
-                    close: r.close,
-                }),
-                Err(kind) => Step::Refuse(kind),
-            },
+                    close: r.close || served.close,
+                })
+            }
             Scan::Partial { resume } => {
                 self.resume = resume;
                 Step::NeedBytes

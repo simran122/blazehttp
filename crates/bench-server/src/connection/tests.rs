@@ -14,9 +14,9 @@ use tokio::time::{Sleep, timeout};
 use super::{BATCH_BYTES, BUFFER_BYTES, LINGER_TIME, Mode, run};
 use crate::cells::{Refusal, refusal, response_for};
 
-/// The response a cell sends (never a refusal in these tests).
+/// The response a cell sends to an HTTP/1.1 request.
 fn wire(target: &[u8], head_only: bool) -> &'static [u8] {
-    response_for(target, head_only, false).expect("an HTTP/1.1 request is answered")
+    response_for(target, head_only, false).bytes
 }
 
 /// Body larger than the read buffer, so skipping it spans several reads.
@@ -420,6 +420,22 @@ fn connection_close_waits_for_the_declared_body() {
         "the whole body is read before closing"
     );
     assert!(script.shut_down);
+}
+
+#[test]
+fn a_refused_version_is_answered_after_its_body() {
+    let body_len = BUFFER_BYTES * 20;
+    let head = format!("POST /1k HTTP/2.0\r\ncontent-length: {body_len}\r\n\r\n");
+    let mut input = head.into_bytes();
+    input.resize(input.len() + body_len, b'x');
+    let mut script = Script::new(input.clone(), Vec::new());
+    serve(&mut script);
+    assert_eq!(script.output, refusal(Refusal::VersionNotSupported));
+    assert_eq!(
+        script.read,
+        input.len(),
+        "the whole body is read before closing"
+    );
 }
 
 #[test]
