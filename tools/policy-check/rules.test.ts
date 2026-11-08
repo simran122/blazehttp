@@ -183,6 +183,15 @@ test('rust attributes are read from code only: comments, strings and char litera
   ])
     expect(v('a.rs', src), src).toContain('rust-allow-attribute');
 });
+test('unclosed rust comments and literals run to the end of the file', () => {
+  for (const src of [
+    '/* open #[allow(x)]',
+    'fn f() { "open #[allow(x)]',
+    "fn f() { '\\",
+    'fn f() { r#"open #[allow(x)]',
+  ])
+    expect(v('a.rs', src), src).not.toContain('rust-allow-attribute');
+});
 test('every crate inherits the workspace lints', () => {
   expect(v('crates/x/Cargo.toml', '[package]\nname = "x"\n\n[lints]\nworkspace = true\n')).toEqual([]);
   for (const toml of ['[package]\nname = "x"\n', '[lints]\nworkspace = false\n', '[lints.clippy]\npedantic = "deny"\n'])
