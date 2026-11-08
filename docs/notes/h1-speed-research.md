@@ -70,8 +70,10 @@ Each is applied by the task that builds it, in the same PR as the code:
 
 ## 1. References (pinned)
 
-Every reference is pinned to its latest published release on 2026-11-08 (resolved with the GitHub and Codeberg APIs:
-`releases/latest`, then `commits/<tag>`). Projects without releases are pinned to the default branch's head commit.
+Every reference is pinned to its latest published release on 2026-11-08: the GitHub Release (`releases/latest`) where
+the project publishes them, otherwise its newest release **tag** (Seastar, Beast/Boost, Go, Zig on Codeberg,
+llparse, ureq-proto), then `commits/<tag>` for the commit. Projects with neither are pinned to the default branch's
+head commit (picohttpparser, h2o, simdcsv).
 Files were fetched as raw files at these commits and read; nothing was built or run.
 
 | Project | Tag | Commit | Link base (append the path and `#L<n>`) |
@@ -100,6 +102,9 @@ Files were fetched as raw files at these commits and read; nothing was built or 
 | simdcsv | none (HEAD, 2021-01-19) | `a9494a85c83525bb42ba368d8f9bcf3acf53a8d1` | https://github.com/geofflangdale/simdcsv/blob/a9494a85c83525bb42ba368d8f9bcf3acf53a8d1/ |
 | Hyperscan | `v5.4.2` | `bc3b191ab56055e8560c7cdc161c289c4d76e3d2` | https://github.com/intel/hyperscan/blob/bc3b191ab56055e8560c7cdc161c289c4d76e3d2/ |
 | Vectorscan | `vectorscan/5.4.13` | `acd7363aadea43da9c5246542d9969db843dd132` | https://github.com/VectorCamp/vectorscan/blob/acd7363aadea43da9c5246542d9969db843dd132/ |
+| cpp-httplib | `v0.65.0` | `7e5d0683ac326788e52ce3c44585c1af24b04532` | https://github.com/yhirose/cpp-httplib/blob/7e5d0683ac326788e52ce3c44585c1af24b04532/ |
+| ureq-proto (ureq's writer) | `0.7.1` (crates.io 0.7.1) | `acb5cc3ee1261709316acd6538be08e82f84f3c6` | https://github.com/algesten/ureq-proto/blob/acb5cc3ee1261709316acd6538be08e82f84f3c6/ |
+| Jetty | `jetty-12.1.14` | `15cecbd757a2f6b0fdc6a8944f4c6d0020b17da0` | https://github.com/jetty/jetty.project/blob/15cecbd757a2f6b0fdc6a8944f4c6d0020b17da0/ |
 
 Line references below (`L<n>`) are to the file named in each paragraph at these commits.
 
@@ -150,15 +155,21 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   vceqq(x, 9)` minus `vceqq(x, 0x7F)` (L139–154). The stop position: two `vgetq_lane_u64` extracts, then a byte loop
   per lane (L157–189), not `shrn`.
 - **Record:** one forward pass per call, restarting at byte 0 on every call (`Bytes::new(buf)`, L660); end of head
-  found inline at the empty line; validation fused with scanning; output 32 B per field into the caller's array;
-  partial input = re-parse from 0 (quadratic under a trickle: 161–429 ms on the 1-byte feeds, parser note §8.6).
-- **Looser than §5.2:** bare LF (L692, L862, L1113, L1208), status 000–999, a missing reason, leading empty lines,
-  and opt-in obs-fold, space before the colon and multiple SPs.
+  found inline at the empty line; validation fused with scanning; output 32 B per field into the caller's array,
+  whose length caps the field count (`TooManyHeaders`); partial input = re-parse from 0 (quadratic under a trickle:
+  48–90 ms on the 1-byte feeds in the quiet re-run, §0.1).
+- **Looser than §5.2:** bare LF (L692, L862, L1113, L1208), status 000–999, leading empty lines, and opt-in
+  obs-fold, space before the colon and multiple SPs. (An empty reason is also allowed by §5.2, so it is not a
+  difference.)
+- **x86 scope:** the value scan stops with `movemask` + `trailing_zeros` on both the SSE2 (`sse42.rs` L83) and AVX2
+  (`avx2.rs` L144) paths; only the SWAR and NEON paths use byte loops for the stop. The runtime `AtomicU8` dispatch
+  exists only when the build enables neither feature at compile time (an x86-64-v1 baseline); with `-C
+  target-cpu=x86-64-v2`/`v3` the path is fixed at compile time.
 - **Why it is fast, ranked:** (1) the value scan validates and finds the CR in one fused step; (2) block width
   bounded by the buffer, not the token; (3) a raw-pointer cursor with no index arithmetic or bounds checks; (4) the
   version as one `u64` compare; (5) one 32-byte store per field and no UTF-8 pass; (6) the SIMD path fixed at compile
-  time on aarch64. **Weak spots:** scalar names on x86, byte-loop stop position, a runtime-dispatch call per value on
-  the default x86_64 build, restart from 0.
+  time on aarch64. **Weak spots:** scalar names on x86, a byte-loop stop position on the SWAR and NEON paths, a
+  runtime-dispatch call per value on an x86-64-v1 build, restart from 0.
 - **To be faster than httparse with equal work.** Its per-field path on a short head is: first-byte table check,
   name scan (NEON LUT on arm64, table on x86), `:` check, OWS loop (usually 1 iteration), one SIMD/SWAR block that
   stops at the CR, CR/LF check, one `rposition` step, one store. **What it skips that we do:** status range,
@@ -193,7 +204,8 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
 - **Partial input:** re-parse from 0; with `last_len` set, `is_complete` first scans only the new bytes (from
   `last_len − 3`) for two line ends in a row (L205–231, L497) — so a complete head costs one extra scan of the
   last bytes plus a full parse. It accepts mixed LF/CRLF terminators.
-- **Looser than §5.2:** bare LF, obs-fold (NULL-name entries), `HTTP/1.2`–`HTTP/1.9`, multiple SPs.
+- **Looser than §5.2:** bare LF, obs-fold (NULL-name entries), `HTTP/1.2`–`HTTP/1.9`, multiple SPs. The field count
+  is capped by the caller's `max_headers` (−1 when exceeded).
 - **Why it is fast, ranked:** (1) fused classify-and-stop; (2) **on arm64 it is pure scalar** — the 8× unrolled
   loop, end check per 8 bytes, branch hints and the cursor in locals passed through return values — and it still
   beats us 1.21–1.78× with fields, so **our gap is loop structure and per-field overhead, not vector width**
@@ -243,11 +255,17 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   loops inside the state (NEON `shrn` + `ctz >> 2`); (3) span bookkeeping costs nothing per byte; (4) framing
   headers classified by a trie and `Content-Length` parsed during the scan; (5) no re-parse. **Costs:** an end check
   per byte, byte-at-a-time names on arm64, indirect callbacks, a double `pcmpestri` at each value end on x86.
-- **To be faster than llhttp with equal work.** llhttp does the same work as we do (strict, resumable, framing
-  facts), so it is the cleanest comparison; the only thing it skips is trailing-OWS trimming. We must: scan names
-  faster than one byte with two branches (a word-at-a-time stop search or a padded buffer); store spans directly
-  instead of four indirect calls; save resume state only at exits; keep one length match per field for the
-  framing names. Expected to be a comfortable win once spans are fused (unverified).
+- **What strict llhttp still skips** (equal-work list; the skew is against us, so the comparison is conservative):
+  leading CR/LF before the status line (`llhttp.c` L7058–7075); the status range (000–999); reason byte checks (NUL,
+  CTLs and DEL accepted); version and protocol checks (`HTTP/0.9`, `HTTP/2.0`, RTSP and ICE start lines parse); all
+  head, field-count and 1xx limits; trailing-OWS trimming of value spans.
+- **To be faster than llhttp with equal work.** It is resumable and computes framing facts in its scan, like us; it
+  beats us today with fields on 20-field and mixed heads (1.09–1.18, §0.1) only because of our second pass — plain we
+  are at 0.49–0.57. We must: store spans directly (P-A) instead of its four indirect calls; scan names faster than its
+  one byte with two branches on arm64; save resume state only at exits; keep one length match per field for the
+  framing names. After P-A the projection is 0.51–0.60 (§0.1). On x64 llhttp scans names with two `pcmpestri` per 16
+  B (blob8 + blob9) and values with `pcmpestri` plus a second one at each value end; our P-B is expected to stay
+  ahead (≈ 0.6–0.8, estimate).
 - **Issues (suspected, by reading):** under wasm `simd128` with `HEADER_VALUE_RELAXED`, the range `[0x0e, 0xff]` is
   emitted with signed `wasm_i8x16_ge/le` (0xff = −1), so no byte matches (L2374–2377) and the
   `header_value_relaxed` → `test_lenient_flags_19/_20` → `header_value_relaxed` path can loop without advancing for
@@ -299,7 +317,7 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
 - **Status line** (`src/http/ngx_http_parse.c` `ngx_http_parse_status_line` L1675–1892): `for (p = b->pos; p <
   b->last; p++) switch (state)` over 13 states, one byte per step behind a jump table (the comment at L105 says so).
   `HTTP/` is five one-compare states; major 1–999 and minor 0–999 (L1758–1811, so `HTTP/2.0` passes); any number of
-  SPs before the code (L1815–1817); after the code SP, `.` (IIS `403.1`), CR or bare LF (L1833–1849); the reason
+  SPs before the code and between its digits (`sw_status` skips SP, L1815–1817); after the code SP, `.` (IIS `403.1`), CR or bare LF (L1833–1849); the reason
   accepts every byte except CR/LF, NUL and CTLs included (L1852–1861). On buffer end it saves `r->state` and returns
   `NGX_AGAIN` (L1875–1878). The proxy copies the reason into the pool and falls back to HTTP/0.9 on a parse error
   (`ngx_http_proxy_module.c` L1823–1865).
@@ -368,8 +386,10 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   and calls `tolower` per byte (`string_utils.hh` L57–62).
 - Strict on names (`tchar+ ':'`), values (no CTLs) and CRLF; loose on start-line separators (Ragel `space` accepts
   `\t\v\f\n\r`, L115), the reason (`(any − cr − lf)*`), obs-fold (joined) and duplicates (merged).
-- **To be faster than Seastar:** it spends one transition per byte plus ≥ 2 allocations and a map insert per field;
-  any span-emitting parser that never allocates wins by a wide margin (estimate, unverified).
+- **To be faster than Seastar:** it spends one transition per byte, two `sstring` constructions per field (heap
+  allocations only for tokens over the 15-byte small-string buffer, so most names and short values do not
+  allocate), a by-value key copy plus a `tolower` pass per hash, and a map insert (which allocates a node); any
+  span-emitting parser that never allocates wins by a wide margin (estimate, unverified).
 
 ### 2.9 Bun `bun-v1.4.4` (client in Rust over picohttpparser; uWS fork for its server)
 
@@ -423,7 +443,8 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
 ### 2.12 Zig `0.17.1` (`std.http`)
 
 - **`HeadParser.feed`** (`lib/std/http/HeadParser.zig` L20–328) only finds the end of the head, resumably (state
-  `start`/`seen_n`/`seen_r`/`seen_rn`/`seen_rnr` carried across calls, L5–12): per 16-byte block it compares with
+  `start`/`seen_n`/`seen_r`/`seen_rn`/`seen_rnr` carried across calls, L5–12): per block of
+  `max(suggestVectorLength(u8), 8)` bytes (L21: 16 on NEON and SSE2, 32 on an AVX2 target) it compares with
   splats of `\r` and `\n`, ORs, and **counts** matches with `@reduce(.Add)` (L119–123). Zero matches: skip. 1–3:
   only the last 1–3 bytes are checked to carry state (L126–168). ≥ 4: an `inline for` over offsets compares each
   4-byte window as a `u32` against `\r\n\r\n` (and its top half against `\n\n`) (L169–183). The integer views
@@ -433,7 +454,9 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   a chain of up to 7 `eqlIgnoreCase` calls. **No name or value validation**; a bare LF inside a value is kept.
   Fields are not returned; `iterateHeaders` re-splits on demand (`HeaderIterator.zig` L13–48), a third pass.
 - **Suspected bug (by reading, bare-LF terminator only):** with ≤ 3 CR/LF bytes in a block only the tail is
-  checked, so a `\n\n` in the middle of a block (e.g. `HTTP/1.0 200\n\nAB…`) is missed. CRLF heads are unaffected.
+  checked, so a `\n\n` in the middle of a block (e.g. `HTTP/1.0 200\n\nAB…`) is missed (the engine review confirmed
+  it by simulation). CRLF heads are unaffected. A second end-detection quirk affects invalid heads only (mixed
+  terminators); it does not change valid-head results.
 - **To be faster than Zig:** it validates nothing and hands no fields out, so the fair row is our plain parser
   (bench README). Our single pass must cost no more than its two; its end scan is 16 B per step, but the split
   walks every byte again.
@@ -450,11 +473,11 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   known-field enum), `do_field` (framing facts: duplicate CL, TE, Connection, Upgrade), then
   `on_field_impl(f, name, value)` — a virtual call in the `basic_parser` subclass the bench uses, a `fields` insert
   with an allocation in `response_parser`. A partial head returns `need_more` and the current line is re-parsed on
-  the next call (parser note §8.6: 25 ms–2.2 s on the 1-byte feeds).
+  the next call (9–878 ms on the 1-byte feeds in the quiet re-run, §0.1).
 - **To be faster than Beast with equal work:** it is a scalar byte loop with an end check per byte plus a name
-  lookup and an indirect call per field; spans emitted in our scan beat it (they already do: 0.86–0.95 for
-  `basic_parser` before Beast delivered fields, 0.33–0.57 against `response_parser`, parser note §8.6). Nothing to
-  copy except the explicit enum for known names, which our length switch already matches.
+  lookup and an indirect call per field; we already beat it with the second pass (with fields 0.72–0.97 against
+  `basic_parser`, 0.30–0.53 against `response_parser`, §0.1), and P-A widens the margin (≈ 0.48). Nothing to copy
+  except the explicit enum for known names, which the shared classifier (§6.1) provides.
 
 ### 2.13 Parsers not yet in the race
 
@@ -468,27 +491,32 @@ The race (`bench/parsers/`) has httparse, picohttpparser, llhttp, Beast (two API
 | **Seastar** 25.05.0 | `http_response_parser p; p.init(); p(temporary_buffer<char>(head)); get_parsed_response()` | heavy (Ragel 6.10, Seastar, fmt, boost; tight under the 2 GiB cap) | no (allocates per field) |
 | **uWebSockets** v20.81.0 | `HttpParser::getHeaders` / `consumePostPadded` — **requests only** | easy (header-only) | plausibly, on requests (fence + SWAR); not applicable to responses |
 
-h2o's client and Bun's client are picohttpparser (already in the race). **No response-head parser plausibly faster
-than httparse was found outside the race.** For completeness the race should add fasthttp (cheap, closes "every Go
-parser") and nginx (the C server reference); Netty and Seastar are optional rows for the leaderboard (G8), not gates.
+h2o's client and Bun's client are picohttpparser (already in the race). **Among the parsers surveyed here, none
+outside the race is plausibly faster than httparse.** Not surveyed yet: the response parsers of the engines that PR
+#20 added to G0 — Jetty `HttpParser` (jetty-12.1.14), the JDK's `java.net.http` `Http1HeaderParser`, and .NET's
+`SocketsHttpHandler` `HttpConnection` header parsing — deferred to the Task 4c research step (§9.1), with fasthttp
+and nginx added as race rows in Task 4c (fasthttp closes "every Go parser", nginx is the C server reference); Netty,
+Seastar and the JVM/.NET parsers are leaderboard rows (G8) unless the survey finds one faster than httparse.
 
 ### 2.14 What every fast parser does that we do not (against `crates/engine-core/src/h1/parser/mod.rs`)
 
 1. **Spans are stored at the CRLF, in the same pass, everywhere** (httparse L1241, pico L357, uWS L445; llhttp by
    callback). Our `value()` holds `line_start`, `colon` and the value end at the CRLF, hands them to `facts.field`
-   and drops them; the bench's `split_fields` rebuilds them in a second pass. This alone explains most of the
-   1.2–2.0× gap (plain / with-fields = 0.50–0.63, parser note §8.6).
+   and drops them; the bench's `split_fields` rebuilds them in a second pass. This explains most of the 1.2–2.0×
+   gap (plain / with-fields = 0.48–0.65 in the quiet re-run).
 2. **One loop body per field line with the cursor in locals.** Our `step()` goes round the phase loop three times per
    field (`LineStart`, `Name`, `Value`), each returning a `Result<Option<ParseStatus>, ErrorCode>` (a large value),
    re-slicing `window.get(self.pos..)` and writing `self.phase`/`pos`/`line_start`/`colon`; about eight
    `checked_add`/`ok_or` branches per field. No reference has these.
-3. **The status prefix** is checked by a per-byte closure; httparse uses one `u64` compare.
+3. **The status prefix** is checked by a per-byte closure; httparse uses one `u64` compare for `HTTP/1.x`.
 4. **No end checks** (uWS fence) and no scalar tails.
-5. **Names are scalar on every platform** — but so are httparse's on x86 and pico's and llhttp's on arm64; only
-   httparse NEON vectorises names.
+5. **Names are scalar on every platform.** Rivals vectorise names on some targets: httparse with NEON on arm64;
+   picohttpparser and llhttp with `pcmpestri` on x86 when SSE4.2 is enabled at compile time (scalar on arm64 and on an
+   x86-64-v1 baseline). httparse's x86 names are a table loop like ours.
 
-Where we are already ahead: an exact first-flag `trailing_zeros` (httparse and uWS use byte loops), resumability
-without re-parse, no OWS loop on the hot path, and strictness.
+Where we are already ahead: an exact first-flag `trailing_zeros` where httparse's SWAR/NEON paths and uWS use byte
+loops (its SSE2/AVX2 paths use `trailing_zeros` too), resumability without re-parse (fastest on every 1-byte feed),
+and strictness. (Our lack of an OWS loop is not a lead under equal work: every rival skips OWS in 0–1 iterations.)
 
 ## 3. Writers and serialisers: why each one is fast
 
