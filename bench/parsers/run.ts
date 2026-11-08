@@ -26,6 +26,9 @@ const HERE = import.meta.dirname;
 const INVOCATION_TIMEOUT_MS = 120_000;
 /** Every container this runner starts: bounded memory (swap included, so the bench host never runs out), no network. */
 const CONTAINER_LIMITS = ['--memory=2g', '--memory-swap=2g', '--network=none'] as const;
+
+/** A harness container's flags: the limits plus one CPU of quota pinned to vCPU `cpuset` (recorded as run). */
+const harnessFlags = (cpuset: string): string[] => ['--cpus=1', `--cpuset-cpus=${cpuset}`, ...CONTAINER_LIMITS];
 /** One image build, downloads included; a slower build is hung (Docker Hub pulls hung for hours on the bench host). */
 const BUILD_TIMEOUT_MS = 20 * 60_000;
 
@@ -190,9 +193,7 @@ function harnessRun(parser: Parser, options: Options, workDir: string, args: rea
     'run',
     '--rm',
     `--name=${name}`,
-    '--cpus=1',
-    `--cpuset-cpus=${options.cpuset}`,
-    ...CONTAINER_LIMITS,
+    ...harnessFlags(options.cpuset),
     '-v',
     `${workDir}:/work:ro`,
     imageOf(parser.harness, options.cc),
@@ -410,7 +411,7 @@ function main(): void {
         kernel: docker.KernelVersion,
         memTotal: docker.MemTotal,
       },
-      container: `--cpus=1 --cpuset-cpus=${opts.cpuset} --memory=2g --memory-swap=2g --network=none`,
+      container: harnessFlags(opts.cpuset).join(' '),
       cc: opts.cc,
       hostLoadAverage: { before: loadBefore, after: loadAfter },
       method: { rounds: opts.rounds, runMs: opts.runMs, warmUpMs: 100, feedRounds: opts.feedRounds },
