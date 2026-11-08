@@ -217,5 +217,20 @@ test('a fuzz crate repeats every workspace lint in its own tables', () => {
     fuzz(
       '[lints.clippy]\ndeprecated = "deny"\npedantic = { level = "deny", priority = -1 }\nallow_attributes = "deny"\n',
     ),
-  ).toEqual(['fuzz crate lacks workspace lint [lints.rust] deprecated = "deny"']);
+  ).toEqual([
+    'fuzz crate lacks workspace lint [lints.rust] deprecated = "deny"',
+    'fuzz crate sets [lints.clippy] deprecated = "deny", which the workspace does not',
+  ]);
+});
+test('a fuzz crate lint table equals the workspace: no extra or loosened lints', () => {
+  const fuzz = (toml: string) => checkFile('crates/x/fuzz/Cargo.toml', toml, CTX).map((x) => x.message);
+  const full =
+    '[lints.rust]\ndeprecated = "deny"\n\n[lints.clippy]\npedantic = {level="deny",priority=-1}\nallow_attributes = "deny"\n';
+  expect(fuzz(full)).toEqual([]);
+  expect(fuzz(`${full}too_many_lines = "allow"\n`)).toEqual([
+    'fuzz crate sets [lints.clippy] too_many_lines = "allow", which the workspace does not',
+  ]);
+  expect(fuzz(full.replace('allow_attributes = "deny"', 'allow_attributes = "warn"'))).toEqual([
+    'fuzz crate sets [lints.clippy] allow_attributes = "warn"; the workspace sets "deny"',
+  ]);
 });

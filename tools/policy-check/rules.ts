@@ -335,9 +335,22 @@ const lintName = (key: string): string => {
   return `[lints.${key.slice(0, dot)}] ${key.slice(dot + 1)}`;
 };
 
+/** How a fuzz crate's lint settings differ from the workspace's: missing, changed or extra keys. */
+const lintDifferences = (workspace: LintSettings, own: LintSettings): string[] => {
+  const keys = new Set([...workspace.keys(), ...own.keys()]);
+  return [...keys].flatMap((key) => {
+    const expected = workspace.get(key);
+    const actual = own.get(key);
+    if (expected === actual) return [];
+    if (actual === undefined) return [`fuzz crate lacks workspace lint ${lintName(key)} = ${String(expected)}`];
+    if (expected === undefined) return [`fuzz crate sets ${lintName(key)} = ${actual}, which the workspace does not`];
+    return [`fuzz crate sets ${lintName(key)} = ${actual}; the workspace sets ${expected}`];
+  });
+};
+
 /**
  * Every crate inherits the workspace lints (`[lints] workspace = true`). A fuzz crate is its own workspace, so its
- * `[lints.<tool>]` tables must repeat every workspace lint setting.
+ * `[lints.<tool>]` tables must equal the workspace settings: none missing, loosened or added.
  */
 const crateLints: Rule = (path, content, ctx) => {
   if (CRATE_MANIFEST.test(path)) {
@@ -345,12 +358,9 @@ const crateLints: Rule = (path, content, ctx) => {
     return inherits ? [] : [violation(path, 1, 'crate-lints', 'crate must set [lints] workspace = true')];
   }
   if (!FUZZ_MANIFEST.test(path)) return [];
-  const own = lintSettings(content, 'lints');
-  return [...ctx.workspaceLints]
-    .filter(([key, value]) => own.get(key) !== value)
-    .map(([key, value]) =>
-      violation(path, 1, 'crate-lints', `fuzz crate lacks workspace lint ${lintName(key)} = ${value}`),
-    );
+  return lintDifferences(ctx.workspaceLints, lintSettings(content, 'lints')).map((message) =>
+    violation(path, 1, 'crate-lints', message),
+  );
 };
 
 const RULES: Record<RuleId, Rule> = {
