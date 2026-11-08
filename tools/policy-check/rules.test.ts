@@ -81,10 +81,13 @@ test('dependency table state follows every header', () => {
   expect(engine('[dependencies]\ntokio = "1"\n[features]\nhyper = []')).toEqual([]);
   expect(engine('[dependencies.x]\nversion = "1"\n[dependencies]\nhyper = "1"')).toEqual(['no-http-engine-dep']);
 });
+/** Rules raised by `src` in a TS file, with the line of each. */
+const ts = (src: string, path = 'a.ts') =>
+  checkFile(path, src, { packageVersion: '0.0.0' }).map((x) => `${x.rule}@${String(x.line)}`);
 test('eslint disables are next-line only, with named rules and a reason', () => {
-  expect(v('a.ts', '// eslint-disable-next-line complexity -- generated table')).toEqual([]);
+  expect(ts('x;\n// eslint-disable-next-line complexity -- generated table\nx;')).toEqual([]);
   expect(
-    v('a.js', '  // eslint-disable-next-line @typescript-eslint/max-params, complexity -- callback shape'),
+    ts('  // eslint-disable-next-line @typescript-eslint/max-params, complexity -- callback shape', 'a.js'),
   ).toEqual([]);
   for (const bad of [
     '/* eslint-disable */',
@@ -94,8 +97,20 @@ test('eslint disables are next-line only, with named rules and a reason', () => 
     '// eslint-disable-line complexity -- same line',
     '// eslint-disable-next-line complexity',
     '// eslint-disable-next-line -- no rule',
+    '// eslint-disable-next-line complexity --',
     '/* eslint-disable-next-line complexity -- block form */',
   ])
-    expect(v('a.ts', `x\n${bad}`), bad).toEqual(['eslint-disable-reason']);
+    expect(ts(`x;\n${bad}`), bad).toEqual(['eslint-directive@2']);
   expect(v('a.toml', '# eslint-disable')).toEqual([]);
+});
+test('eslint directives are found per comment, not per line', () => {
+  expect(ts('x;\n/*\n eslint-disable no-debugger, complexity\n*/\nx;')).toEqual(['eslint-directive@2']);
+  expect(ts('/* eslint no-debugger: off */')).toEqual(['eslint-directive@1']);
+  expect(ts('/* eslint max-lines-per-function: ["error", 1000] */')).toEqual(['eslint-directive@1']);
+  expect(ts('/* global window */\n/* globals a, b */')).toEqual(['eslint-directive@1', 'eslint-directive@2']);
+  expect(ts('/* eslint-disable complexity */ // eslint-disable-next-line no-debugger -- r')).toEqual([
+    'eslint-directive@1',
+  ]);
+  expect(ts('// eslint-disable-line x -- a // eslint-disable-next-line y -- b')).toEqual(['eslint-directive@1']);
+  expect(ts('const re = /\\/\\/ eslint-disable/;\nconst t = `/* eslint-disable */${String(re)}`;')).toEqual([]);
 });

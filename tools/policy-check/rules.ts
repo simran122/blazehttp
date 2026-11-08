@@ -1,3 +1,5 @@
+import ts from 'typescript';
+
 export type RuleId =
   | 'rust-allow-forbidden'
   | 'rust-allow-attribute'
@@ -6,7 +8,7 @@ export type RuleId =
   | 'rust-commented-code'
   | 'no-install-scripts'
   | 'no-http-engine-dep'
-  | 'eslint-disable-reason';
+  | 'eslint-directive';
 
 export type Violation = { file: string; line: number; rule: RuleId; message: string };
 export type Context = { packageVersion: string };
@@ -161,19 +163,63 @@ const noHttpEngineDep: Rule = (path, content) => {
 };
 
 const SCRIPT_FILE = /\.(ts|mts|js|mjs)$/;
-/** Any ESLint disable or enable directive, in a line or block comment. */
-const ESLINT_DIRECTIVE = /(?:\/\/|\/\*)\s*eslint-(?:disable|enable)/;
-/** The one accepted form (design §13.1 rule 9): next line only, named rules, and a reason after `--`. */
-const ESLINT_NEXT_LINE = /\/\/\s*eslint-disable-next-line\s+[@a-z][\w@/-]*(?:\s*,\s*[@a-z][\w@/-]*)*\s+--\s+\S/;
+/** TypeScript script kind by file extension; anything else parses as TypeScript. */
+const SCRIPT_KIND: ReadonlyMap<string, ts.ScriptKind> = new Map([
+  ['tsx', ts.ScriptKind.TSX],
+  ['jsx', ts.ScriptKind.JSX],
+  ['js', ts.ScriptKind.JS],
+  ['mjs', ts.ScriptKind.JS],
+  ['cjs', ts.ScriptKind.JS],
+]);
+/** Any comment ESLint reads as a directive or inline config: `eslint…`, `global`, `globals`, `exported`. */
+const ESLINT_DIRECTIVE = /^(?:eslint|globals?\b|exported\b)/;
+/** The one accepted form (design §13.1 rule 9), as the whole of a line comment: named rules and a reason. */
+const ESLINT_NEXT_LINE = /^eslint-disable-next-line [@a-z][\w@/-]*(?:, ?[@a-z][\w@/-]*)* -- \S.*$/;
+const DIRECTIVE_MESSAGE = 'only a line comment "eslint-disable-next-line <rule> -- <reason>" may steer ESLint';
 
-const eslintDisableReason: Rule = (path, content) =>
-  SCRIPT_FILE.test(path)
-    ? scanLines(path, content, 'eslint-disable-reason', (line) =>
-        ESLINT_DIRECTIVE.test(line) && !ESLINT_NEXT_LINE.test(line)
-          ? 'only eslint-disable-next-line <rule> -- <reason> is allowed (design §13.1 rule 9)'
-          : undefined,
-      )
-    : [];
+/**
+ * Every comment of a script, found from the TypeScript parse tree: the leading and trailing trivia of each node, so
+ * strings, template literals and regexes are never mistaken for comments. JSX text is not trivia and is skipped.
+ */
+const scriptComments = (
+  path: string,
+  content: string,
+): { readonly source: ts.SourceFile; ranges: ts.CommentRange[] } => {
+  const kind = SCRIPT_KIND.get(path.slice(path.lastIndexOf('.') + 1)) ?? ts.ScriptKind.TS;
+  const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, kind);
+  const byStart = new Map<number, ts.CommentRange>();
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) return;
+    const leading = ts.getLeadingCommentRanges(content, node.pos) ?? [];
+    const trailing = ts.getTrailingCommentRanges(content, node.end) ?? [];
+    for (const range of [...leading, ...trailing]) byStart.set(range.pos, range);
+    node.getChildren(source).forEach(visit);
+  };
+  visit(source);
+  return { source, ranges: [...byStart.values()] };
+};
+
+/** A comment ESLint would not read as a directive, or the one accepted `eslint-disable-next-line` form. */
+const isAllowedComment = (content: string, range: ts.CommentRange): boolean => {
+  const line = range.kind === ts.SyntaxKind.SingleLineCommentTrivia;
+  const text = content.slice(range.pos + 2, line ? range.end : range.end - 2).trim();
+  return !ESLINT_DIRECTIVE.test(text) || (line && ESLINT_NEXT_LINE.test(text));
+};
+
+/**
+ * ESLint may be steered only by `// eslint-disable-next-line <rule> -- <reason>`. This runs outside ESLint, so no
+ * directive can switch it off, and checks each comment whole, so multi-line blocks and several comments on a line count.
+ */
+const eslintDirective: Rule = (path, content) => {
+  if (!SCRIPT_FILE.test(path)) return [];
+  const { source, ranges } = scriptComments(path, content);
+  return ranges
+    .filter((range) => !isAllowedComment(content, range))
+    .map((range) => {
+      const line = source.getLineAndCharacterOfPosition(range.pos).line + 1;
+      return violation(path, line, 'eslint-directive', DIRECTIVE_MESSAGE);
+    });
+};
 
 const RULES: Record<RuleId, Rule> = {
   'rust-allow-forbidden': rustAllowForbidden,
@@ -183,7 +229,7 @@ const RULES: Record<RuleId, Rule> = {
   'rust-commented-code': rustCommentedCode,
   'no-install-scripts': noInstallScripts,
   'no-http-engine-dep': noHttpEngineDep,
-  'eslint-disable-reason': eslintDisableReason,
+  'eslint-directive': eslintDirective,
 };
 
 export const checkFile = (path: string, content: string, ctx: Context): Violation[] =>
