@@ -10,7 +10,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-/// Pause after a transient accept error, so a full file table is not polled in a busy loop.
+/// Pause after running out of a resource (descriptors, buffers, memory), so a full table is not polled in a busy
+/// loop. Errors about one queued connection are retried at once.
 const RETRY_PAUSE: Duration = Duration::from_millis(10);
 
 /// A source of accepted TCP connections.
@@ -24,7 +25,7 @@ impl Listen for TcpListener {
     }
 }
 
-/// Accepts forever, running `handle(stream)` as one task per connection. A permit is taken *before* accepting, so at
+/// Accepts until a non-transient accept error, running `handle(stream)` as one task per connection. A permit is taken *before* accepting, so at
 /// the limit new clients wait in the kernel's listen backlog instead of in memory (G6).
 pub(crate) async fn accept_loop<L, H, F>(
     listener: &L,
@@ -55,40 +56,58 @@ where
 }
 
 /// The next connection with `TCP_NODELAY` set (responses must not wait for Nagle). Transient errors are logged once
-/// per kind and retried after [`RETRY_PAUSE`]; connections that died in the accept queue are skipped.
+/// per kind and retried: after [`RETRY_PAUSE`] when a resource ran out, at once for a connection lost in the queue.
+/// Connections that died before `TCP_NODELAY` could be set are skipped.
 async fn next_connection<L: Listen>(listener: &L, logged: &mut ErrorLog) -> io::Result<TcpStream> {
     loop {
         match listener.accept().await {
             Ok(stream) if stream.set_nodelay(true).is_ok() => return Ok(stream),
             Ok(_) => {}
-            Err(e) if is_transient(&e) => {
-                logged.once(&e);
-                tokio::time::sleep(RETRY_PAUSE).await;
-            }
-            Err(e) => return Err(e),
+            Err(e) => match classify(&e) {
+                AcceptFailure::ResourcesExhausted => {
+                    logged.once(&e);
+                    tokio::time::sleep(RETRY_PAUSE).await;
+                }
+                AcceptFailure::ConnectionLost => logged.once(&e),
+                AcceptFailure::Fatal => return Err(e),
+            },
         }
     }
 }
 
-/// Accept errors that say nothing about the listener itself: resource limits and connections lost in the queue, and
-/// on Linux the network errors `accept(2)` passes on from the new socket ("Error handling" in its man page).
-fn is_transient(e: &io::Error) -> bool {
-    matches!(
-        e.kind(),
-        io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::OutOfMemory
-    ) || e
-        .raw_os_error()
-        .is_some_and(|code| TRANSIENT_ERRNO.contains(&code))
+/// What an accept error says, following "Error handling" in `accept(2)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcceptFailure {
+    /// The process or system ran out of descriptors, buffers or memory: retry after a pause.
+    ResourcesExhausted,
+    /// One queued connection failed (aborted, reset, or on Linux a network error passed on from the new socket):
+    /// retry at once.
+    ConnectionLost,
+    /// Anything else says the listener itself is broken.
+    Fatal,
 }
 
+fn classify(e: &io::Error) -> AcceptFailure {
+    let code = e.raw_os_error();
+    if e.kind() == io::ErrorKind::OutOfMemory || code.is_some_and(|c| RESOURCE_ERRNO.contains(&c)) {
+        return AcceptFailure::ResourcesExhausted;
+    }
+    let lost = matches!(
+        e.kind(),
+        io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset
+    ) || code.is_some_and(|c| CONNECTION_ERRNO.contains(&c));
+    if lost {
+        AcceptFailure::ConnectionLost
+    } else {
+        AcceptFailure::Fatal
+    }
+}
+
+#[cfg(unix)]
+const RESOURCE_ERRNO: &[i32] = &[libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM];
+
 #[cfg(target_os = "linux")]
-const TRANSIENT_ERRNO: &[i32] = &[
-    libc::EMFILE,
-    libc::ENFILE,
-    libc::ENOBUFS,
-    libc::ENOMEM,
+const CONNECTION_ERRNO: &[i32] = &[
     libc::ECONNABORTED,
     libc::EPROTO,
     libc::ENETDOWN,
@@ -101,16 +120,13 @@ const TRANSIENT_ERRNO: &[i32] = &[
 ];
 
 #[cfg(all(unix, not(target_os = "linux")))]
-const TRANSIENT_ERRNO: &[i32] = &[
-    libc::EMFILE,
-    libc::ENFILE,
-    libc::ENOBUFS,
-    libc::ENOMEM,
-    libc::ECONNABORTED,
-];
+const CONNECTION_ERRNO: &[i32] = &[libc::ECONNABORTED];
 
 #[cfg(not(unix))]
-const TRANSIENT_ERRNO: &[i32] = &[];
+const RESOURCE_ERRNO: &[i32] = &[];
+
+#[cfg(not(unix))]
+const CONNECTION_ERRNO: &[i32] = &[];
 
 /// Remembers which error kinds were already reported, so a persistent condition prints one line, not one per retry.
 #[derive(Default)]
@@ -137,7 +153,7 @@ mod tests {
 
     use tokio::net::{TcpListener, TcpStream};
 
-    use super::{ErrorLog, Listen, is_transient, next_connection};
+    use super::{AcceptFailure, ErrorLog, Listen, classify, next_connection};
 
     /// Fails with the queued errors first, then accepts for real.
     struct Flaky {
@@ -187,6 +203,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connection_errors_are_retried_without_a_pause() {
+        let errors = (0..300)
+            .map(|_| io::Error::from_raw_os_error(libc::ECONNABORTED))
+            .collect();
+        let listener = flaky(errors).await;
+        let addr = listener.inner.local_addr().expect("addr");
+        let client = tokio::spawn(TcpStream::connect(addr));
+        let started = std::time::Instant::now();
+        within_seconds(next_connection(&listener, &mut ErrorLog::default()))
+            .await
+            .expect("accepted after retries");
+        // A 10 ms pause per error would take 3 s.
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+        client.await.expect("join").expect("client connected");
+    }
+
+    #[tokio::test]
     async fn other_errors_stop_the_loop() {
         let listener = flaky(vec![io::Error::from(io::ErrorKind::InvalidInput)]).await;
         let error = within_seconds(next_connection(&listener, &mut ErrorLog::default()))
@@ -196,18 +233,40 @@ mod tests {
     }
 
     #[test]
-    fn classifies_transient_errors() {
-        for code in [
-            libc::EMFILE,
-            libc::ENFILE,
-            libc::ENOBUFS,
-            libc::ENOMEM,
-            libc::ECONNABORTED,
-            libc::ECONNRESET,
-        ] {
-            assert!(is_transient(&io::Error::from_raw_os_error(code)), "{code}");
+    fn classifies_accept_errors() {
+        let exhausted = [libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM];
+        for code in exhausted {
+            let failure = classify(&io::Error::from_raw_os_error(code));
+            assert_eq!(failure, AcceptFailure::ResourcesExhausted, "{code}");
         }
-        assert!(!is_transient(&io::Error::from_raw_os_error(libc::EBADF)));
-        assert!(!is_transient(&io::Error::from(io::ErrorKind::InvalidInput)));
+        for code in [libc::ECONNABORTED, libc::ECONNRESET] {
+            let failure = classify(&io::Error::from_raw_os_error(code));
+            assert_eq!(failure, AcceptFailure::ConnectionLost, "{code}");
+        }
+        for e in [
+            io::Error::from_raw_os_error(libc::EBADF),
+            io::Error::from(io::ErrorKind::InvalidInput),
+        ] {
+            assert_eq!(classify(&e), AcceptFailure::Fatal, "{e}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn classifies_the_linux_network_errors_as_lost_connections() {
+        let linux = [
+            libc::EPROTO,
+            libc::ENETDOWN,
+            libc::ENOPROTOOPT,
+            libc::EHOSTDOWN,
+            libc::ENONET,
+            libc::EHOSTUNREACH,
+            libc::EOPNOTSUPP,
+            libc::ENETUNREACH,
+        ];
+        for code in linux {
+            let failure = classify(&io::Error::from_raw_os_error(code));
+            assert_eq!(failure, AcceptFailure::ConnectionLost, "{code}");
+        }
     }
 }
