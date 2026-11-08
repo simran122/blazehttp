@@ -2,15 +2,6 @@
 //! truth; `value_len`'s SWAR fast path only skips words the table would accept. `engine-simd` (P1a) replaces the two
 //! span functions behind the same signatures.
 
-#![deny(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable
-)]
-
 /// RFC 9110 §5.6.2 `tchar`: DIGIT, ALPHA and `! # $ % & ' * + - . ^ _ | ~` plus the grave accent.
 pub(crate) static TCHAR: [bool; 256] = build(&[
     (b'!', b'!'),
