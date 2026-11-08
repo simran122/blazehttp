@@ -1,5 +1,5 @@
-//! Connection limits and lifecycle: the connection cap, the head and handshake timeouts, stopping the server, and
-//! the binary's `--cert-out`.
+//! Connection limits and lifecycle: the connection cap, the request and handshake timeouts, configuration checks,
+//! stopping the server (in process and by SIGTERM), the binary's `--cert-out`, and the test helpers' own bounds.
 
 use std::process::Stdio;
 

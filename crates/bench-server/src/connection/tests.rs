@@ -28,10 +28,10 @@ const BIG_BODY: usize = BUFFER_BYTES + 3_000;
 const OUTPUT_CAP: usize = 64 << 20;
 const WRITES_CAP: usize = 100_000;
 
-/// A scripted peer: `input` arrives in reads that never cross a cut (`cuts` sorted); writes are recorded per call, at most
-/// `max_write` bytes each and `cap` bytes in total (then it panics). Reads wait (virtual time) at each `pauses`
-/// offset and stop for good at `stall_reads_at`; writes or the shutdown can be made to never complete, to test the
-/// deadlines.
+/// A scripted peer: `input` arrives in reads that never cross a cut (`cuts` sorted). Writes are recorded per call, at
+/// most `max_write` bytes each, and at most `cap` bytes and [`WRITES_CAP`] calls in total (then it panics). Reads wait
+/// (virtual time) at each `pauses` offset and stop for good at `stall_reads_at`; each write call can wait
+/// `write_delay`, and writes or the shutdown can be made to never complete, to test the deadlines.
 struct Script {
     input: Vec<u8>,
     cuts: Vec<usize>,

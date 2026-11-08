@@ -25,8 +25,9 @@ impl Listen for TcpListener {
     }
 }
 
-/// Accepts until a non-transient accept error, running `handle(stream)` as one task per connection. A permit is taken *before* accepting, so at
-/// the limit new clients wait in the kernel's listen backlog instead of in memory (G6).
+/// Accepts until an accept error classified [`AcceptFailure::Fatal`], running `handle(stream)` as one task per
+/// connection. A permit is taken *before* accepting, so at the limit new clients wait in the kernel's listen backlog
+/// instead of in memory (G6).
 pub(crate) async fn accept_loop<L, H, F>(
     listener: &L,
     limit: &Arc<Semaphore>,

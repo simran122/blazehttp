@@ -90,7 +90,8 @@ struct TlsPort {
 /// # Errors
 ///
 /// `InvalidInput` when `max_connections` is not in `1..=Semaphore::MAX_PERMITS` or `request_timeout` is zero or above
-/// [`MAX_REQUEST_TIMEOUT`] (checked before binding); binding a listener, generating the TLS identity, or an accept error that is not transient.
+/// [`MAX_REQUEST_TIMEOUT`] (checked before binding); binding a listener, generating the TLS identity, or a fatal
+/// accept error.
 pub async fn serve(
     cfg: ServerConfig,
     ready: oneshot::Sender<Bound>,
