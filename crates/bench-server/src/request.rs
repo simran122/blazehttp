@@ -67,7 +67,7 @@ struct Fields {
 ///
 /// HTTP/1.x with a minor version above 1 is treated as HTTP/1.1 (RFC 9110 §2.5); another major version gets 505.
 /// Refused with 400: more than 8 leading empty lines, a request line with an empty method or target or a malformed
-/// version, a field line without a colon, whitespace or CR in a field name or an empty name, obs-fold,
+/// version or a bare CR, a field line without a colon, whitespace or CR in a field name or an empty name, obs-fold,
 /// `transfer-encoding`, and a missing, repeated or non-decimal `content-length` value.
 pub(crate) fn scan(input: &[u8], resume: usize) -> Scan<'_> {
     let Some(skipped) = leading_empty_lines(input) else {
@@ -123,7 +123,8 @@ fn request_line(line: &[u8]) -> Result<RequestLine<'_>, Refusal> {
     else {
         return Err(Refusal::BadRequest);
     };
-    if method.is_empty() || target.is_empty() {
+    // A CR inside the line is a bare CR (the line's own CRLF is already removed): RFC 9112 §2.2 says to refuse it.
+    if method.is_empty() || target.is_empty() || line.contains(&b'\r') {
         return Err(Refusal::BadRequest);
     }
     Ok(RequestLine {
@@ -204,6 +205,7 @@ mod tests {
         b"GET /1k HTTP/1.x\r\n\r\n",
         b"GET /1k HTTP/a.1\r\n\r\n",
         b"GET /1k HTTP/2.x\r\n\r\n",
+        b"GET /1k\r HTTP/1.1\r\n\r\n",
         b"\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\nGET / HTTP/1.1\r\n\r\n",
         b"POST / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n",
         b"POST / HTTP/1.1\r\ncontent-length: +1\r\n\r\n",
