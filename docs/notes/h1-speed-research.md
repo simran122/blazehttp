@@ -1,21 +1,72 @@
-# HTTP/1.1 parser and writer speed: research note (input to Tasks 4c, 5b and P1a)
+# HTTP/1.1 parser and writer speed: research note (input to Tasks 4c, 5b, 5c and P1a)
 
 Design §5.2 (strict rules, unchanged), §6 (learn from proven code, never copy), §7 (speed programme), §13 (code
 structure and patterns), §16 (gates). Builds on `docs/notes/response-parser.md` (§8.4 budget, §8.6 cross-language
-race), `docs/notes/simd-scanning-research.md` (SIMD survey; not repeated here) and, on branch `p0/writer`,
+race), `docs/notes/simd-scanning-research.md` (SIMD survey; referred to, not repeated) and, on branch `p0/writer`,
 `docs/notes/request-writer.md` and `docs/perf/journal.md`. Access date for every link: **2026-11-08**. **Verified** =
-checked against the pinned source, the primary text of a paper, or an official doc page; **unverified** = everything
-else (unverified ideas go only to `docs/perf/ideas.md`). This note is research only: no benchmark was run for it.
+checked against the pinned source, the primary text of a paper, an official doc page, or a run recorded in this note
+with its command, seed and output (the two runs are the compile-only asm check and the executable model in
+`spike/h1-research/`, §4.1 and §5.0); **unverified** = everything else (unverified ideas go only to
+`docs/perf/ideas.md`). No benchmark was run for this note; every speed figure for a candidate is an estimate.
 
-## 0. The problem in numbers
+## 0. Summary and decision
 
-| Component | Gate (owner) | Today (dev, Linux arm64) | Gap |
+### 0.1 The problem in numbers (quiet re-run, parser note §8.6 on branch `p0/parser-bench-rerun`, PR #21)
+
+Dev run of 2026-11-08 at commit `8ff4b87` (`bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl`), Linux arm64,
+generic Armv8-A; median per-round ratio ours / theirs (> 1 = theirs faster) for `1k`, `1k-h20`, `1k` ring64,
+`1k-h20` ring64, mixed 64. Dev numbers (rounds 1–4 loaded), not gate results:
+
+| Rival | ours **with fields** / theirs | ours plain / theirs | Projection after P-A (plain × 1.05, §5.0) |
 |---|---|---|---|
-| `ResponseParser` + per-field spans | faster than every parser with equal work | httparse 1.16–2.02× faster, picohttpparser 1.21–1.78× faster (parser note §8.6) | 1.2–2.0× |
-| `write_request` | faster than hyper's encoder and Go's `Request.Write` with equal work; `post1k` ≤ 2.3× copy floor | `post1k` 2.51–2.58× floor; 1.16–1.22× hyper encode-only (journal 2026-11-08) | ≈ 10% on the floor ratio; ≈ 20% vs hyper encode-only |
+| httparse 1.10.1 | 1.23, 1.74, 1.39, 1.95, 1.78 | 0.80, 0.93, 0.79, 0.94, 0.93 | 0.84, **0.98**, 0.83, **0.99**, **0.98** |
+| picohttpparser `dd573d8` | 1.19, 1.30, 1.42, 1.42, 1.33 | 0.72, 0.68, 0.80, 0.71, 0.68 | 0.76, 0.71, 0.84, 0.75, 0.71 |
+| llhttp 9.4.3 (strict) | 0.81, **1.09**, 0.85, **1.18**, **1.11** | 0.51, 0.55, 0.49, 0.56, 0.57 | 0.54, 0.58, 0.51, 0.59, 0.60 |
+| Beast `basic_parser` | 0.72, 0.81, 0.82, 0.97, 0.90 | 0.46, 0.45, 0.45, 0.46, 0.46 | ≈ 0.48 |
+| Beast `response_parser`, Zig, Go | 0.08–0.53 | 0.06–0.30 | — |
+
+1-byte feeds: we are the fastest of all nine parsers (0.03–0.20 ms; httparse 48–90 ms; Beast 9–878 ms).
+
+| Component | Gate (owner, progress log 2026-11-07) | Today | Gap |
+|---|---|---|---|
+| `ResponseParser` with per-field spans | **CI upper bound of the median per-round ratio ours/theirs < 1.0 against every rival** (httparse, picohttpparser, llhttp, Beast, Zig, Go and any row added), 10 rounds, bootstrap 95%, every workload (1k, 1k-h20, ring64, mixed, trickle), arm64 reference host **and** x64 VM; checked at the end of P1a | loses to httparse (1.23–1.95×), picohttpparser (1.19–1.42×), and llhttp on 20-field and mixed heads (1.09–1.18×) | 1.1–2.0× |
+| `write_request` | the same statistic against every writer of the Task 5c race (§3.13) at equal work (§3.12); `post1k` ≤ 2.3× copy floor (provisional) | `post1k` 2.51–2.58× floor (committed bench, journal 2026-11-08); 1.16–1.22× hyper encode-only | ≈ 10% on the floor ratio |
 
 Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-core`, `unsafe` SIMD only in
 `engine-simd`.
+
+### 0.2 Decision **[author's call]**
+
+- **P-A alone is not a win.** Emitting spans in the scan removes the second pass and wins clearly against
+  picohttpparser and llhttp (projected 0.51–0.84) but is only at parity with httparse on the three 20-field cells
+  (0.98–0.99, inside the noise). It is the necessary first step, not the answer.
+- **Task 4c builds P-A + P-B** (§5.2–§5.3): spans in the scan, one loop body per line on locals, the STOP-set name
+  search with an off-critical-path tchar fold, caller-owned spans. The cycle budget in §5.3 estimates P-B at ≈ 0.6–0.8×
+  httparse on 20-field heads on arm64 and ≈ 0.7–0.9× on x64 (estimate). **Honest position:** a scalar parser may still
+  not beat httparse's NEON name scan and picohttpparser's `pcmpestri` on x64 (SSE4.2 baseline) with a CI upper bound
+  < 1.0 on every cell. Task 4c's acceptance is therefore stated per cell (§5.7); any cell that misses is reported to
+  the owner with data, and **P1a's P-D (bit-stream validator over `engine-simd` bitmaps, §5.5) is the step that
+  closes the gap** (estimated ≈ 0.4–0.6 cycles per byte against httparse's ≈ 1). The final gate is checked at the end
+  of P1a, as the owner set it.
+- **Task 5b builds W-A** (shared known-name classifier, STOP search; §6.2), and W-B (layout hints) only if the P2
+  contract change is accepted. **Task 5c** builds the writer race (§3.13). **P1a** builds `classify_block`, P-D and
+  W-D.
+- Expected x64 position of every candidate: §5.7 and §6.7.
+
+### 0.3 Design changes proposed by this note **[author's call]**
+
+Each is applied by the task that builds it, in the same PR as the code:
+1. `ResponseParser::parse(&mut self, buf, spans: &mut FieldSpans)` — caller-owned spans (§5.1); `ResponseHead` gains
+   `fields: u16`; the bench's `blazehttp+fields` row is retired (our row emits spans itself).
+2. Optional padded read buffer: `parse` receives the received length and a slice with initialised slack (§5.3,
+   measured first).
+3. Parser note §6.3 "body bytes are never examined": P-D loads up to 63 body bytes into registers when a block
+   straddles the head end; they are masked and never interpreted (§5.5). The semantic rule is unchanged.
+4. P2 wire format: optional per-line layout hints next to the delta (W-B, §6.3); interned name ids in
+   `policy/spec.json` (W-C, §6.4).
+5. Design §16: a parser micro-gate row and a writer micro-gate row with the statistic of §0.1 (Task 4c / 5c docs PR).
+6. Plan: Tasks 4c, 5b and 5c are tracked in the controller's progress log; `bench/writer/` is replaced by the Task 5c
+   harness; W-D moves from 5b to P1a.
 
 ## 1. References (pinned)
 
