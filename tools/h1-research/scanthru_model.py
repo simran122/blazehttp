@@ -394,9 +394,9 @@ def gen_delta(rng: random.Random) -> tuple[bytes, int, bool]:
     return bytes(out), lines + rng.choice([0, 0, 0, 1, -1]), mutated
 
 
-def heads_with_fields(count: int) -> list[bytes]:
-    """Field-limit cases: `count` short fields, then the head end and a body line (99/100/101 fields)."""
-    line = b"x-f: v\r\n"
+def heads_with_fields(count: int, line: bytes = b"x-f: v\r\n") -> list[bytes]:
+    """Field-limit cases: `count` fields, then the head end and a body line (99/100/101 fields). With the 16-byte
+    line, the 101st line starts at bit 0 of a block (100 × 16 = 25 × 64)."""
     return [line * count + b"\r\n", line * count + b"\r\nc:d\r\n", line * count]
 
 
@@ -428,8 +428,10 @@ def check_parser_boundaries() -> int:
                 for cut in range(1, len(b)):                   # every single split point
                     assert pd_split(b, [cut]) == r, (pad, tail, cut)
     limits = 0
+    aligned = b"x-f: vvvvvvvvv\r\n"                         # 16 bytes: the 101st line starts a block
+    assert len(aligned) == 16
     for count in (97, 98, 99, 100, 101, 102):                  # R2-2: the 100-field limit, whole and split
-        for b in heads_with_fields(count):
+        for b in heads_with_fields(count) + heads_with_fields(count, aligned):
             r = reference(b)
             assert pd_whole(b) == r, (count, b[-20:], r)
             for cut in range(1, len(b), 7):
@@ -444,7 +446,7 @@ def check_trickle() -> int:
     b = b"x-long: " + b"v" * 4000 + b"\r\n" + b"x-f: v\r\n" * 40 + b"\r\n"
     CLASSIFIED[0] = 0
     assert pd_split(b, list(range(1, len(b)))) == reference(b)
-    assert CLASSIFIED[0] <= 2 * len(b) + 2 * BLOCK, CLASSIFIED[0]
+    assert CLASSIFIED[0] == 0, CLASSIFIED[0]
     return CLASSIFIED[0]
 
 

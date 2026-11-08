@@ -43,7 +43,8 @@ Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-co
 - **Task 4c builds P-A + P-B** (§5.2–§5.3): spans in the scan, one loop body per line on locals, the STOP-set name
   search with an off-critical-path tchar fold, caller-owned spans. The cycle budget in §5.3 derives P-B at ≈ 0.4–0.6×
   httparse on 20-field heads on arm64; we plan with ≈ 0.6–0.8× as the margin for an unprofiled breakdown. On x64 we
-  have **no data**: the estimate is ≈ 0.6–0.9× (§5.3). **Honest position:** a scalar parser may still not beat
+  have **no data**: the estimate is ≈ 0.6–0.9× against httparse and picohttpparser and ≈ 0.4–0.6× against llhttp
+  (§5.3). **Honest position:** a scalar parser may still not beat
   httparse's NEON name scan on arm64, or picohttpparser's `pcmpestri` on x64 if the x64 baseline enables SSE4.2, with
   a CI upper bound < 1.0 on every cell. Task 4c's acceptance is therefore stated per cell (§5.7); any cell that misses is reported to
   the owner with data, and **P1a's P-D (bit-stream validator over `engine-simd` bitmaps, §5.5) is the step that
@@ -831,7 +832,7 @@ our design. Status per source in §9.
 ### 4.1 Parabix bit streams: ScanThru and MatchStar — the carry primitive for HTTP lines
 
 - **Source (verified, primary text):** Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data
-  Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 (dblp `conf/IEEEpact/CameronSSH0HL14`). Text is represented as one
+  Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150, doi:10.1145/2628071.2628079. Text is represented as one
   bit stream per character class ("parallel bit streams"); markers advance through a class with an **addition**,
   whose carries move every marker through its run at once: `MatchStar(M, C) = (((M ∧ C) + C) ⊕ C) ∨ M` (§3), which
   "differs from ScanThru of the Parabix tool chain in that it finds all matches, not just the longest". Carries
@@ -848,9 +849,10 @@ our design. Status per source in §9.
   checks them against scalar references that emit **spans**:
   - `timeout 300 python3 -I tools/h1-research/scanthru_model.py` (seed 9112, one single-process run after the
     resource preflight) printed `parser {'more': 16132, 'ok': 66481, 'err': 17387}`,
-    `parser regressions + boundary sweep + field limits 21`, `trickle bytes classified by P-D 0`,
-    `writer accepted 23730 of 100000; W-B hint checks 23730` (≈ 14 s).
-  - Field limit (review R2-2): heads with 97–102 fields, whole and split, equal the reference (the 101st field is
+    `parser regressions + boundary sweep + field limits 39`, `trickle bytes classified by P-D 0`,
+    `writer accepted 23730 of 100000; W-B hint checks 23730` (≈ 16 s, run 2026-11-09).
+  - Field limit (review R2-2): heads with 97–102 fields (8-byte lines, and 16-byte lines that put the 101st line at
+    bit 0 of a block), whole and split, equal the reference (the 101st field is
     Malformed at its first byte); the model asserts that no span stream ever exceeds the 100 slots.
   - Trickle: a 4 KB line plus 40 fields fed one byte per call; P-D classifies 0 bytes because the scalar parser owns
     every partial line (linear by construction; §5.5).
@@ -1071,8 +1073,9 @@ fn scan_lines(window, st) -> Outcome {           // locals in the loop; written 
 - **x64 (no x64 data; estimate):** httparse's x86 names are a table loop like ours and its values stop with SSE2/AVX2
   `tzcnt`, so P-B's position against it should be no worse than on arm64; picohttpparser on an SSE4.2 baseline spends
   two `pcmpestri` per field (≈ 25+ cycles of latency) against P-B's ≈ 16–26 cycles; llhttp adds a second `pcmpestri`
-  per value end and indirect callbacks. **Single x64 figure: ≈ 0.6–0.9× every rival**, the upper end for
-  picohttpparser with SSE4.2. The decision is made on the §5.7 measurements.
+  per value end and indirect callbacks. **x64 figures: ≈ 0.6–0.9× httparse and picohttpparser** (the upper end for
+  picohttpparser with SSE4.2) **and ≈ 0.4–0.6× llhttp** (it does strictly more per field than picohttpparser). The
+  decision is made on the §5.7 measurements.
 - **Time:** O(head bytes). **Space:** as G (+ nothing). **Branches per byte:** names ≈ 1 per 8 bytes + 1 exit,
   values ≈ 1 per 8 bytes + 1 exit, ≈ 5 per line fixed → ≈ 0.25–0.3 (from ≈ 0.6).
 - **Risks:** (1) security: STOP must contain every byte that can end a line or hide a separator (CR, LF, SP, HTAB,
@@ -1131,9 +1134,11 @@ for each 64-B block (base), received = mask of bytes actually received in this b
     H  = S & CR & received                                  // empty lines (head end candidates)
     limit = if H == 0 { all } else { bits ≤ lowest(H) + 1 } // keeps the LF check at h + 1
     err &= limit & received
-    if err != 0 → re-run this block on the scalar parser (it reports the exact first error)
-    flatten(S & T & limit & received) → name_start[];  flatten(N & limit & received) → colon[]
-    flatten(P & limit & received) → value_from[];      flatten(E & limit & received) → value_end[]
+    if err != 0 → re-run the scalar parser from p, the P-D run's start (it reports the exact first error)
+    if fields + flattened + popcount(S & T & limit & received) > 100 → re-run the scalar parser from p   // before flatten
+    stage[0..16] ← flatten(S & T & limit & received);  stage[16..32] ← flatten(N & limit & received)   // 4 × 16-entry
+    stage[32..48] ← flatten(P & limit & received);     stage[48..64] ← flatten(E & limit & received)   // stack buffers
+    copy `count` entries of each stage into FieldSpans at fields + flattened; flattened += count
     if H != 0: h = lowest(H); if h == 63 { head_end_pending = 1; continue }
                if h + 1 < received length { head ends at base + h + 2; stop } else hand off at line start base + h
     lf_in = LF >> 63; cr_in = CR >> 63; colon_c = N >> 63
@@ -1314,10 +1319,12 @@ for each 64-B block, received = bytes of the delta in this block (padding past t
     (s2, value_c) = P.carrying_add(V, value_c);        E = s2 & !V                 // byte after each value
     err = (N & !COLON) | (N1 & !SP) | (E & !CR) | (A ^ LF) | (S & !T)              // S & !T: empty name, empty line
     if err & received != 0 → reject (Engine(Internal), as today)
-    flatten(S & T & received) → name_start[];  flatten(N & received) → colon[]     // name bounds per line
+    stage[0..16] ← flatten(S & T & received);  stage[16..32] ← flatten(N & received)   // 2 × 16-entry stack buffers
+    classify each line whose name start and colon are both known (a name crossing a block keeps its start in
+    `pending_name_start`, one u16 of state, until its colon arrives); no allocation on the hot path
     lines += popcount(LF & received); carry out lf_in, cr_in, colon_hi = N >> 62
 accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines == header_lines,
-       and for every line k: classify(block[name_start[k] .. colon[k]]) is admitted              // review M2-1
+       and every line's classify(block[name_start .. colon]) was admitted                        // review M2-1
 ```
 - **Per-line classification (review M2-1):** the bit-stream grammar alone would accept `content-length: 5\r\n` or
   `transfer-encoding: chunked\r\n`. W-D therefore flattens the name bounds (as P-D does) and runs the §6.1
@@ -1387,7 +1394,7 @@ Ranked within each component by expected gain per risk. Every effect is an estim
 | Rank | Candidate | Component | Expected effect (estimate) | Risk | Build in |
 |---|---|---|---|---|---|
 | 1 | **P-A spans in the scan** (caller-owned `FieldSpans`) | parser | removes the second pass: vs httparse 0.83–0.99 (parity on 20-field cells), vs pico 0.71–0.84, vs llhttp 0.51–0.60 | none new | **Task 4c**, step 1 |
-| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | arm64: derived ≈ 0.4–0.6×, planned ≈ 0.6–0.8× httparse; x64 (no data): ≈ 0.6–0.9× every rival | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, step 2 (kept only if faster) |
+| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | arm64: derived ≈ 0.4–0.6×, planned ≈ 0.6–0.8× httparse; x64 (no data): ≈ 0.6–0.9× httparse and pico, ≈ 0.4–0.6× llhttp | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, step 2 (kept only if faster) |
 | 3 | P-B padded window (fence) | parser | removes scalar tails; small | API change; fence rules (§5.3) | Task 4c option, measured; else P1a |
 | 4 | **P-D bit-stream validator** (6-bit state, line-start hand-off, scalar error re-run) | parser | ≈ 0.4–0.6× httparse, predictor-independent; closes any cell P-B leaves | `unsafe` only in `engine-simd` kernels; acceptance-only fast path | **P1a** (lead) |
 | 5 | P-C stage-1 + `tzcnt` walk | parser | measured 0.42–0.55× on varied heads (dev) | simpler than P-D | P1a (A/B baseline for P-D) |
@@ -1415,8 +1422,8 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
 
 | # | Source | Link | Status |
 |---|---|---|---|
-| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 | https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf ; https://dblp.org/rec/conf/IEEEpact/CameronSSH0HL14 | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles per byte) |
-| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | https://dblp.org/search?q=Data-parallel+finite-state+machines+Mytkowicz (cited as [11] in #1; PDF read by the papers survey) | verified (primary text: abstract and shuffle mechanism) |
+| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 | https://doi.org/10.1145/2628071.2628079 ; https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles per byte) |
+| 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | https://doi.org/10.1145/2541940.2541988 (cited as [11] in #1; PDF read by the papers survey) | verified (primary text: abstract and shuffle mechanism) |
 | 3 | Langdale, Lemire, *Parsing Gigabytes of JSON per Second*, VLDB Journal 28(6), 2019 | https://arxiv.org/abs/1902.08318 | verified (SIMD note) |
 | 4 | simdjson `v5.1.1`: `include/simdjson/haswell/bitmask.h`, `include/simdjson/arm64/bitmask.h`, `src/generic/stage1/json_structural_indexer.h` | https://github.com/simdjson/simdjson/tree/40a686ab89dc5ee58ec10d0514dd5c99abbc472b | verified (source) |
 | 5 | simdutf `v9.3.3` `src/generic/ascii_validation.h` | https://github.com/simdutf/simdutf/blob/59589cd3df6823cbfdbd253cde3377e7c3e1fe9b/src/generic/ascii_validation.h | verified (source) |

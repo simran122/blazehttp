@@ -76,12 +76,14 @@ pub fn eq_mask_swar(block: &[u8; 64], c: u8) -> u64 {
 /// Form 5: table-driven class (gather loads; expected to stay scalar).
 pub static TCHAR: [bool; 256] = {
     let mut t = [false; 256];
-    let mut b = 0;
-    while b < 256 {
-        let c = b as u8;
-        t[b] = c.is_ascii_alphanumeric()
+    let mut c: u8 = 0;
+    loop {
+        t[c as usize] = c.is_ascii_alphanumeric()
             || matches!(c, b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~');
-        b += 1;
+        if c == u8::MAX {
+            break;
+        }
+        c += 1;
     }
     t
 };
