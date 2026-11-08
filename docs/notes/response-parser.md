@@ -580,7 +580,9 @@ The prototype's raw runs show why the gate is a median ratio: one 3-header run m
 P0: hyper's head cost is httparse **plus** a `HeaderMap` and ≈ 9 allocations per request, which we do not have, and
 at ≈ 5 µs CPU per request (§1-F) the parser is ≈ 1–5% of a request.
 
-**P1a (with `engine-simd`):** target ≤ 0.85× httparse on `1k-h20.http` on arm64 and x64 (criterion gate). **Risk:**
+**P1a (with `engine-simd`):** target ≤ 0.85× httparse on `1k-h20.http` on arm64 and x64 (criterion gate), measured
+**with fields**: our parser must hand the caller every field's name and value, as httparse does, so the comparison is
+equal work (owner gate: faster than every rival parser with equal work; §8.6). **Risk:**
 httparse with NEON and with SWAR only measured within 4% of each other on these heads (values are short), so 16-byte
 vectors may not buy the remaining 8–13%; if the target is missed, the bitmask/name-run ideas in `ideas.md` are next,
 and the result goes to the owner with data rather than being relaxed silently.
@@ -610,6 +612,45 @@ Rules derived: §6.7. Sources: Rust Performance Book, "Bounds Checks" (iterate i
 loops; assert ranges; `get_unchecked` only as a last resort — not available to us under `forbid(unsafe_code)`);
 `slice::as_chunks` (stable since 1.88.0), `slice::split_at_checked` (stable since 1.80.0), `slice::get`, slice
 patterns (Reference, "Slice patterns"); Clippy lints `indexing_slicing` and `chunks_exact_to_as_chunks` (§15).
+
+### 8.6 Cross-language comparison (dev)
+
+`bench/parsers/` (method and fairness rules in its README) parses the shared fixtures with our parser and the
+fastest head parsers in each language, each in its own `--cpus=1 --cpuset-cpus=2` container built for the same generic
+Armv8-A baseline (C/C++ GCC 14.2 `-O3 -DNDEBUG -flto`), after a differential gate on the timed parse path (status,
+head length, length, keep-alive, field bytes; including a chunked / `Connection: close` / trailing-OWS head).
+
+**Like with like.** Our parser returns the field lines as one offset range; every other parser hands its caller each
+field. The headline row is therefore `blazehttp+fields`: `ResponseParser` plus the zero-allocation name/value split a
+consumer needs (the output httparse gives). The plain row is what the engine pays when it needs only the framing facts.
+
+Dev run of 2026-11-07 (`bench/results/2026-11-07-arm64-dev-parsers-gcc14.jsonl`; host load 8–33 from other work, so
+absolute ns are ≈ 3× a quiet run and only per-round ratios are used). Median per-round ratio, > 1 = theirs faster:
+
+| vs | `blazehttp+fields` / theirs (1k, 1k-h20, 1k × 64, 1k-h20 × 64, mixed 64) | plain `blazehttp` / theirs | Work per head (theirs) |
+|---|---|---|---|
+| httparse 1.10.1 | **1.16, 1.64, 1.73, 1.96, 2.02** | 0.70, 0.89, 0.87, 1.08, 0.86 | validates, slices into a caller array, + facts pass |
+| picohttpparser `dd573d8` | **1.21, 1.33, 1.78, 1.34, 1.57** | 0.78, 0.74, 0.80, 0.71, 0.73 | validates, pointers into a caller array, + facts pass |
+| llhttp 9.4.3 (strict) | no field delivery — superseded: 1.27, 1.08, 1.13, 1.13, 1.54 | superseded: 0.56, 0.63, 0.66, 0.65, 0.79 | state machine, facts built in; field callbacks added in fix round 2 |
+| Beast 1.92 `basic_parser` | no field delivery — superseded: 0.86, 0.51, 0.95, 0.93, 0.89 | superseded: 0.47, 0.31, 0.56, 0.46, 0.54 | virtual call per field, facts built in; spans recorded since fix round 2 |
+| Beast 1.92 `response_parser` | 0.33, 0.35, 0.57, 0.42, 0.35 | 0.23, 0.22, 0.30, 0.23, 0.19 | builds `http::fields` (fields + 1 allocations) |
+| Zig 0.17.1 `std.http` | 0.22, 0.19, 0.27, 0.23, 0.21 | 0.15, 0.11, 0.18, 0.13, 0.14 | finds the end, splits lines; little validation; hands no fields out |
+| Go 1.27.3 `net/http` | 0.08, 0.10, 0.07, 0.11, 0.10 | 0.04, 0.06, 0.04, 0.05, 0.07 | `*Response` + header map (10 / 40 allocations) |
+
+**With the per-field output, httparse and picohttpparser are ahead of us on every workload** (ours takes 1.2–2.0×
+their time; by median per-round ratio, unresolved at this noise until the quiet re-run). The llhttp and Beast `basic_parser` ratios (both columns) are superseded: their timed paths delivered no fields in this
+run (fixed in fix round 2; numbers wait for the re-run). We stay ahead of Beast `response_parser`, Zig (which hands
+no fields out, so compare it with the plain row) and Go. The split costs as much as the parse (plain / with-fields =
+0.50–0.63): P0 scans the bytes twice where httparse scans once. Without the split we lead everyone except httparse on
+the 20-field ring (same caveat). 1-byte feeds (a)–(d): we stay linear (0.08–0.66 ms), as do llhttp, picohttpparser (its `last_len`
+scan, then one parse) and Zig (0.07–0.74 ms), and Go (0.30–2.05 ms); httparse re-parses from byte 0 (161–429 ms) and
+Beast re-parses the current partial line (25 ms–2.2 s). GCC 12.2 vs 14.2 for the C/C++ rows: no effect resolvable above
+this run's noise (`…-gcc12.jsonl`).
+
+Conclusion for P1a: emit name/value spans during the single scan (the parser already finds every colon and line end)
+so the consumer's second pass disappears, then SIMD-scan to beat httparse **with fields**: target ≤ 0.85× httparse on
+`1k-h20.http` (§8.4's P1a target; this comparison argues for measuring it with fields). x64 (where picohttpparser enables SSE4.2) is deferred to the
+owner's x64 VM; the numbers above need a re-run in a quiet window.
 
 ## 9. Additional test cases (beyond the brief)
 

@@ -54,3 +54,22 @@ jobs:
       # The fuzz crate is its own workspace (excluded from the main one), so it is checked by manifest path.
       - run: cargo fmt --check --manifest-path crates/engine-core/fuzz/Cargo.toml
       - run: cargo clippy --manifest-path crates/engine-core/fuzz/Cargo.toml --all-targets -- -D warnings
+      # The parser bench's Rust harness is its own workspace too (bench/parsers/README.md).
+      - run: cargo fmt --check --manifest-path bench/parsers/rust/Cargo.toml
+      - run: cargo clippy --locked --manifest-path bench/parsers/rust/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path bench/parsers/rust/Cargo.toml
+      - run: cargo install cargo-shear --version 1.14.0 --locked
+      - run: cargo shear
+        working-directory: bench/parsers/rust
+
+  # Every parser-bench harness builds in its pinned image (C/C++ with -Werror, go vet + gofmt, zig fmt), then one short
+  # run proves the harness protocol and the differential gate end to end. Dev numbers only; never a gate run.
+  bench-parsers:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - run: node bench/parsers/run.ts --rounds 5 --run-ms 1 --feed-rounds 1 --cpuset 1 --out "$RUNNER_TEMP/parsers.jsonl"
