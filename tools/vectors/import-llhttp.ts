@@ -110,7 +110,8 @@ export function nativeError(llhttpName: string): NativeExpect {
 /** Copyright line of an upstream MIT licence file, after checking its text is exactly the MIT licence. */
 export function mitCopyright(licence: string): string {
   const match = /^MIT License\n\n(Copyright [^\n]+)\n\n([\s\S]*?)\n*$/.exec(licence);
-  if (match === null || match[2] !== LICENCE_TEXTS['MIT']) throw new Error('upstream licence is not the MIT licence');
+  if (match === null || match[2] !== LICENCE_TEXTS.get('MIT'))
+    throw new Error('upstream licence is not the MIT licence');
   return String(match[1]);
 }
 

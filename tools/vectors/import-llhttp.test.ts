@@ -536,7 +536,7 @@ describe('parseOverrides', () => {
 
 describe('mitCopyright', () => {
   it('returns the copyright line of an exact MIT licence', () => {
-    const mit = `MIT License\n\nCopyright © 2018 Someone\n\n${String(LICENCE_TEXTS['MIT'])}\n`;
+    const mit = `MIT License\n\nCopyright © 2018 Someone\n\n${String(LICENCE_TEXTS.get('MIT'))}\n`;
     expect(mitCopyright(mit)).toBe('Copyright © 2018 Someone');
     expect(() => mitCopyright(mit.replace('Permission', 'No permission'))).toThrow(/not the MIT licence/);
     expect(() => mitCopyright('Apache License')).toThrow(/not the MIT licence/);
