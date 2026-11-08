@@ -46,7 +46,8 @@ secondary source, not checked.
   - The thread count is a binary flag (`--threads`, it sizes the runtime `main` builds), not a `ServerConfig` field.
     The binary spawns `serve` onto those workers, so the main thread only waits.
   - `serve` should run on a runtime of its own: a client sharing its workers would be charged the server's work.
-  - `serve` refuses a `max_connections` outside `1..=Semaphore::MAX_PERMITS` with `InvalidInput` before binding;
+  - `serve` refuses a `max_connections` outside `1..=Semaphore::MAX_PERMITS` or a zero `request_timeout` with
+    `InvalidInput` before binding;
     `--cert-out` without `--tls` is a usage error.
   - The binary listens on loopback by default (`127.0.0.1:8080`); the harness passes `0.0.0.0:…` explicitly.
   - It prints `ready plain=<addr> [tls=<addr>]` when it accepts connections.

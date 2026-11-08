@@ -86,14 +86,14 @@ struct TlsPort {
 ///
 /// # Errors
 ///
-/// `InvalidInput` when `max_connections` is not in `1..=Semaphore::MAX_PERMITS` (checked before binding); binding a
-/// listener, generating the TLS identity, or an accept error that is not transient.
+/// `InvalidInput` when `max_connections` is not in `1..=Semaphore::MAX_PERMITS` or `request_timeout` is zero (checked
+/// before binding); binding a listener, generating the TLS identity, or an accept error that is not transient.
 pub async fn serve(
     cfg: ServerConfig,
     ready: oneshot::Sender<Bound>,
     stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
-    check_connection_limit(cfg.max_connections)?;
+    cfg.check()?;
     let plain = TcpListener::bind(cfg.plain).await?;
     let tls = match cfg.tls {
         Some(addr) => Some(bind_tls(addr).await?),
@@ -121,17 +121,6 @@ pub async fn serve(
     result
 }
 
-fn check_connection_limit(max_connections: usize) -> io::Result<()> {
-    if (1..=Semaphore::MAX_PERMITS).contains(&max_connections) {
-        return Ok(());
-    }
-    let message = format!(
-        "max_connections must be 1..={}, got {max_connections}",
-        Semaphore::MAX_PERMITS
-    );
-    Err(io::Error::new(io::ErrorKind::InvalidInput, message))
-}
-
 async fn bind_tls(addr: SocketAddr) -> io::Result<TlsPort> {
     let listener = TcpListener::bind(addr).await?;
     let (acceptor, certificate) = tls::identity()?;
@@ -153,6 +142,23 @@ impl TlsPort {
 }
 
 impl ServerConfig {
+    /// The limits `serve` relies on: at least one connection and at most what a semaphore holds, and a non-zero
+    /// request timeout (zero would time out every request and write).
+    fn check(&self) -> io::Result<()> {
+        let invalid = |message: String| Err(io::Error::new(io::ErrorKind::InvalidInput, message));
+        if !(1..=Semaphore::MAX_PERMITS).contains(&self.max_connections) {
+            return invalid(format!(
+                "max_connections must be 1..={}, got {}",
+                Semaphore::MAX_PERMITS,
+                self.max_connections
+            ));
+        }
+        if self.request_timeout.is_zero() {
+            return invalid("request_timeout must be above zero".to_owned());
+        }
+        Ok(())
+    }
+
     fn mode(&self) -> Mode {
         if self.stall {
             Mode::Stall

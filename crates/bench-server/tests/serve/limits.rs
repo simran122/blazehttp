@@ -170,23 +170,29 @@ async fn test_reader_fails_fast_past_its_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn invalid_connection_limits_are_refused_before_binding() {
-    for max_connections in [0, tokio::sync::Semaphore::MAX_PERMITS + 1] {
-        let (ready, _bound) = tokio::sync::oneshot::channel();
-        let cfg = ServerConfig {
-            max_connections,
+async fn invalid_limits_are_refused_before_binding() {
+    let invalid = [
+        ServerConfig {
+            max_connections: 0,
             ..config(false)
-        };
+        },
+        ServerConfig {
+            max_connections: tokio::sync::Semaphore::MAX_PERMITS + 1,
+            ..config(false)
+        },
+        ServerConfig {
+            request_timeout: std::time::Duration::ZERO,
+            ..config(false)
+        },
+    ];
+    for cfg in invalid {
+        let (ready, _bound) = tokio::sync::oneshot::channel();
         let served = timeout(
             CLOSE_WITHIN,
             bench_server::serve(cfg, ready, std::future::pending()),
         );
         let error = served.await.expect("refused at once").expect_err("refused");
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::InvalidInput,
-            "{max_connections}"
-        );
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{cfg:?}");
     }
 }
 
