@@ -1,0 +1,7 @@
+{"kind": "round-load", "run": "gcc14", "round": 1, "startUnix": 1794152713, "endUnix": 1794152741, "load1Max": 8.62, "load1Mean": 8.07, "noisy": true}
+{"kind": "round-load", "run": "gcc14", "round": 2, "startUnix": 1794152741, "endUnix": 1794152769, "load1Max": 8.14, "load1Mean": 7.57, "noisy": true}
+{"kind": "round-load", "run": "gcc14", "round": 3, "startUnix": 1794152769, "endUnix": 1794152796, "load1Max": 6.9, "load1Mean": 6.4, "noisy": true}
+{"kind": "round-load", "run": "gcc14", "round": 4, "startUnix": 1794152796, "endUnix": 1794152824, "load1Max": 6.9, "load1Mean": 6.32, "noisy": true}
+{"kind": "round-load", "run": "gcc14", "round": 5, "startUnix": 1794152824, "endUnix": 1794152852, "load1Max": 5.3, "load1Mean": 5.18, "noisy": false}
+{"kind": "round-load", "run": "gcc14", "round": 6, "startUnix": 1794152852, "endUnix": 1794152881, "load1Max": 4.99, "load1Mean": 4.75, "noisy": false}
+{"kind": "round-load", "run": "gcc14", "round": 7, "startUnix": 1794152881, "endUnix": 1794152909, "load1Max": 5.58, "load1Mean": 5.24, "noisy": false}
