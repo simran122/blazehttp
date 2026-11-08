@@ -24,6 +24,8 @@ const ROOT = resolve(import.meta.dirname, '../..');
 const HERE = import.meta.dirname;
 /** A harness invocation runs ≤ 0.5 s of timing (or a few seconds of quadratic feeding); anything longer is hung. */
 const INVOCATION_TIMEOUT_MS = 120_000;
+/** Every container this runner starts: bounded memory (swap included, so the bench host never runs out), no network. */
+const CONTAINER_LIMITS = ['--memory=2g', '--memory-swap=2g', '--network=none'] as const;
 /** One image build, downloads included; a slower build is hung (Docker Hub pulls hung for hours on the bench host). */
 const BUILD_TIMEOUT_MS = 20 * 60_000;
 
@@ -193,10 +195,7 @@ function harnessRun(parser: Parser, options: Options, workDir: string, args: rea
     `--name=${name}`,
     '--cpus=1',
     `--cpuset-cpus=${options.cpuset}`,
-    // Bounded memory, swap included: a harness never needs more, and the bench host must never run out.
-    '--memory=2g',
-    '--memory-swap=2g',
-    '--network=none',
+    ...CONTAINER_LIMITS,
     '-v',
     `${workDir}:/work:ro`,
     imageOf(parser.harness, options.cc),
@@ -277,7 +276,15 @@ function versions(options: Options): Record<string, string> {
   return Object.fromEntries(
     harnesses.map((h) => [
       h.dir,
-      run('docker', ['run', '--rm', '--entrypoint', 'cat', imageOf(h, options.cc), '/versions.txt']).trim(),
+      run('docker', [
+        'run',
+        '--rm',
+        ...CONTAINER_LIMITS,
+        '--entrypoint',
+        'cat',
+        imageOf(h, options.cc),
+        '/versions.txt',
+      ]).trim(),
     ]),
   );
 }
