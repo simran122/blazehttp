@@ -373,8 +373,9 @@ function main(): void {
   if (changed !== undefined) throw new Error(changed);
   const builtImages = images(opts);
   const stale = staleImages(builtImages, revision(source));
-  if (stale.length > 0)
+  if (stale.length > 0) {
     throw new Error(`images do not match the source tree; rebuild (drop --no-build):\n${stale.join('\n')}`);
+  }
 
   const workDir = mkdtempSync(join(tmpdir(), 'blazehttp-parsers-'));
   try {
