@@ -32,10 +32,10 @@ const NETWORK_TIMEOUT_MS = 30_000;
 const MALFORMED = 'PROTOCOL/malformed-response';
 const SMUGGLING = 'PROTOCOL/smuggling-risk';
 /** llhttp errors with a more specific engine error than `PROTOCOL/malformed-response`. */
-const ERROR_BY_LLHTTP: Readonly<Record<string, string>> = {
-  HPE_UNEXPECTED_CONTENT_LENGTH: SMUGGLING,
-  HPE_INVALID_TRANSFER_ENCODING: SMUGGLING,
-};
+const ERROR_BY_LLHTTP: ReadonlyMap<string, string> = new Map([
+  ['HPE_UNEXPECTED_CONTENT_LENGTH', SMUGGLING],
+  ['HPE_INVALID_TRANSFER_ENCODING', SMUGGLING],
+]);
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
 const CITED_RULE = /^§\d+(?:\.\d+)* \S/;
 
@@ -104,7 +104,7 @@ type Header = [string, string];
 
 /** Engine error for an llhttp error (`HPE_*` name). */
 export function nativeError(llhttpName: string): NativeExpect {
-  return { error: ERROR_BY_LLHTTP[llhttpName] ?? MALFORMED };
+  return { error: ERROR_BY_LLHTTP.get(llhttpName) ?? MALFORMED };
 }
 
 /** Copyright line of an upstream MIT licence file, after checking its text is exactly the MIT licence. */

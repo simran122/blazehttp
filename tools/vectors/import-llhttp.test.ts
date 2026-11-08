@@ -337,6 +337,7 @@ describe('importLlhttp', () => {
 
   it('maps llhttp errors to native expectations', () => {
     expect(nativeError('HPE_INVALID_CONSTANT')).toEqual(MALFORMED);
+    for (const name of ['constructor', 'toString', '__proto__']) expect(nativeError(name), name).toEqual(MALFORMED);
     expect(nativeError('HPE_UNEXPECTED_CONTENT_LENGTH')).toEqual({ error: 'PROTOCOL/smuggling-risk' });
     expect(nativeError('HPE_INVALID_TRANSFER_ENCODING')).toEqual({ error: 'PROTOCOL/smuggling-risk' });
     const [result] = run(FIXTURE, withRtsp);
