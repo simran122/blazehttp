@@ -22,6 +22,8 @@ const ROOT = resolve(import.meta.dirname, '../..');
 const HERE = import.meta.dirname;
 /** A harness invocation runs ≤ 0.5 s of timing (or a few seconds of quadratic feeding); anything longer is hung. */
 const INVOCATION_TIMEOUT_MS = 120_000;
+/** One image build, downloads included; a slower build is hung (Docker Hub pulls hung for hours on the bench host). */
+const BUILD_TIMEOUT_MS = 20 * 60_000;
 
 interface Harness {
   /** Directory under bench/parsers holding the Dockerfile. */
@@ -166,9 +168,10 @@ function build(h: Harness, cc: string): void {
   spawnBuild(['build', '-q', ...args, '-t', imageOf(h, cc), '-f', dockerfile, join(ROOT, h.context)]);
 }
 
-/** Image builds download toolchains, so they get no invocation timeout. */
+/** Image builds download toolchains (tens of MB each), so they get a longer timeout than a harness invocation. */
 function spawnBuild(args: readonly string[]): void {
-  const result = spawnSync('docker', args, { cwd: ROOT, encoding: 'utf8' });
+  const result = spawnSync('docker', args, { cwd: ROOT, encoding: 'utf8', timeout: BUILD_TIMEOUT_MS });
+  if (result.error !== undefined) throw new Error(`docker ${args.join(' ')}: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`docker ${args.join(' ')} failed:\n${result.stderr}`);
 }
 
