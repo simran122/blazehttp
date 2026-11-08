@@ -44,19 +44,21 @@ export interface ResultWorkload {
 
 export const sampleKey = (parser: string, workload: string): string => `${parser}/${workload}`;
 
-/**
- * One result per parser × workload from the per-round samples (`sampleKey` → ns per head, one per round), with
- * per-round ratios against `ours` and `oursWithFields`.
- */
+/** What a run measured: per-round ns per head (`sampleKey` → one value per round) and allocations per head. */
+export interface Measured {
+  readonly samples: ReadonlyMap<string, readonly number[]>;
+  readonly allocs: (parser: string, workload: string) => number;
+}
+
+/** One result per parser × workload from what was measured, with per-round ratios against `ours` and `oursWithFields`. */
 export function timedResults(
   parsers: readonly ResultParser[],
   workloads: readonly ResultWorkload[],
-  samples: ReadonlyMap<string, readonly number[]>,
-  allocs: (parser: string, workload: string) => number,
+  measured: Measured,
   reference: { readonly ours: string; readonly oursWithFields: string },
 ): TimedResult[] {
   const series = (parser: string, workload: string): readonly number[] => {
-    const values = samples.get(sampleKey(parser, workload));
+    const values = measured.samples.get(sampleKey(parser, workload));
     if (values === undefined) throw new Error(`no samples for ${sampleKey(parser, workload)}`);
     return values;
   };
@@ -74,7 +76,7 @@ export function timedResults(
         nsPerHead: spread(ns),
         fieldsOverTheirs: spread(ratios(series(reference.oursWithFields, w.name), ns)),
         oursOverTheirs: spread(ratios(series(reference.ours, w.name), ns)),
-        allocsPerHead: allocs(parser.id, w.name),
+        allocsPerHead: measured.allocs(parser.id, w.name),
         work: parser.work,
       };
     }),

@@ -89,14 +89,16 @@ describe('parseTime and parseFeed', () => {
   });
 });
 
-describe('differences (the differential gate)', () => {
-  const reference = [
-    head([
-      ['content-type', 'a'],
-      ['x-b', '1'],
-      ['x-b', '2'],
-    ]),
-  ];
+const REFERENCE = [
+  head([
+    ['content-type', 'a'],
+    ['x-b', '1'],
+    ['x-b', '2'],
+  ]),
+];
+
+describe('differences (the differential gate): field views', () => {
+  const reference = REFERENCE;
 
   it('accepts identical heads', () => {
     expect(differences(reference, reference, ORDERED)).toEqual([]);
@@ -137,6 +139,10 @@ describe('differences (the differential gate)', () => {
     expect(differences(withConsumed, reference, { orderPreserved: false, consumed: ['connection'] })).toEqual([]);
     expect(differences(withConsumed, reference, MAP)).toEqual(['head 0: 3 fields, expected 4']);
   });
+});
+
+describe('differences (the differential gate): facts and counts', () => {
+  const reference = REFERENCE;
 
   it('reports fact, count and length mismatches', () => {
     const same = reference[0]?.fields.map((f): [string, string] => [f.name, f.value]) ?? [];

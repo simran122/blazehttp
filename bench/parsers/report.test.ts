@@ -17,6 +17,7 @@ describe('stats', () => {
 });
 
 describe('timedResults', () => {
+  const REFERENCE = { ours: 'ours', oursWithFields: 'ours+f' };
   const parsers = [
     { id: 'ours', language: 'Rust', work: 'a' },
     { id: 'ours+f', language: 'Rust', work: 'b' },
@@ -30,7 +31,7 @@ describe('timedResults', () => {
   ]);
 
   it('builds one record per parser and workload with both ratio series', () => {
-    const results = timedResults(parsers, workloads, samples, () => 0, { ours: 'ours', oursWithFields: 'ours+f' });
+    const results = timedResults(parsers, workloads, { samples, allocs: () => 0 }, REFERENCE);
     expect(results).toHaveLength(3);
     expect(results[2]).toEqual({
       kind: 'timed',
@@ -51,9 +52,9 @@ describe('timedResults', () => {
   });
 
   it('refuses missing samples', () => {
-    expect(() =>
-      timedResults(parsers, workloads, new Map(), () => 0, { ours: 'ours', oursWithFields: 'ours+f' }),
-    ).toThrow('no samples for ours/w');
+    expect(() => timedResults(parsers, workloads, { samples: new Map(), allocs: () => 0 }, REFERENCE)).toThrow(
+      'no samples for ours/w',
+    );
   });
 });
 

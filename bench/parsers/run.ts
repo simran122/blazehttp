@@ -358,16 +358,42 @@ function options(): Options {
   };
 }
 
-function main(): void {
-  const opts = options();
-  const date = new Date().toISOString().slice(0, 10);
-  const docker = JSON.parse(run('docker', ['info', '--format', '{{json .}}'])) as Record<string, unknown>;
-  const arch = String(docker.Architecture);
-  const out =
-    opts.out ?? join(ROOT, 'bench/results', `${date}-${arch === 'aarch64' ? 'arm64' : arch}-dev-parsers.jsonl`);
-  if (!opts.gateOnly && existsSync(out)) throw new Error(`${out} exists; pass --out to write this run elsewhere`);
+interface Host {
+  readonly date: string;
+  readonly arch: string;
+  readonly docker: Record<string, unknown>;
+}
 
-  // Benchmark host rule: never share the CPUs with containers this run did not start (and never stop them).
+function host(): Host {
+  const docker = JSON.parse(run('docker', ['info', '--format', '{{json .}}'])) as Record<string, unknown>;
+  return { date: new Date().toISOString().slice(0, 10), arch: String(docker.Architecture), docker };
+}
+
+/** Where the results go; an existing file is never overwritten. */
+function resultsPath(opts: Options, h: Host): string {
+  const arch = h.arch === 'aarch64' ? 'arm64' : h.arch;
+  const out = opts.out ?? join(ROOT, 'bench/results', `${h.date}-${arch}-dev-parsers.jsonl`);
+  if (!opts.gateOnly && existsSync(out)) throw new Error(`${out} exists; pass --out to write this run elsewhere`);
+  return out;
+}
+
+interface Prepared {
+  readonly source: TreeState;
+  readonly images: ReturnType<typeof images>;
+}
+
+/** One run's settings: the options, the host and the results file. */
+interface RunContext {
+  readonly opts: Options;
+  readonly host: Host;
+  readonly out: string;
+}
+
+/**
+ * Refuses to share the host with containers this run did not start (never stopping them), captures the source tree,
+ * builds the images (unless `--no-build`), and checks that the tree held still and every image was built from it.
+ */
+function prepareImages(opts: Options): Prepared {
   const running = run('docker', ['ps', '--format', '{{.Names}} {{.Image}}']).trim();
   if (running !== '') throw new Error(`containers this run did not start are running; stop them first:\n${running}`);
   const source = tree();
@@ -375,57 +401,81 @@ function main(): void {
   // Taken again after the builds (right away with --no-build): a tree that moved meanwhile invalidates the images.
   const changed = sourceChange(source, tree());
   if (changed !== undefined) throw new Error(changed);
-  const builtImages = images(opts);
-  const stale = staleImages(builtImages, revision(source));
+  const built = images(opts);
+  const stale = staleImages(built, revision(source));
   if (stale.length > 0) {
     throw new Error(`images do not match the source tree; rebuild (drop --no-build):\n${stale.join('\n')}`);
   }
+  return { source, images: built };
+}
 
+/** The results file's first line: host, container flags, compiler, load, method, versions and provenance. */
+function metaOf(
+  { opts, host: h }: RunContext,
+  prepared: Prepared,
+  load: { before: number[]; after: number[] },
+): Record<string, unknown> {
+  return {
+    kind: 'meta',
+    date: h.date,
+    label: 'dev (not a gate run)',
+    ...prepared.source,
+    images: prepared.images,
+    docker: {
+      serverVersion: h.docker.ServerVersion,
+      architecture: h.arch,
+      cpus: h.docker.NCPU,
+      kernel: h.docker.KernelVersion,
+      memTotal: h.docker.MemTotal,
+    },
+    container: harnessFlags(opts.cpuset).join(' '),
+    cc: opts.cc,
+    hostLoadAverage: load,
+    method: { rounds: opts.rounds, runMs: opts.runMs, warmUpMs: 100, feedRounds: opts.feedRounds },
+    versions: versions(opts),
+  };
+}
+
+/** Gate, then (unless `--gate-only`) time, feed, and write the results and tables. */
+function measure(ctx: RunContext, prepared: Prepared, workDir: string): void {
+  const { opts, out } = ctx;
+  const all = workloads(join(ROOT, 'tests/fixtures/h1-heads'));
+  for (const w of all) writeFileSync(join(workDir, `${w.name}.http`), Buffer.concat(w.heads));
+  const before = loadavg();
+  const checks = gate(opts, workDir, all);
+  if (opts.gateOnly) return;
+  const timedWorkloads = all.filter((w) => w.kind === 'timed');
+  const samples = timeAll(opts, workDir, timedWorkloads);
+  const feeds = feedAll(
+    opts,
+    workDir,
+    all.filter((w) => w.kind === 'feed'),
+  );
+  const load = { before, after: loadavg() };
+  const allocs = (parser: string, workload: string): number =>
+    checks.get(parser)?.get(workload)?.allocsPerHead ?? Number.NaN;
+  const timed = timedResults(
+    opts.parsers,
+    timedWorkloads,
+    { samples, allocs },
+    { ours: OURS, oursWithFields: OURS_WITH_FIELDS },
+  );
+  mkdirSync(dirname(out), { recursive: true });
+  const lines = [metaOf(ctx, prepared, load), ...timed, ...feeds].map((r) => JSON.stringify(r));
+  // `wx`: never overwrite an earlier run's results.
+  writeFileSync(out, lines.join('\n') + '\n', { flag: 'wx' });
+  process.stdout.write(`${timedTable(timed)}\n\n${feedTable(feeds)}\n\nwrote ${out}\n`);
+}
+
+function main(): void {
+  const opts = options();
+  const h = host();
+  // Resolved first, so an existing results file fails the run before any build.
+  const ctx: RunContext = { opts, host: h, out: resultsPath(opts, h) };
+  const prepared = prepareImages(opts);
   const workDir = mkdtempSync(join(tmpdir(), 'blazehttp-parsers-'));
   try {
-    const all = workloads(join(ROOT, 'tests/fixtures/h1-heads'));
-    for (const w of all) writeFileSync(join(workDir, `${w.name}.http`), Buffer.concat(w.heads));
-    const loadBefore = loadavg();
-    const checks = gate(opts, workDir, all);
-    if (opts.gateOnly) return;
-    const timedWorkloads = all.filter((w) => w.kind === 'timed');
-    const samples = timeAll(opts, workDir, timedWorkloads);
-    const feeds = feedAll(
-      opts,
-      workDir,
-      all.filter((w) => w.kind === 'feed'),
-    );
-    const loadAfter = loadavg();
-    const timed = timedResults(
-      opts.parsers,
-      timedWorkloads,
-      samples,
-      (parser, workload) => checks.get(parser)?.get(workload)?.allocsPerHead ?? Number.NaN,
-      { ours: OURS, oursWithFields: OURS_WITH_FIELDS },
-    );
-    const meta = {
-      kind: 'meta',
-      date,
-      label: 'dev (not a gate run)',
-      ...source,
-      images: builtImages,
-      docker: {
-        serverVersion: docker.ServerVersion,
-        architecture: arch,
-        cpus: docker.NCPU,
-        kernel: docker.KernelVersion,
-        memTotal: docker.MemTotal,
-      },
-      container: harnessFlags(opts.cpuset).join(' '),
-      cc: opts.cc,
-      hostLoadAverage: { before: loadBefore, after: loadAfter },
-      method: { rounds: opts.rounds, runMs: opts.runMs, warmUpMs: 100, feedRounds: opts.feedRounds },
-      versions: versions(opts),
-    };
-    mkdirSync(dirname(out), { recursive: true });
-    // `wx`: never overwrite an earlier run's results.
-    writeFileSync(out, [meta, ...timed, ...feeds].map((r) => JSON.stringify(r)).join('\n') + '\n', { flag: 'wx' });
-    process.stdout.write(`${timedTable(timed)}\n\n${feedTable(feeds)}\n\nwrote ${out}\n`);
+    measure(ctx, prepared, workDir);
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
