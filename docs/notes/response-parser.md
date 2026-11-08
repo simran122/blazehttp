@@ -580,7 +580,9 @@ The prototype's raw runs show why the gate is a median ratio: one 3-header run m
 P0: hyper's head cost is httparse **plus** a `HeaderMap` and ≈ 9 allocations per request, which we do not have, and
 at ≈ 5 µs CPU per request (§1-F) the parser is ≈ 1–5% of a request.
 
-**P1a (with `engine-simd`):** target ≤ 0.85× httparse on `1k-h20.http` on arm64 and x64 (criterion gate). **Risk:**
+**P1a (with `engine-simd`):** target ≤ 0.85× httparse on `1k-h20.http` on arm64 and x64 (criterion gate), measured
+**with fields**: our parser must hand the caller every field's name and value, as httparse does, so the comparison is
+equal work (owner gate: faster than every rival parser with equal work; §8.6). **Risk:**
 httparse with NEON and with SWAR only measured within 4% of each other on these heads (values are short), so 16-byte
 vectors may not buy the remaining 8–13%; if the target is missed, the bitmask/name-run ideas in `ideas.md` are next,
 and the result goes to the owner with data rather than being relaxed silently.
