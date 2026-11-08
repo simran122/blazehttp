@@ -6,7 +6,7 @@ mod support {
 }
 
 use engine_core::h1::{HeaderTemplate, MAX_P0_REQUEST_BYTES, write_request};
-use support::write_rings::{DEFAULTS, HOST, Request, get, post1k, varied};
+use support::write_rings::{DEFAULT_LINES, DEFAULTS, HOST, Request, get, post1k, varied};
 
 /// One pass over `ring`; returns the allocations it made.
 fn write_all(out: &mut Vec<u8>, ring: &[Request], template: &HeaderTemplate) -> u64 {
@@ -20,7 +20,7 @@ fn write_all(out: &mut Vec<u8>, ring: &[Request], template: &HeaderTemplate) -> 
 
 #[test]
 fn steady_state_writes_allocate_nothing() {
-    let template = HeaderTemplate::new(HOST, DEFAULTS, &[]).expect("valid");
+    let template = HeaderTemplate::new(HOST, DEFAULTS, DEFAULT_LINES, &[]).expect("valid");
     let ring: Vec<Request> = [get(), post1k(), varied()].into_iter().flatten().collect();
     let mut out = Vec::new();
     // Warm-up: one pass grows `out` to the largest request (exact reservations, so it may grow a few times).

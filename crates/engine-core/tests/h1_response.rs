@@ -12,7 +12,7 @@ use engine_core::generated::spec::{
 };
 use engine_core::h1::{Framing, HttpVersion, ParseStatus, ResponseHead, ResponseParser};
 use support::fixtures;
-use support::response_vectors::{Case, Expect};
+use support::response_vectors::{ResponseCase, ResponseExpect};
 use support::vectors::load_suite;
 
 const SUITE: &str = "engine-core:h1_response";
@@ -34,25 +34,25 @@ enum Outcome {
 }
 
 impl Outcome {
-    fn to_expect(&self) -> Expect {
+    fn to_expect(&self) -> ResponseExpect {
         match self {
             Self::Ok {
                 head,
                 headers,
                 body,
-            } => Expect::Ok {
+            } => ResponseExpect::Ok {
                 status: head.status,
                 headers: headers.clone(),
                 body: body.clone(),
                 keep_alive: head.keep_alive,
             },
-            Self::ChunkedBody(_) => Expect::Error("chunked body (P1a, #7)".to_owned()),
-            Self::Error(e) => Expect::Error(e.to_string()),
+            Self::ChunkedBody(_) => ResponseExpect::Error("chunked body (P1a, #7)".to_owned()),
+            Self::Error(e) => ResponseExpect::Error(e.to_string()),
         }
     }
 }
 
-fn method_of(case: &Case) -> Method {
+fn method_of(case: &ResponseCase) -> Method {
     (0..)
         .map_while(Method::from_wire)
         .find(|m| m.as_str() == case.method)
@@ -126,21 +126,21 @@ fn exchange(input: &[u8], method: Method, reads: impl IntoIterator<Item = usize>
     })
 }
 
-fn parse_whole(case: &Case) -> Outcome {
+fn parse_whole(case: &ResponseCase) -> Outcome {
     exchange(&case.input, method_of(case), [case.input.len()])
 }
 
-fn parse_fed_in_two(case: &Case, split: usize) -> Outcome {
+fn parse_fed_in_two(case: &ResponseCase, split: usize) -> Outcome {
     exchange(&case.input, method_of(case), [split, case.input.len()])
 }
 
-fn parse_byte_by_byte(case: &Case) -> Outcome {
+fn parse_byte_by_byte(case: &ResponseCase) -> Outcome {
     exchange(&case.input, method_of(case), 1..=case.input.len())
 }
 
 #[test]
 fn all_h1_response_vectors() {
-    for (file, case) in load_suite::<Case>(SUITE) {
+    for (file, case) in load_suite::<ResponseCase>(SUITE) {
         assert_eq!(
             parse_whole(&case).to_expect(),
             case.expect,
@@ -152,7 +152,7 @@ fn all_h1_response_vectors() {
 
 #[test]
 fn every_vector_is_split_invariant() {
-    for (file, case) in load_suite::<Case>(SUITE) {
+    for (file, case) in load_suite::<ResponseCase>(SUITE) {
         let whole = parse_whole(&case);
         for split in 1..case.input.len() {
             assert_eq!(
@@ -176,7 +176,7 @@ fn every_vector_is_split_invariant() {
 #[test]
 fn every_error_is_a_payload_free_code() {
     let mut errors = 0;
-    for (file, case) in load_suite::<Case>(SUITE) {
+    for (file, case) in load_suite::<ResponseCase>(SUITE) {
         if let Outcome::Error(e) = parse_whole(&case) {
             errors += 1;
             assert!(

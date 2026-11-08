@@ -9,17 +9,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use engine_core::generated::spec::{ErrorCode, Method, NetworkDetail};
-use support::request_vectors::{RequestCase, RequestExpect};
-use support::response_vectors::{Case, Expect};
+use support::request_vectors::{RequestCase, RequestExpect, RequestReuse};
+use support::response_vectors::{ResponseCase, ResponseExpect};
 use support::vectors::{load_suite, load_suite_in};
 
 const SUITE: &str = "engine-core:h1_response";
 const REQUEST_SUITE: &str = "engine-core:h1_writer";
-const REUSE_VALUES: [&str; 2] = ["allowed", "closeAfterExchange"];
 
 #[test]
 fn h1_response_suite_loads_with_requests_the_engine_knows() {
-    let cases = load_suite::<Case>(SUITE);
+    let cases = load_suite::<ResponseCase>(SUITE);
     assert!(!cases.is_empty());
     let methods: BTreeSet<&str> = (0..)
         .map_while(Method::from_wire)
@@ -38,8 +37,8 @@ fn h1_response_suite_loads_with_requests_the_engine_knows() {
 #[test]
 fn only_an_empty_input_closes_before_the_response() {
     let closed = ErrorCode::Network(NetworkDetail::ClosedBeforeResponse).to_string();
-    for (file, case) in load_suite::<Case>(SUITE) {
-        let expects_closed = matches!(&case.expect, Expect::Error(e) if *e == closed);
+    for (file, case) in load_suite::<ResponseCase>(SUITE) {
+        let expects_closed = matches!(&case.expect, ResponseExpect::Error(e) if *e == closed);
         assert_eq!(
             case.input.is_empty(),
             expects_closed,
@@ -55,8 +54,8 @@ fn expected_errors_are_errors_the_engine_can_produce() {
         .iter()
         .map(ToString::to_string)
         .collect();
-    for (file, case) in load_suite::<Case>(SUITE) {
-        if let Expect::Error(error) = &case.expect {
+    for (file, case) in load_suite::<ResponseCase>(SUITE) {
+        if let ResponseExpect::Error(error) = &case.expect {
             assert!(
                 known.contains(error),
                 "{file}/{}: {error} is not an ErrorCode display form",
@@ -108,7 +107,7 @@ fn loads_registered_files_from_any_root() {
             ),
         ],
     );
-    let cases = load_suite_in::<Case>(dir.root(), "s");
+    let cases = load_suite_in::<ResponseCase>(dir.root(), "s");
     assert_eq!(cases.len(), 1);
     assert_eq!(cases[0].0, "h1/a.json");
 }
@@ -124,7 +123,7 @@ fn unregistered_file_panics() {
             ("h1/b.json", ONE_CASE),
         ],
     );
-    let _ = load_suite_in::<Case>(dir.root(), "s");
+    let _ = load_suite_in::<ResponseCase>(dir.root(), "s");
 }
 
 #[test]
@@ -137,7 +136,7 @@ fn empty_suite_panics() {
             ("a.json", ONE_CASE),
         ],
     );
-    let _ = load_suite_in::<Case>(dir.root(), "s");
+    let _ = load_suite_in::<ResponseCase>(dir.root(), "s");
 }
 
 #[test]
@@ -150,7 +149,7 @@ fn file_without_cases_panics() {
             ("a.json", r#"{ "cases": [] }"#),
         ],
     );
-    let _ = load_suite_in::<Case>(dir.root(), "s");
+    let _ = load_suite_in::<ResponseCase>(dir.root(), "s");
 }
 
 #[test]
@@ -169,16 +168,14 @@ fn h1_writer_suite_loads_with_known_methods_errors_and_reuse() {
         let at = format!("{file}/{}", case.name);
         assert!(methods.contains(case.method.as_str()), "{at}: method");
         match &case.expect {
-            RequestExpect::Written { reuse, .. } => {
-                assert!(REUSE_VALUES.contains(&reuse.as_str()), "{at}: reuse");
-            }
+            RequestExpect::Written { bytes, .. } => assert!(!bytes.is_empty(), "{at}: bytes"),
             RequestExpect::Error(error) => assert!(errors.contains(error), "{at}: {error}"),
         }
     }
 }
 
 const ONE_REQUEST_CASE: &str = r#"{ "cases": [{ "name": "a", "inputEncoding": "latin1",
-    "request": { "method": "GET", "target": "/", "templateHost": "h", "templateFields": "", "headers": "x: \u00e9\r\n",
+    "request": { "method": "GET", "target": "/", "templateHost": "h", "templateFields": "", "templateFieldLines": 0, "headers": "x: \u00e9\r\n",
     "headerLines": 1, "body": "" },
     "expect": { "bytes": "GET / HTTP/1.1\r\nhost: h\r\nx: \u00e9\r\n\r\n", "reuse": "allowed" } }] }"#;
 
@@ -210,6 +207,7 @@ fn request_cases_decode_latin1_and_default_the_connection_authority() {
         ),
         (&b"h"[..], &b""[..])
     );
+    assert_eq!(case.template_field_lines, 0);
     assert_eq!(case.headers, b"x: \xe9\r\n");
     assert_eq!((case.header_lines, case.body.as_slice()), (1, &b""[..]));
     assert_eq!(case.conn_authority, b"h");
@@ -217,7 +215,7 @@ fn request_cases_decode_latin1_and_default_the_connection_authority() {
         case.expect,
         RequestExpect::Written {
             bytes: b"GET / HTTP/1.1\r\nhost: h\r\nx: \xe9\r\n\r\n".to_vec(),
-            reuse: "allowed".to_owned(),
+            reuse: RequestReuse::Allowed,
         }
     );
 }

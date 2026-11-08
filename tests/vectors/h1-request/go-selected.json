@@ -16,6 +16,7 @@
         "target": "/",
         "templateHost": "www.techcrunch.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "Accept: text/html\r\nKeep-Alive: 300\r\nProxy-Connection: keep-alive\r\nUser-Agent: Fake\r\n",
         "headerLines": 4,
         "body": ""
@@ -33,6 +34,7 @@
         "target": "/search",
         "templateHost": "www.google.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": "abcdef"
@@ -51,6 +53,7 @@
         "target": "/",
         "templateHost": "example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "Content-Length: 10\r\n",
         "headerLines": 1,
         "body": "abcdef"
@@ -68,6 +71,7 @@
         "target": "/search",
         "templateHost": "www.google.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -86,6 +90,7 @@
         "target": "/",
         "templateHost": "example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -104,6 +109,7 @@
         "target": "/",
         "templateHost": "example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": "x"
@@ -122,6 +128,7 @@
         "target": "/search",
         "templateHost": "",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -139,6 +146,7 @@
         "target": "/%2F/%2F/",
         "templateHost": "www.google.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -157,6 +165,7 @@
         "target": "/",
         "templateHost": "www.google.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "ALL-CAPS: x\r\n",
         "headerLines": 1,
         "body": ""
@@ -175,6 +184,7 @@
         "target": "/",
         "templateHost": "[fe80::1%en0]",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -192,6 +202,7 @@
         "target": "/",
         "templateHost": "[fe80::1%en0]:8080",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -209,6 +220,7 @@
         "target": "/?new\nline",
         "templateHost": "www.example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -226,6 +238,7 @@
         "target": "/",
         "templateHost": "example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -244,6 +257,7 @@
         "target": "/",
         "templateHost": "example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -262,6 +276,7 @@
         "target": "/",
         "templateHost": "example.com",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": "foobody"
@@ -280,6 +295,7 @@
         "target": "/after",
         "templateHost": "foo.com\nnewline",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": ""
@@ -297,6 +313,7 @@
         "target": "/after",
         "templateHost": "foo",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "User-Agent: evil\r\nX-Evil: evil\r\n",
         "headerLines": 1,
         "body": ""

@@ -1,6 +1,7 @@
 //! Request vector cases (`tests/vectors/h1-request/`): the parts of one request, its header template and the exact
 //! bytes the writer must produce, or its error. Format: `docs/notes/vectors.md`.
 
+use engine_core::h1::Reuse;
 use serde::Deserialize;
 
 use super::vectors::{VectorCase, bytes};
@@ -13,6 +14,8 @@ pub struct RequestCase {
     pub target: Vec<u8>,
     pub template_host: Vec<u8>,
     pub template_fields: Vec<u8>,
+    /// The field count JS serialised into `template_fields`.
+    pub template_field_lines: u16,
     pub headers: Vec<u8>,
     pub header_lines: u16,
     pub body: Vec<u8>,
@@ -21,33 +24,53 @@ pub struct RequestCase {
     pub expect: RequestExpect,
 }
 
+/// `reuse` as the vectors spell it; equal to the writer's [`Reuse`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RequestReuse {
+    Allowed,
+    CloseAfterExchange,
+}
+
+impl From<Reuse> for RequestReuse {
+    fn from(reuse: Reuse) -> Self {
+        match reuse {
+            Reuse::Allowed => Self::Allowed,
+            Reuse::CloseAfterExchange => Self::CloseAfterExchange,
+        }
+    }
+}
+
 /// The writer's expected result; `Error` holds `ErrorCode`'s display form, e.g. `ENGINE/internal`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RequestExpect {
-    /// The whole request (head and body) and `allowed` or `closeAfterExchange`.
+    /// The whole request (head and body).
     Written {
         bytes: Vec<u8>,
-        reuse: String,
+        reuse: RequestReuse,
     },
     Error(String),
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RawRequestCase {
     name: String,
     input_encoding: String,
     request: RawRequest,
     expect: RawExpect,
+    #[serde(default, rename = "derivedFrom")]
+    _derived_from: Option<String>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RawRequest {
     method: String,
     target: String,
     template_host: String,
     template_fields: String,
+    template_field_lines: u16,
     headers: String,
     header_lines: u16,
     body: String,
@@ -57,7 +80,7 @@ struct RawRequest {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawExpect {
-    Written { bytes: String, reuse: String },
+    Written { bytes: String, reuse: RequestReuse },
     Error { error: String },
 }
 
@@ -85,6 +108,7 @@ impl VectorCase for RequestCase {
                 .map_or_else(|| template_host.clone(), decode),
             template_host,
             template_fields: decode(request.template_fields),
+            template_field_lines: request.template_field_lines,
             headers: decode(request.headers),
             header_lines: request.header_lines,
             body: decode(request.body),

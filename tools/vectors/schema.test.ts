@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import {
+  loadResponseVectorFile,
   loadVectorFile,
   parseIndex,
   parseRequestVectorFile,
@@ -154,7 +155,7 @@ const writeVectorFile = (dir: string, data: unknown): string => {
   onTestFinished(() => {
     rmSync(root, { recursive: true, force: true });
   });
-  mkdirSync(join(root, dir));
+  mkdirSync(join(root, dir), { recursive: true });
   const path = join(root, dir, 'v.json');
   writeFileSync(path, JSON.stringify(data));
   return path;
@@ -189,6 +190,7 @@ const VALID_REQUEST: RequestVectorFile = {
         target: '/x',
         templateHost: 'h',
         templateFields: '',
+        templateFieldLines: 0,
         headers: 'a: b\r\n',
         headerLines: 1,
         body: 'hi',
@@ -204,6 +206,7 @@ const VALID_REQUEST: RequestVectorFile = {
         target: '/',
         templateHost: 'h',
         templateFields: '',
+        templateFieldLines: 0,
         headers: '',
         headerLines: 0,
         body: '',
@@ -225,6 +228,67 @@ const mutateRequest = (edit: (cases: MutableRequestCase[]) => void): unknown => 
   return copy;
 };
 
+/** Invalid request vector files: what is wrong, how to build the file, and the error it must raise. */
+const INVALID_REQUEST_FILES: [string, () => unknown, RegExp][] = [
+  ['a missing request field', () => mutateRequest(([c]) => delete c?.request['headers']), /request\.headers: missing/],
+  ['an unknown method', () => mutateRequest(([c]) => c && (c.request['method'] = 'TRACE')), /TRACE is not a generated/],
+  [
+    'a header line count outside u16',
+    () => mutateRequest(([c]) => c && (c.request['headerLines'] = 65_536)),
+    /headerLines: expected an integer in 0\.\.=65535/,
+  ],
+  ['a fractional line count', () => mutateRequest(([c]) => c && (c.request['headerLines'] = 0.5)), /headerLines/],
+  ['an unknown reuse', () => mutateRequest(([c]) => c && (c.expect['reuse'] = 'never')), /expected allowed or/],
+  ['bytes without reuse', () => mutateRequest(([c]) => c && delete c.expect['reuse']), /expect\.reuse: missing/],
+  [
+    'an error the engine cannot produce',
+    () => mutateRequest(([, c]) => c && (c.expect = { error: 'PARSE/json' })),
+    /PARSE\/json is not an engine error/,
+  ],
+  [
+    'a code point above U+00FF in a latin1 case',
+    () => mutateRequest(([, c]) => c && (c.request['connAuthority'] = '\u0100\u00e9')),
+    /cases\[1\]\.request\.connAuthority: a code point above U\+00FF/,
+  ],
+  [
+    'latin1 without a high byte',
+    () => mutateRequest(([, c]) => c && delete c.request['connAuthority']),
+    /latin1 without a byte >= 0x80; use utf8/,
+  ],
+  ['an unknown key', () => mutateRequest(([c]) => c && (c['input'] = '')), /cases\[0\]\.input: unknown key/],
+  ['a duplicate name', () => mutateRequest(([, c]) => c && (c['name'] = 'written')), /duplicate case name written/],
+  [
+    'a negative line count',
+    () => mutateRequest(([c]) => c && (c.request['headerLines'] = -1)),
+    /headerLines: expected an integer/,
+  ],
+  [
+    'a template line count outside u16',
+    () => mutateRequest(([c]) => c && (c.request['templateFieldLines'] = 65_536)),
+    /templateFieldLines: expected an integer in 0\.\.=65535/,
+  ],
+  [
+    'a non-numeric template line count',
+    () => mutateRequest(([c]) => c && (c.request['templateFieldLines'] = '1')),
+    /templateFieldLines: expected an integer/,
+  ],
+  [
+    'a missing template line count',
+    () => mutateRequest(([c]) => delete c?.request['templateFieldLines']),
+    /request\.templateFieldLines: missing/,
+  ],
+  [
+    'a lone surrogate',
+    () => mutateRequest(([c]) => c && (c.request['target'] = '/\ud800')),
+    /cases\[0\]\.request\.target: a lone surrogate/,
+  ],
+  [
+    'a lone low surrogate in the expected bytes',
+    () => mutateRequest(([c]) => c && (c.expect['bytes'] = 'x\udc00')),
+    /cases\[0\]\.expect\.bytes: a lone surrogate/,
+  ],
+];
+
 describe('request vector files', () => {
   it('loads a valid file by its directory', () => {
     expect(loadVectorFile(writeVectorFile('h1-request', VALID_REQUEST))).toEqual(VALID_REQUEST);
@@ -234,43 +298,18 @@ describe('request vector files', () => {
     expect(() => loadVectorFile(writeVectorFile('other', VALID_REQUEST))).toThrow(/no case schema for directory other/);
   });
 
-  it.each([
-    [
-      'a missing request field',
-      () => mutateRequest(([c]) => delete c?.request['headers']),
-      /request\.headers: missing/,
-    ],
-    [
-      'an unknown method',
-      () => mutateRequest(([c]) => c && (c.request['method'] = 'TRACE')),
-      /TRACE is not a generated/,
-    ],
-    [
-      'a header line count outside u16',
-      () => mutateRequest(([c]) => c && (c.request['headerLines'] = 65_536)),
-      /headerLines: expected an integer in 0\.\.=65535/,
-    ],
-    ['a fractional line count', () => mutateRequest(([c]) => c && (c.request['headerLines'] = 0.5)), /headerLines/],
-    ['an unknown reuse', () => mutateRequest(([c]) => c && (c.expect['reuse'] = 'never')), /expected allowed or/],
-    ['bytes without reuse', () => mutateRequest(([c]) => c && delete c.expect['reuse']), /expect\.reuse: missing/],
-    [
-      'an error the engine cannot produce',
-      () => mutateRequest(([, c]) => c && (c.expect = { error: 'PARSE/json' })),
-      /PARSE\/json is not an engine error/,
-    ],
-    [
-      'a code point above U+00FF in a latin1 case',
-      () => mutateRequest(([, c]) => c && (c.request['connAuthority'] = '\u0100\u00e9')),
-      /cases\[1\]\.request\.connAuthority: a code point above U\+00FF/,
-    ],
-    [
-      'latin1 without a high byte',
-      () => mutateRequest(([, c]) => c && delete c.request['connAuthority']),
-      /latin1 without a byte >= 0x80; use utf8/,
-    ],
-    ['an unknown key', () => mutateRequest(([c]) => c && (c['input'] = '')), /cases\[0\]\.input: unknown key/],
-    ['a duplicate name', () => mutateRequest(([, c]) => c && (c['name'] = 'written')), /duplicate case name written/],
-  ])('rejects %s', (_, make, message) => {
+  it('reads the case kind from the directory one level below the vectors root only', () => {
+    // A nested file is named by its own directory, so `h1-request/x/v.json` has no schema (docs/notes/vectors.md).
+    expect(() => loadVectorFile(writeVectorFile(join('h1-request', 'x'), VALID_REQUEST))).toThrow(
+      /no case schema for directory x/,
+    );
+  });
+
+  it('loads a response file through the typed loader', () => {
+    expect(loadResponseVectorFile(writeVectorFile('h1-response', VALID))).toEqual(VALID);
+  });
+
+  it.each(INVALID_REQUEST_FILES)('rejects %s', (_, make, message) => {
     expect(() => parseRequestVectorFile(make(), 'f')).toThrow(message);
   });
 

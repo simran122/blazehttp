@@ -8,7 +8,7 @@ mod support {
 
 use engine_core::generated::spec::{EngineDetail, ErrorCode, H1_LIMITS, Method, TooLargeDetail};
 use engine_core::h1::{HeaderTemplate, MAX_P0_REQUEST_BYTES, RequestParts, Reuse, write_request};
-use support::request_vectors::{RequestCase, RequestExpect};
+use support::request_vectors::{RequestCase, RequestExpect, RequestReuse};
 use support::vectors::load_suite;
 
 const SUITE: &str = "engine-core:h1_writer";
@@ -19,17 +19,13 @@ const HOST: &[u8] = b"127.0.0.1:3999";
 /// `host: 127.0.0.1:3999\r\n`.
 const HOST_LINE_LEN: usize = 22;
 
-const ALL_METHODS: [Method; 8] = [
-    Method::Get,
-    Method::Head,
-    Method::Post,
-    Method::Put,
-    Method::Delete,
-    Method::Patch,
-    Method::Options,
-    Method::Query,
-];
-const FORBIDDEN: [&str; 17] = [
+/// Every generated method, in wire order.
+fn all_methods() -> impl Iterator<Item = Method> {
+    (0..).map_while(Method::from_wire)
+}
+/// Every name the writer refuses (note §6.4): framing, routing and hop-by-hop names, the `proxy-` prefix, and the
+/// underscore spelling of every forbidden or singleton name.
+const FORBIDDEN: [&str; 23] = [
     "host",
     "transfer-encoding",
     "connection",
@@ -47,11 +43,26 @@ const FORBIDDEN: [&str; 17] = [
     "user_agent",
     "keep_alive",
     "proxy_connection",
+    "trailer",
+    "http2-settings",
+    "http2_settings",
+    "proxy-x",
+    "proxy_x",
+    "proxy-anything-else",
 ];
 const SINGLETONS: [&str; 4] = ["authorization", "cookie", "content-type", "user-agent"];
 
 fn template(fields: &[u8]) -> HeaderTemplate {
-    HeaderTemplate::new(HOST, fields, &[]).expect("valid template")
+    new_template(HOST, fields, &[]).expect("valid template")
+}
+
+/// `HeaderTemplate::new` with the line count of honestly serialised `fields`.
+fn new_template(
+    host: &[u8],
+    fields: &[u8],
+    sensitive: &[&[u8]],
+) -> Result<HeaderTemplate, ErrorCode> {
+    HeaderTemplate::new(host, fields, line_count(fields), sensitive)
 }
 
 /// Every CRLF-terminated line of `headers` counts as one serialised field.
@@ -213,7 +224,7 @@ const INVALID_DEFAULTS: [&[u8]; 8] = [
 fn template_rejects_invalid_defaults() {
     for fields in INVALID_DEFAULTS {
         assert_eq!(
-            HeaderTemplate::new(HOST, fields, &[]).expect_err("invalid"),
+            new_template(HOST, fields, &[]).expect_err("invalid"),
             INTERNAL,
             "{}",
             fields.escape_ascii()
@@ -296,9 +307,12 @@ fn query_with_body_is_framed_and_reusable() {
 #[test]
 fn get_delete_options_with_body_send_connection_close_and_not_reusable() {
     for method in [Method::Get, Method::Delete, Method::Options] {
-        let (out, reuse) = written(&parts(method, b"/x", b"x-a: 1\r\n", b"abc"), &template(b""));
+        // `content-type` because OPTIONS content requires it (RFC 9110 §9.3.7).
+        let request = parts(method, b"/x", b"content-type: text/plain\r\n", b"abc");
+        let (out, reuse) = written(&request, &template(b""));
         let expected = format!(
-            "{} /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nx-a: 1\r\ncontent-length: 3\r\nconnection: close\r\n\r\nabc",
+            "{} /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\ncontent-type: text/plain\r\ncontent-length: 3\r\n\
+             connection: close\r\n\r\nabc",
             method.as_str()
         );
         assert_eq!(String::from_utf8(out).expect("ASCII"), expected);
@@ -329,16 +343,18 @@ fn content_length_digits() {
 
 #[test]
 fn every_method_is_written_as_its_name() {
-    for method in ALL_METHODS {
+    for method in all_methods() {
         let body: &[u8] = if method == Method::Head { b"" } else { b"1" };
-        let (out, _) = written(&parts(method, b"/", b"", body), &template(b""));
+        let request = parts(method, b"/", b"content-type: text/plain\r\n", body);
+        let (out, _) = written(&request, &template(b""));
         assert!(out.starts_with(format!("{} / HTTP/1.1\r\n", method.as_str()).as_bytes()));
     }
 }
 
 #[test]
-fn unknown_method_id_rejected() {
-    // The codec maps an id that does not decode to `Engine(Internal)` before the writer runs (note §6.5).
+fn method_from_wire_rejects_unknown_id() {
+    // An unknown id is unrepresentable, so it never reaches the writer; the codec's `Engine(Internal)` for it is
+    // tested with the codec (Task 6, note §9.1).
     assert_eq!(Method::from_wire(99), None);
 }
 
@@ -346,7 +362,7 @@ fn unknown_method_id_rejected() {
 
 #[test]
 fn rejects_template_for_other_authority() {
-    let template = HeaderTemplate::new(b"example.com:8080", b"", &[]).expect("valid");
+    let template = new_template(b"example.com:8080", b"", &[]).expect("valid");
     let request = parts(Method::Get, b"/", b"", b"");
     for other in [
         &b"example.com:8081"[..],
@@ -364,7 +380,7 @@ fn rejects_template_for_other_authority() {
     assert!(write_request(&mut out, &request, &template, b"example.com:8080").is_ok());
 }
 
-const INVALID_HOSTS: [&[u8]; 22] = [
+const INVALID_HOSTS: [&[u8]; 35] = [
     b"",
     b"a b",
     b"a/b",
@@ -387,13 +403,26 @@ const INVALID_HOSTS: [&[u8]; 22] = [
     b"a:123456",
     b"a:-1",
     b"a:1:2",
+    b"[.]",
+    b"[:]",
+    b"[ffff]",
+    b"[1.2.3.4]",
+    b"[1:2:3:4:5:6:7:8:9:a:b]",
+    b".",
+    b".a",
+    b"a..b",
+    b"A.EXAMPLE",
+    b"example.Com",
+    b"a:00080",
+    b"a:0",
+    b"a:080",
 ];
 
 #[test]
 fn template_rejects_invalid_host() {
     for host in INVALID_HOSTS {
         assert_eq!(
-            HeaderTemplate::new(host, b"", &[]).expect_err("invalid"),
+            new_template(host, b"", &[]).expect_err("invalid"),
             INTERNAL,
             "{}",
             host.escape_ascii()
@@ -401,21 +430,22 @@ fn template_rejects_invalid_host() {
     }
 }
 
-const VALID_HOSTS: [&[u8]; 8] = [
+const VALID_HOSTS: [&[u8]; 9] = [
     b"example.com",
     b"127.0.0.1:3999",
     b"[::1]:8080",
     b"[::ffff:1.2.3.4]",
     b"xn--bcher-kva.example",
     b"a,b.example",
-    b"a:0",
+    b"a:1",
     b"a:65535",
+    b"example.com.",
 ];
 
 #[test]
 fn template_accepts_hosts() {
     for host in VALID_HOSTS {
-        let template = HeaderTemplate::new(host, b"", &[]).expect("valid");
+        let template = new_template(host, b"", &[]).expect("valid");
         assert_eq!(template.authority(), host);
     }
 }
@@ -426,7 +456,7 @@ fn template_rejects_forbidden_defaults() {
         for spelled in cases_of(name) {
             let fields = format!("{spelled}: v\r\n");
             assert_eq!(
-                HeaderTemplate::new(HOST, fields.as_bytes(), &[]).expect_err("forbidden"),
+                new_template(HOST, fields.as_bytes(), &[]).expect_err("forbidden"),
                 INTERNAL,
                 "{spelled}"
             );
@@ -434,11 +464,12 @@ fn template_rejects_forbidden_defaults() {
     }
 }
 
-const SENSITIVE: [&[u8]; 4] = [
+const SENSITIVE: [&[u8]; 5] = [
     b"authorization",
     b"cookie",
     b"x-api-key",
     b"x-custom-secret",
+    b"X_Token",
 ];
 
 #[test]
@@ -448,13 +479,16 @@ fn template_sensitive_flag() {
         b"cookie: s=1\r\n",
         b"X-Api-Key: k\r\n",
         b"a: 1\r\nx-custom-secret: z\r\n",
+        b"x_api_key: k\r\n",
+        b"X_Custom_Secret: z\r\n",
+        b"x-token: t\r\n",
     ] {
-        let template = HeaderTemplate::new(HOST, fields, &SENSITIVE).expect("valid");
+        let template = new_template(HOST, fields, &SENSITIVE).expect("valid");
         assert!(template.is_sensitive(), "{}", fields.escape_ascii());
     }
     for fields in [&b""[..], b"accept: */*\r\n", b"x-api: k\r\n"] {
         assert!(
-            !HeaderTemplate::new(HOST, fields, &SENSITIVE)
+            !new_template(HOST, fields, &SENSITIVE)
                 .expect("valid")
                 .is_sensitive()
         );
@@ -463,30 +497,22 @@ fn template_sensitive_flag() {
 
 #[test]
 fn template_too_large() {
-    let fill = |len: usize| {
-        [
-            &b"x-fill: "[..],
-            &vec![b'a'; len - HOST_LINE_LEN - 10],
-            b"\r\n",
-        ]
-        .concat()
-    };
     let max = H1_LIMITS.max_request_fields_bytes;
-    assert!(HeaderTemplate::new(HOST, &fill(max), &[]).is_ok());
+    assert!(new_template(HOST, &fill_template(max), &[]).is_ok());
     assert_eq!(
-        HeaderTemplate::new(HOST, &fill(max + 1), &[]).expect_err("large"),
+        new_template(HOST, &fill_template(max + 1), &[]).expect_err("large"),
         HEADERS_TOO_LARGE
     );
     let host = vec![b'a'; max];
     assert_eq!(
-        HeaderTemplate::new(&host, b"", &[]).expect_err("large"),
+        new_template(&host, b"", &[]).expect_err("large"),
         HEADERS_TOO_LARGE
     );
 }
 
 #[test]
 fn template_debug_hides_bytes() {
-    let template = HeaderTemplate::new(
+    let template = new_template(
         b"secret-host.example",
         b"authorization: Bearer s3cr3t\r\n",
         &SENSITIVE,
@@ -544,24 +570,29 @@ fn rejects_duplicate_singleton_within_delta() {
             )
             .is_ok()
         );
-        let twice = format!(
-            "{name}: a\r\nx-b: 1\r\n{}: b\r\n",
-            name.to_ascii_uppercase()
-        );
-        let request = parts(Method::Get, b"/", twice.as_bytes(), b"");
-        assert_eq!(rejected(&request, &template(b"")), INTERNAL, "{name}");
-        let in_template = format!("{name}: a\r\n{name}: b\r\n");
-        assert_eq!(
-            HeaderTemplate::new(HOST, in_template.as_bytes(), &[]).expect_err("twice"),
-            INTERNAL
-        );
+        for spelled in cases_of(name) {
+            let twice = format!("{name}: a\r\nx-b: 1\r\n{spelled}: b\r\n");
+            let request = parts(Method::Get, b"/", twice.as_bytes(), b"");
+            assert_eq!(rejected(&request, &template(b"")), INTERNAL, "{spelled}");
+            let in_template = format!("{name}: a\r\n{spelled}: b\r\n");
+            assert_eq!(
+                new_template(HOST, in_template.as_bytes(), &[]).expect_err("twice"),
+                INTERNAL,
+                "{spelled}"
+            );
+        }
     }
 }
 
 #[test]
 fn distinct_singletons_and_repeated_other_names_are_accepted() {
+    // The writer enforces only the singleton subset; one line per non-list name is the P2 contract (note §10.4).
     let all = b"authorization: a\r\ncookie: c\r\ncontent-type: t\r\nuser-agent: u\r\naccept: 1\r\naccept: 2\r\n";
     assert!(write(&parts(Method::Post, b"/", all, b""), &template(b"")).is_ok());
+    let range_twice = b"range: bytes=0-1\r\nrange: bytes=5-9\r\n";
+    assert!(write(&parts(Method::Get, b"/", range_twice, b""), &template(b"")).is_ok());
+    let repeat_of_default = parts(Method::Get, b"/", b"x-api-key: b\r\n", b"");
+    assert!(write(&repeat_of_default, &template(b"x-api-key: a\r\n")).is_ok());
 }
 
 #[test]
@@ -639,10 +670,7 @@ fn rejects_malformed_delta_lines() {
             "{}",
             headers.escape_ascii()
         );
-        assert_eq!(
-            HeaderTemplate::new(HOST, headers, &[]).expect_err("bad"),
-            INTERNAL
-        );
+        assert_eq!(new_template(HOST, headers, &[]).expect_err("bad"), INTERNAL);
     }
 }
 
@@ -676,6 +704,12 @@ fn target_must_be_origin_form() {
         b"/a#",
         b"/#b",
         b"/a#b",
+        b"/a\"b",
+        b"/a<b",
+        b"/a>b",
+        b"/a\\b",
+        b"/\\evil.example",
+        b"/a?q=\"",
     ] {
         assert_eq!(
             rejected(&parts(Method::Get, target, b"", b""), &template(b"")),
@@ -686,6 +720,7 @@ fn target_must_be_origin_form() {
         &b"//evil.example/x"[..],
         b"/",
         b"/a%0d%0a?b=c&d=~!$'()*+,;=:@",
+        b"/a?q=\\^`{|}",
     ] {
         assert!(write(&parts(Method::Get, target, b"", b""), &template(b"")).is_ok());
     }
@@ -706,6 +741,11 @@ fn target_limit() {
 }
 
 // ---------------------------------------------------------------- limits and precedence (§7)
+
+/// Template fields that make the host line + fields exactly `total` bytes.
+fn fill_template(total: usize) -> Vec<u8> {
+    fill_delta(total)
+}
 
 /// A delta that makes template + delta exactly `total` bytes with the host-only template.
 fn fill_delta(total: usize) -> Vec<u8> {
@@ -755,35 +795,161 @@ fn body_over_copy_limit_rejected() {
     );
 }
 
+/// One way a request breaks a §7 check; `error_precedence` combines two and expects the earlier row's code.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Violation {
+    BodyOverLimit,
+    TargetOverLimit,
+    FieldsOverLimit,
+    OtherAuthority,
+    HeadWithBody,
+    BadTarget,
+    BadDelta,
+}
+
+/// Pairs of §7 rows whose codes differ, each with the code of the earlier row.
+const PRECEDENCE: [(Violation, Violation, ErrorCode); 8] = [
+    (
+        Violation::BodyOverLimit,
+        Violation::TargetOverLimit,
+        INTERNAL,
+    ),
+    (
+        Violation::BodyOverLimit,
+        Violation::FieldsOverLimit,
+        INTERNAL,
+    ),
+    (
+        Violation::TargetOverLimit,
+        Violation::FieldsOverLimit,
+        URL_TOO_LARGE,
+    ),
+    (
+        Violation::TargetOverLimit,
+        Violation::OtherAuthority,
+        URL_TOO_LARGE,
+    ),
+    (
+        Violation::TargetOverLimit,
+        Violation::BadTarget,
+        URL_TOO_LARGE,
+    ),
+    (
+        Violation::FieldsOverLimit,
+        Violation::OtherAuthority,
+        HEADERS_TOO_LARGE,
+    ),
+    (
+        Violation::FieldsOverLimit,
+        Violation::HeadWithBody,
+        HEADERS_TOO_LARGE,
+    ),
+    (
+        Violation::FieldsOverLimit,
+        Violation::BadDelta,
+        HEADERS_TOO_LARGE,
+    ),
+];
+
+/// The outcome of a valid `POST /a` with one byte of body after both violations are applied.
+fn violating(first: Violation, second: Violation) -> Result<Reuse, ErrorCode> {
+    let has = |v| first == v || second == v;
+    let method = if has(Violation::HeadWithBody) {
+        Method::Head
+    } else {
+        Method::Post
+    };
+    let mut target = if has(Violation::TargetOverLimit) {
+        vec![b'a'; H1_LIMITS.max_request_target_bytes]
+    } else {
+        b"a".to_vec()
+    };
+    target.insert(
+        0,
+        if has(Violation::BadTarget) {
+            b'*'
+        } else {
+            b'/'
+        },
+    );
+    let mut headers = if has(Violation::FieldsOverLimit) {
+        fill_delta(H1_LIMITS.max_request_fields_bytes + 1)
+    } else {
+        Vec::new()
+    };
+    if has(Violation::BadDelta) {
+        headers.extend_from_slice(b"host: x\r\n");
+    }
+    let body_len = if has(Violation::BodyOverLimit) {
+        H1_LIMITS.max_copied_body_bytes + 1
+    } else {
+        1
+    };
+    let authority: &[u8] = if has(Violation::OtherAuthority) {
+        b"other"
+    } else {
+        HOST
+    };
+    let body = vec![b'b'; body_len];
+    let request = parts(method, &target, &headers, &body);
+    write_request(&mut Vec::new(), &request, &template(b""), authority)
+}
+
 #[test]
 fn error_precedence() {
+    for (first, second, expected) in PRECEDENCE {
+        assert_eq!(
+            violating(first, second),
+            Err(expected),
+            "{first:?} before {second:?}"
+        );
+        for single in [first, second] {
+            assert!(
+                violating(single, single).is_err(),
+                "{single:?} alone is an error"
+            );
+        }
+    }
     let long_cr = [&b"/\r"[..], &vec![b'a'; H1_LIMITS.max_request_target_bytes]].concat();
     assert_eq!(
         rejected(&parts(Method::Get, &long_cr, b"", b""), &template(b"")),
         URL_TOO_LARGE
     );
-    let large_forbidden = [
-        &b"host: x\r\n"[..],
-        &fill_delta(H1_LIMITS.max_request_fields_bytes),
-    ]
-    .concat();
-    let request = parts(Method::Get, b"/", &large_forbidden, b"");
-    assert_eq!(rejected(&request, &template(b"")), HEADERS_TOO_LARGE);
-    let big_body_long_target =
-        [&b"/"[..], &vec![b'a'; H1_LIMITS.max_request_target_bytes]].concat();
-    let body = vec![b'b'; H1_LIMITS.max_copied_body_bytes + 1];
-    let request = parts(Method::Post, &big_body_long_target, b"", &body);
+}
+
+#[test]
+fn template_rejects_injected_line_by_count() {
+    // A JS default value `1\r\nauthorization: Basic evil` serialised as one field.
+    let fields = b"x-a: 1\r\nauthorization: Basic evil\r\n";
+    for lines in [0, 1, 3, u16::MAX] {
+        assert_eq!(
+            HeaderTemplate::new(HOST, fields, lines, &[]).expect_err("count"),
+            INTERNAL,
+            "{lines}"
+        );
+    }
+    assert!(HeaderTemplate::new(HOST, fields, 2, &[]).is_ok());
+    assert!(HeaderTemplate::new(HOST, b"", 0, &[]).is_ok());
     assert_eq!(
-        rejected(&request, &template(b"")),
-        INTERNAL,
-        "the body check comes first"
+        HeaderTemplate::new(HOST, b"", 1, &[]).expect_err("count"),
+        INTERNAL
     );
-    let mut out = Vec::new();
-    let bad_delta = parts(Method::Get, b"/", b"host: x\r\n", b"");
-    assert_eq!(
-        write_request(&mut out, &bad_delta, &template(b""), b"other"),
-        Err(INTERNAL)
+}
+
+#[test]
+fn options_with_body_requires_content_type() {
+    // RFC 9110 §9.3.7: a client that sends content in OPTIONS MUST send a valid Content-Type.
+    let body_only = parts(Method::Options, b"/", b"", b"xyz");
+    assert_eq!(rejected(&body_only, &template(b"")), INTERNAL);
+    let in_delta = parts(
+        Method::Options,
+        b"/",
+        b"Content-Type: text/plain\r\n",
+        b"xyz",
     );
+    assert!(write(&in_delta, &template(b"")).is_ok());
+    assert!(write(&body_only, &template(b"content-type: text/plain\r\n")).is_ok());
+    assert!(write(&parts(Method::Options, b"/", b"", b""), &template(b"")).is_ok());
 }
 
 #[test]
@@ -794,7 +960,10 @@ fn max_p0_request_bytes_is_the_largest_request() {
         &vec![b'a'; H1_LIMITS.max_request_target_bytes - 1],
     ]
     .concat();
-    let delta = fill_delta(H1_LIMITS.max_request_fields_bytes);
+    // OPTIONS content needs a content-type (RFC 9110 §9.3.7); the filler line tops the fields up to the limit.
+    let content_type = b"content-type: a\r\n";
+    let fill = fill_delta(H1_LIMITS.max_request_fields_bytes - content_type.len());
+    let delta = [&content_type[..], &fill].concat();
     let body = vec![b'b'; H1_LIMITS.max_copied_body_bytes];
     let (out, reuse) = written(
         &parts(Method::Options, &target, &delta, &body),
@@ -808,14 +977,18 @@ fn max_p0_request_bytes_is_the_largest_request() {
 // ---------------------------------------------------------------- vectors (§9.2–§9.4)
 
 fn method_of(case: &RequestCase) -> Method {
-    ALL_METHODS
-        .into_iter()
+    all_methods()
         .find(|m| m.as_str() == case.method)
         .unwrap_or_else(|| panic!("{}: unknown method", case.name))
 }
 
 fn run_case(case: &RequestCase) -> RequestExpect {
-    let template = match HeaderTemplate::new(&case.template_host, &case.template_fields, &[]) {
+    let template = match HeaderTemplate::new(
+        &case.template_host,
+        &case.template_fields,
+        case.template_field_lines,
+        &[],
+    ) {
         Ok(template) => template,
         Err(e) => return RequestExpect::Error(e.to_string()),
     };
@@ -828,29 +1001,37 @@ fn run_case(case: &RequestCase) -> RequestExpect {
     };
     let mut out = Vec::new();
     match write_request(&mut out, &request, &template, &case.conn_authority) {
-        Ok(Reuse::Allowed) => RequestExpect::Written {
+        Ok(reuse) => RequestExpect::Written {
             bytes: out,
-            reuse: "allowed".to_owned(),
-        },
-        Ok(Reuse::CloseAfterExchange) => RequestExpect::Written {
-            bytes: out,
-            reuse: "closeAfterExchange".to_owned(),
+            reuse: RequestReuse::from(reuse),
         },
         Err(e) => {
-            assert!(
-                out.is_empty(),
-                "{}: an error leaves `out` cleared",
-                case.name
-            );
+            assert_eq!(out, b"", "{}: an error leaves `out` cleared", case.name);
             RequestExpect::Error(e.to_string())
         }
     }
 }
 
+/// Every request vector file and its case count (docs/notes/vectors.md).
+const VECTOR_FILES: [(&str, usize); 5] = [
+    ("h1-request/blazehttp-rules.json", 271),
+    ("h1-request/undici-selected.json", 38),
+    ("h1-request/go-selected.json", 17),
+    ("h1-request/httpguts-selected.json", 145),
+    ("h1-request/hyper-selected.json", 5),
+];
+
 #[test]
 fn injection_vectors() {
     let cases = load_suite::<RequestCase>(SUITE);
-    assert!(cases.len() > 400, "the whole corpus loads");
+    for (file, count) in VECTOR_FILES {
+        let loaded = cases.iter().filter(|(f, _)| f == file).count();
+        assert_eq!(loaded, count, "{file}");
+    }
+    assert_eq!(
+        cases.len(),
+        VECTOR_FILES.iter().map(|(_, n)| n).sum::<usize>()
+    );
     for (file, case) in cases {
         assert_eq!(run_case(&case), case.expect, "{file}/{}", case.name);
     }

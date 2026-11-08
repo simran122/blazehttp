@@ -16,6 +16,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 10\r\ntransfer-encoding: chunked\r\n",
         "headerLines": 2,
         "body": ""
@@ -33,6 +34,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "transfer-encoding: gzip\r\n",
         "headerLines": 1,
         "body": ""
@@ -50,6 +52,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 10\r\n",
         "headerLines": 1,
         "body": ""
@@ -67,6 +70,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "content-length: 10, 11\r\n",
         "headerLines": 1,
         "body": ""
@@ -84,6 +88,7 @@
         "target": "/",
         "templateHost": "127.0.0.1:3999",
         "templateFields": "",
+        "templateFieldLines": 0,
         "headers": "",
         "headerLines": 0,
         "body": "0123456789"
