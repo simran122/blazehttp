@@ -16,14 +16,27 @@ use support::vectors::{load_suite, load_suite_in};
 const SUITE: &str = "engine-core:h1_response";
 const REQUEST_SUITE: &str = "engine-core:h1_writer";
 
+/// Every generated method name.
+fn generated_methods() -> BTreeSet<&'static str> {
+    (0..)
+        .map_while(Method::from_wire)
+        .map(Method::as_str)
+        .collect()
+}
+
+/// Every error the engine can produce, as `ErrorCode`'s `Display` prints it.
+fn engine_errors() -> BTreeSet<String> {
+    ErrorCode::ALL_SAMPLES
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
 #[test]
 fn h1_response_suite_loads_with_requests_the_engine_knows() {
     let cases = load_suite::<ResponseCase>(SUITE);
     assert!(!cases.is_empty());
-    let methods: BTreeSet<&str> = (0..)
-        .map_while(Method::from_wire)
-        .map(Method::as_str)
-        .collect();
+    let methods = generated_methods();
     for (file, case) in &cases {
         assert!(
             methods.contains(case.method.as_str()),
@@ -50,10 +63,7 @@ fn only_an_empty_input_closes_before_the_response() {
 
 #[test]
 fn expected_errors_are_errors_the_engine_can_produce() {
-    let known: BTreeSet<String> = ErrorCode::ALL_SAMPLES
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+    let known = engine_errors();
     for (file, case) in load_suite::<ResponseCase>(SUITE) {
         if let ResponseExpect::Error(error) = &case.expect {
             assert!(
@@ -154,14 +164,8 @@ fn file_without_cases_panics() {
 
 #[test]
 fn h1_writer_suite_loads_with_known_methods_errors_and_reuse() {
-    let methods: BTreeSet<&str> = (0..)
-        .map_while(Method::from_wire)
-        .map(Method::as_str)
-        .collect();
-    let errors: BTreeSet<String> = ErrorCode::ALL_SAMPLES
-        .iter()
-        .map(ToString::to_string)
-        .collect();
+    let methods = generated_methods();
+    let errors = engine_errors();
     let cases = load_suite::<RequestCase>(REQUEST_SUITE);
     assert!(!cases.is_empty());
     for (file, case) in &cases {

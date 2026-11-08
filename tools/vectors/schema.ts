@@ -55,7 +55,8 @@ export interface VectorCase {
 }
 
 /** `reuse` as the writer returns it: `Reuse::Allowed` or `Reuse::CloseAfterExchange`. */
-type Reuse = 'allowed' | 'closeAfterExchange';
+const REUSE_VALUES = ['allowed', 'closeAfterExchange'] as const;
+type Reuse = (typeof REUSE_VALUES)[number];
 
 /** The writer's whole output (head and body) and its reuse verdict, or its error in display form `CODE/detail`. */
 type RequestExpect = { readonly bytes: string; readonly reuse: Reuse } | { readonly error: string };
@@ -96,7 +97,7 @@ export type VectorIndex = Readonly<Record<string, readonly string[]>>;
 /** Every error string the engine can produce, as `ErrorCode`'s `Display` prints it (generated, wire codes only). */
 const ENGINE_ERROR_SET: ReadonlySet<string> = new Set(ENGINE_ERRORS);
 const METHOD_SET: ReadonlySet<string> = new Set(METHODS);
-const REUSE_SET: ReadonlySet<string> = new Set<Reuse>(['allowed', 'closeAfterExchange']);
+const REUSE_SET: ReadonlySet<string> = new Set(REUSE_VALUES);
 /** `RequestParts::header_lines` and `HeaderTemplate::new`'s `field_lines` are `u16`s. */
 const MAX_LINE_COUNT = 65_535;
 /** The request's line counts, in schema order. */
@@ -146,12 +147,27 @@ const parseOk = (value: unknown, at: string): OkExpect => {
   };
 };
 
+/** A generated method name. */
+const parseMethod = (value: unknown, at: string): string => {
+  const method = asString(value, at);
+  return METHOD_SET.has(method) ? method : fail(at, `${method} is not a generated Method`);
+};
+
+/** An error the engine can produce, in display form. */
+const parseEngineError = (value: unknown, at: string): string => {
+  const error = asString(value, at);
+  return ENGINE_ERROR_SET.has(error) ? error : fail(at, `${error} is not an engine error`);
+};
+
+/** The optional informational `derivedFrom`. */
+const parseDerivedFrom = (value: unknown, at: string): { readonly derivedFrom?: string } =>
+  value === undefined ? {} : { derivedFrom: asString(value, at) };
+
 export const parseNativeExpect = (value: unknown, at: string): NativeExpect => {
   const keys = typeof value === 'object' && value !== null ? Object.keys(value) : [];
   if (keys.length !== 1) fail(at, 'expected exactly one of ok, error');
   if (keys[0] === 'ok') return { ok: parseOk(asObject(value, at, ['ok'])['ok'], `${at}.ok`) };
-  const error = asString(asObject(value, at, ['error'])['error'], `${at}.error`);
-  return ENGINE_ERROR_SET.has(error) ? { error } : fail(`${at}.error`, `${error} is not an engine error`);
+  return { error: parseEngineError(asObject(value, at, ['error'])['error'], `${at}.error`) };
 };
 
 /**
@@ -176,8 +192,7 @@ const parseCase = (value: unknown, at: string): VectorCase => {
   const input = asString(c['input'], `${at}.input`);
   const inputEncoding = parseEncoding(c['inputEncoding'], [[`${at}.input`, input]], at);
   const request = asObject(c['request'], `${at}.request`, ['method']);
-  const method = asString(request['method'], `${at}.request.method`);
-  if (!METHOD_SET.has(method)) fail(`${at}.request.method`, `${method} is not a generated Method`);
+  const method = parseMethod(request['method'], `${at}.request.method`);
   const expectJson = asObject(c['expect'], `${at}.expect`, ['native'], ['undici']);
   const reference =
     c['reference'] === undefined
@@ -188,7 +203,6 @@ const parseCase = (value: unknown, at: string): VectorCase => {
             asString(v, `${at}.reference.${k}`),
           ]),
         );
-  const derivedFrom = c['derivedFrom'] === undefined ? undefined : asString(c['derivedFrom'], `${at}.derivedFrom`);
   const native = parseNativeExpect(expectJson['native'], `${at}.expect.native`);
   if (inputEncoding === 'latin1' && 'ok' in native) {
     const { headers, body } = native.ok;
@@ -208,14 +222,13 @@ const parseCase = (value: unknown, at: string): VectorCase => {
         : { undici: parseNativeExpect(expectJson['undici'], `${at}.expect.undici`) }),
     },
     ...(reference === undefined ? {} : { reference }),
-    ...(derivedFrom === undefined ? {} : { derivedFrom }),
+    ...parseDerivedFrom(c['derivedFrom'], `${at}.derivedFrom`),
   };
 };
 
 const parseRequestExpect = (value: unknown, at: string): RequestExpect => {
   if (typeof value === 'object' && value !== null && 'error' in value) {
-    const error = asString(asObject(value, at, ['error'])['error'], `${at}.error`);
-    return ENGINE_ERROR_SET.has(error) ? { error } : fail(`${at}.error`, `${error} is not an engine error`);
+    return { error: parseEngineError(asObject(value, at, ['error'])['error'], `${at}.error`) };
   }
   const written = asObject(value, at, ['bytes', 'reuse']);
   const reuse = asString(written['reuse'], `${at}.reuse`);
@@ -231,8 +244,7 @@ const parseLineCount = (value: unknown, at: string): number => {
 
 const parseRequest = (value: unknown, at: string): RequestVectorCase['request'] => {
   const r = asObject(value, at, ['method', ...REQUEST_TEXTS, ...REQUEST_COUNTS], ['connAuthority']);
-  const method = asString(r['method'], `${at}.method`);
-  if (!METHOD_SET.has(method)) fail(`${at}.method`, `${method} is not a generated Method`);
+  const method = parseMethod(r['method'], `${at}.method`);
   const [templateFieldLines, headerLines] = REQUEST_COUNTS.map((k) => parseLineCount(r[k], `${at}.${k}`));
   const [target, templateHost, templateFields, headers, body] = REQUEST_TEXTS.map((k) => asString(r[k], `${at}.${k}`));
   return {
@@ -259,13 +271,12 @@ const parseRequestCase = (value: unknown, at: string): RequestVectorCase => {
       : [[`${at}.request.connAuthority`, request.connAuthority] as [string, string]]),
     ...('bytes' in expect ? [[`${at}.expect.bytes`, expect.bytes] as [string, string]] : []),
   ];
-  const derivedFrom = c['derivedFrom'] === undefined ? undefined : asString(c['derivedFrom'], `${at}.derivedFrom`);
   return {
     name: asString(c['name'], `${at}.name`),
     inputEncoding: parseEncoding(c['inputEncoding'], texts, at),
     request,
     expect,
-    ...(derivedFrom === undefined ? {} : { derivedFrom }),
+    ...parseDerivedFrom(c['derivedFrom'], `${at}.derivedFrom`),
   };
 };
 

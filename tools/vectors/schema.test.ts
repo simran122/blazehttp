@@ -237,7 +237,11 @@ const INVALID_REQUEST_FILES: [string, () => unknown, RegExp][] = [
     () => mutateRequest(([c]) => c && (c.request['headerLines'] = 65_536)),
     /headerLines: expected an integer in 0\.\.=65535/,
   ],
-  ['a fractional line count', () => mutateRequest(([c]) => c && (c.request['headerLines'] = 0.5)), /headerLines/],
+  [
+    'a fractional line count',
+    () => mutateRequest(([c]) => c && (c.request['headerLines'] = 0.5)),
+    /cases\[0\]\.request\.headerLines: expected an integer in 0\.\.=65535/,
+  ],
   ['an unknown reuse', () => mutateRequest(([c]) => c && (c.expect['reuse'] = 'never')), /expected allowed or/],
   ['bytes without reuse', () => mutateRequest(([c]) => c && delete c.expect['reuse']), /expect\.reuse: missing/],
   [
@@ -286,6 +290,31 @@ const INVALID_REQUEST_FILES: [string, () => unknown, RegExp][] = [
     'a lone low surrogate in the expected bytes',
     () => mutateRequest(([c]) => c && (c.expect['bytes'] = 'x\udc00')),
     /cases\[0\]\.expect\.bytes: a lone surrogate/,
+  ],
+  [
+    'a non-string connAuthority',
+    () => mutateRequest(([c]) => c && (c.request['connAuthority'] = 1)),
+    /cases\[0\]\.request\.connAuthority: expected a string/,
+  ],
+  [
+    'a non-string derivedFrom',
+    () => mutateRequest(([c]) => c && (c['derivedFrom'] = 1)),
+    /cases\[0\]\.derivedFrom: expected a string/,
+  ],
+  [
+    'bytes missing from a written expectation',
+    () => mutateRequest(([c]) => c && delete c.expect['bytes']),
+    /cases\[0\]\.expect\.bytes: missing/,
+  ],
+  [
+    'an expectation that is not an object',
+    () => mutateRequest(([c]) => c && Object.assign(c, { expect: 'allowed' })),
+    /cases\[0\]\.expect: expected an object/,
+  ],
+  [
+    'an unknown inputEncoding',
+    () => mutateRequest(([c]) => c && (c['inputEncoding'] = 'ascii')),
+    /cases\[0\]\.inputEncoding: expected utf8 or latin1/,
   ],
 ];
 
