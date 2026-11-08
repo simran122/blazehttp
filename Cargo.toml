@@ -14,6 +14,9 @@ deprecated = "deny"
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 await_holding_refcell_ref = "deny"
+# Exceptions are `#[expect(lint, reason = "…")]` only (design §13.1 rule 9): `expect` fails once it is no longer needed.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
 
 # Tests sweep every split point of the 64 KiB limit vectors (O(n²) parser calls); opt-level 1 keeps that fast while
 # debug assertions and overflow checks stay on (they follow `debug-assertions`/`overflow-checks`, not opt-level).

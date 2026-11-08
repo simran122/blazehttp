@@ -39,6 +39,10 @@ describe('renderNotices', () => {
     expect(licenceText(go)).toContain('Google LLC');
     expect(() => licenceText({ ...go, project: 'other' })).toThrow(/no licence text for BSD-3-Clause \(other\)/);
     expect(licenceText({ ...go, licence: 'MIT' })).toContain('Permission is hereby granted');
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      expect(() => licenceText({ ...go, project: name, licence: name }), name).toThrow(/no licence text/);
+      expect(() => licenceText({ ...go, project: name }), name).toThrow(/no licence text/);
+    }
   });
 
   it('rejects a licence without a known text', () => {

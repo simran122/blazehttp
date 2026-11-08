@@ -26,20 +26,31 @@ const snake = (s: string): string => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCas
 const variantOf = (code: string): string => pascal(code.toLowerCase());
 const isEnum = (t: FieldType): t is readonly string[] => typeof t !== 'string';
 
+/** Named fields of a code, in spec order; empty for detail codes. */
+const fieldsOf = (e: ErrorSpec): [string, FieldType][] => Object.entries(e.fields ?? {});
+
+/** The enum field of a code (name and ordered values), if it has one. */
+const enumEntryOf = (e: ErrorSpec): readonly [string, readonly string[]] | undefined =>
+  fieldsOf(e).find((entry): entry is [string, readonly string[]] => isEnum(entry[1]));
+
+/** Name of the code's `u32` field, if it has one. */
+const numberFieldOf = (e: ErrorSpec): string | undefined => fieldsOf(e).find(([, t]) => t === 'u32')?.[0];
+
+/** Rust type behind the detail id: `<Variant>Detail` for detail lists, else the enum field's type. */
+const valueTypeOf = (e: ErrorSpec, variant: string, enumField: string | undefined): string =>
+  e.details ? `${variant}Detail` : (e.enumType ?? `${variant}${pascal(enumField ?? '')}`);
+
 const toWireCode = (e: ErrorSpec, id: number): WireCode => {
   const variant = variantOf(e.code);
-  const fields = Object.entries(e.fields ?? {});
-  const enumEntry = fields.find(([, t]) => isEnum(t));
-  const numberEntry = fields.find(([, t]) => t === 'u32');
-  const enumValues = enumEntry?.[1];
+  const enumEntry = enumEntryOf(e);
   return {
     id,
     code: e.code,
     variant,
-    values: e.details ?? (enumValues !== undefined && isEnum(enumValues) ? enumValues : undefined),
-    valueType: e.details ? `${variant}Detail` : (e.enumType ?? `${variant}${pascal(enumEntry?.[0] ?? '')}`),
+    values: e.details ?? enumEntry?.[1],
+    valueType: valueTypeOf(e, variant, enumEntry?.[0]),
     enumField: enumEntry?.[0],
-    numberField: numberEntry?.[0],
+    numberField: numberFieldOf(e),
   };
 };
 
@@ -54,21 +65,20 @@ const tsFieldType = (t: FieldType): string => (isEnum(t) ? t.map(q).join(' | ') 
 const tsDetail = (e: ErrorSpec): string =>
   e.details
     ? e.details.map(q).join(' | ')
-    : `{ ${Object.entries(e.fields ?? {})
+    : `{ ${fieldsOf(e)
         .map(([name, t]) => `${name}: ${tsFieldType(t)}`)
         .join('; ')} }`;
 
 /** Display form: `CODE/detail` for detail codes and enum fields, bare `CODE` otherwise. */
 const tsFormatter = (e: ErrorSpec): string => {
-  const enumField = Object.entries(e.fields ?? {}).find(([, t]) => isEnum(t))?.[0];
+  const enumField = enumEntryOf(e)?.[0];
   if (e.details) return `(detail) => \`${e.code}/\${detail}\``;
   if (enumField !== undefined) return `(detail) => \`${e.code}/\${detail.${enumField}}\``;
   return `() => ${q(e.code)}`;
 };
 
 const tsWireEntry = (e: ErrorSpec): string => {
-  const enumValues = Object.values(e.fields ?? {}).find(isEnum);
-  const details = e.details ?? enumValues;
+  const details = e.details ?? enumEntryOf(e)?.[1];
   const list = (v: readonly string[] | undefined): string => (v ? `[${v.map(q).join(', ')}]` : 'undefined');
   const fields = e.fields ? Object.keys(e.fields) : undefined;
   return `  { code: ${q(e.code)}, details: ${list(details)}, fields: ${list(fields)} },`;
@@ -207,45 +217,44 @@ const rustSamples = (c: WireCode): string[] => {
   );
 };
 
-const generateRust = (spec: Spec): string => {
-  const codes = wireCodes(spec);
-  const enums = codes.flatMap((c) => (c.values ? [rustEnum(c.valueType, c.values, pascal)] : []));
-  const arm = (c: WireCode, body: string, bindEnum: boolean, bindNumber: boolean): string =>
-    `            ${rustPattern(c, bindEnum, bindNumber)} => ${body},`;
-  const toWire = codes.map((c) => {
-    const detail =
-      c.enumField === undefined
-        ? c.numberField === undefined
-          ? 'detail.to_wire()'
-          : '0'
-        : `${snake(c.enumField)}.to_wire()`;
-    return arm(
-      c,
-      `(pack(${String(c.id)}, ${detail}), ${c.numberField === undefined ? '0' : snake(c.numberField)})`,
-      true,
-      true,
-    );
-  });
-  const fromWire = codes.map((c) => {
-    const decode = `${c.valueType}::from_wire(detail)`;
-    if (c.enumField === undefined && c.numberField === undefined)
-      return `            ${String(c.id)} => ${decode}.map(Self::${c.variant}),`;
-    const num = c.numberField === undefined ? [] : [`${snake(c.numberField)}: arg`];
-    if (c.enumField === undefined)
-      return `            ${String(c.id)} => (detail == 0).then_some(Self::${c.variant} { ${num.join(', ')} }),`;
-    const parts = [snake(c.enumField), ...num];
-    return `            ${String(c.id)} => ${decode}.map(|${snake(c.enumField)}| Self::${c.variant} { ${parts.join(', ')} }),`;
-  });
-  const display = codes.map((c) => {
-    if (c.values === undefined) return arm(c, `f.write_str("${c.code}")`, false, false);
-    const value = c.enumField === undefined ? 'detail' : snake(c.enumField);
-    return arm(c, `write!(f, "${c.code}/{}", ${value}.as_str())`, true, false);
-  });
-  const limits = Object.entries(spec.limits.h1);
-  return `// ${HEADER}
+/** Match arm of an `ErrorCode` method: the variant's pattern, then `body`. */
+const rustArm = (c: WireCode, body: string, bindEnum: boolean, bindNumber: boolean): string =>
+  `            ${rustPattern(c, bindEnum, bindNumber)} => ${body},`;
 
-${enums.join('\n')}${rustEnum('Method', spec.methods, variantOf)}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+const rustToWireArm = (c: WireCode): string => {
+  const detail =
+    c.enumField === undefined
+      ? c.numberField === undefined
+        ? 'detail.to_wire()'
+        : '0'
+      : `${snake(c.enumField)}.to_wire()`;
+  return rustArm(
+    c,
+    `(pack(${String(c.id)}, ${detail}), ${c.numberField === undefined ? '0' : snake(c.numberField)})`,
+    true,
+    true,
+  );
+};
+
+const rustFromWireArm = (c: WireCode): string => {
+  const decode = `${c.valueType}::from_wire(detail)`;
+  if (c.enumField === undefined && c.numberField === undefined)
+    return `            ${String(c.id)} => ${decode}.map(Self::${c.variant}),`;
+  const num = c.numberField === undefined ? [] : [`${snake(c.numberField)}: arg`];
+  if (c.enumField === undefined)
+    return `            ${String(c.id)} => (detail == 0).then_some(Self::${c.variant} { ${num.join(', ')} }),`;
+  const parts = [snake(c.enumField), ...num];
+  return `            ${String(c.id)} => ${decode}.map(|${snake(c.enumField)}| Self::${c.variant} { ${parts.join(', ')} }),`;
+};
+
+const rustDisplayArm = (c: WireCode): string => {
+  if (c.values === undefined) return rustArm(c, `f.write_str("${c.code}")`, false, false);
+  const value = c.enumField === undefined ? 'detail' : snake(c.enumField);
+  return rustArm(c, `write!(f, "${c.code}/{}", ${value}.as_str())`, true, false);
+};
+
+/** The `ErrorCode` enum with its wire encoding, decoding and `Display`. */
+const rustErrorCode = (codes: readonly WireCode[]): string => `#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorCode {
 ${codes.map(rustVariant).join('\n')}
 }
@@ -266,7 +275,7 @@ ${codes
     #[must_use]
     pub fn to_wire(self) -> (u32, u32) {
         match self {
-${toWire.join('\n')}
+${codes.map(rustToWireArm).join('\n')}
         }
     }
 
@@ -274,7 +283,7 @@ ${toWire.join('\n')}
     pub fn from_wire(code: u32, arg: u32) -> Option<Self> {
         let detail = code >> 8;
         match code & 0xFF {
-${fromWire.join('\n')}
+${codes.map(rustFromWireArm).join('\n')}
             _ => None,
         }
     }
@@ -283,12 +292,16 @@ ${fromWire.join('\n')}
 impl core::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-${display.join('\n')}
+${codes.map(rustDisplayArm).join('\n')}
         }
     }
 }
+`;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/** The `H1Limits` struct and its `H1_LIMITS` values. */
+const rustLimits = (
+  limits: readonly (readonly [string, number])[],
+): string => `#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct H1Limits {
 ${limits.map(([k]) => `    pub ${snake(k)}: usize,`).join('\n')}
 }
@@ -297,6 +310,15 @@ pub const H1_LIMITS: H1Limits = H1Limits {
 ${limits.map(([k, v]) => `    ${snake(k)}: ${rustNumber(v)},`).join('\n')}
 };
 `;
+
+const generateRust = (spec: Spec): string => {
+  const codes = wireCodes(spec);
+  const enums = codes.flatMap((c) => (c.values ? [rustEnum(c.valueType, c.values, pascal)] : []));
+  return `// ${HEADER}
+
+${[...enums, rustEnum('Method', spec.methods, variantOf)].join('\n')}
+${rustErrorCode(codes)}
+${rustLimits(Object.entries(spec.limits.h1))}`;
 };
 
 /** Validates the spec and returns the TypeScript and Rust sources. */

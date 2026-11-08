@@ -11,8 +11,9 @@ const RULE = '='.repeat(80);
  * Licence texts by SPDX id, only for licences whose text names no project or organisation; the copyright line comes
  * from each vector file's source.
  */
-export const LICENCE_TEXTS: Readonly<Record<string, string>> = {
-  MIT: `Permission is hereby granted, free of charge, to any person obtaining a
+export const LICENCE_TEXTS: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    MIT: `Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the
 "Software"), to deal in the Software without restriction, including
 without limitation the rights to use, copy, modify, merge, publish,
@@ -30,8 +31,8 @@ NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.`,
-  /** curl's licence (`COPYING`), the text after its copyright line. */
-  curl: `All rights reserved.
+    /** curl's licence (`COPYING`), the text after its copyright line. */
+    curl: `All rights reserved.
 
 Permission to use, copy, modify, and distribute this software for any purpose
 with or without fee is hereby granted, provided that the above copyright
@@ -48,16 +49,18 @@ OR OTHER DEALINGS IN THE SOFTWARE.
 Except as contained in this notice, the name of a copyright holder shall not
 be used in advertising or otherwise to promote the sale, use or other dealings
 in this Software without prior written authorization of the copyright holder.`,
-};
+  }),
+);
 
 /**
  * Licence texts that name an organisation (e.g. BSD-3-Clause's "Neither the name of …" clause), keyed by project and
  * used only when the source's licence matches. Taken verbatim from the licence file at the recorded commit.
  */
-const PROJECT_LICENCE_TEXTS: Readonly<Record<string, { readonly licence: string; readonly text: string }>> = {
-  go: {
-    licence: 'BSD-3-Clause',
-    text: `Redistribution and use in source and binary forms, with or without
+const PROJECT_LICENCE_TEXTS: ReadonlyMap<string, { readonly licence: string; readonly text: string }> = new Map(
+  Object.entries({
+    go: {
+      licence: 'BSD-3-Clause',
+      text: `Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
 
@@ -82,13 +85,14 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`,
-  },
-};
+    },
+  }),
+);
 
 /** The licence text for `source`: its project's own text when it has one, else the generic SPDX text. */
 export function licenceText(source: VectorSource): string {
-  const own = PROJECT_LICENCE_TEXTS[source.project];
-  const text = own?.licence === source.licence ? own.text : LICENCE_TEXTS[source.licence];
+  const own = PROJECT_LICENCE_TEXTS.get(source.project);
+  const text = own?.licence === source.licence ? own.text : LICENCE_TEXTS.get(source.licence);
   if (text === undefined) throw new Error(`no licence text for ${source.licence} (${source.project})`);
   return text;
 }
