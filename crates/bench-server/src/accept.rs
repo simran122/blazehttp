@@ -130,8 +130,10 @@ impl ErrorLog {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::future::Future;
     use std::io;
     use std::sync::Mutex;
+    use std::time::Duration;
 
     use tokio::net::{TcpListener, TcpStream};
 
@@ -153,6 +155,13 @@ mod tests {
         }
     }
 
+    /// A broken retry loop fails the test in seconds instead of hanging it.
+    async fn within_seconds<T>(work: impl Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(5), work)
+            .await
+            .expect("accept loop finished within 5 s")
+    }
+
     async fn flaky(errors: Vec<io::Error>) -> Flaky {
         let inner = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         Flaky {
@@ -169,7 +178,7 @@ mod tests {
         let addr = listener.inner.local_addr().expect("addr");
         let client = tokio::spawn(TcpStream::connect(addr));
         let mut logged = ErrorLog::default();
-        let accepted = next_connection(&listener, &mut logged)
+        let accepted = within_seconds(next_connection(&listener, &mut logged))
             .await
             .expect("accepted after retries");
         assert!(accepted.nodelay().expect("nodelay"));
@@ -180,7 +189,7 @@ mod tests {
     #[tokio::test]
     async fn other_errors_stop_the_loop() {
         let listener = flaky(vec![io::Error::from(io::ErrorKind::InvalidInput)]).await;
-        let error = next_connection(&listener, &mut ErrorLog::default())
+        let error = within_seconds(next_connection(&listener, &mut ErrorLog::default()))
             .await
             .expect_err("fatal");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
