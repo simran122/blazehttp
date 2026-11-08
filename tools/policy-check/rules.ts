@@ -8,10 +8,14 @@ export type RuleId =
   | 'rust-commented-code'
   | 'no-install-scripts'
   | 'no-http-engine-dep'
-  | 'eslint-directive';
+  | 'eslint-directive'
+  | 'crate-lints';
 
 export type Violation = { file: string; line: number; rule: RuleId; message: string };
-export type Context = { packageVersion: string };
+/** Lint settings by tool (`rust`, `clippy`): whitespace-normalised `key = value` lines. */
+export type LintTables = ReadonlyMap<string, ReadonlySet<string>>;
+/** `workspaceLints` are the root manifest's `[workspace.lints.*]` tables. */
+export type Context = { packageVersion: string; workspaceLints: LintTables };
 type Rule = (path: string, content: string, ctx: Context) => Violation[];
 
 /** Rules apply only to code and config files, never to prose docs. */
@@ -230,6 +234,54 @@ const eslintDirective: Rule = (path, content) => {
     });
 };
 
+const TOML_HEADER = /^\[([^\]]+)\]\s*$/;
+const TOML_KEY_LINE = /^[\w-]+\s*=/;
+const CRATE_MANIFEST = /^crates\/[^/]+\/Cargo\.toml$/;
+const FUZZ_MANIFEST = /^crates\/[^/]+\/fuzz\/Cargo\.toml$/;
+
+/** Key lines of each TOML table, whitespace-normalised, e.g. `lints.clippy` → `{'pedantic = …'}`. */
+const tomlTables = (toml: string): Map<string, Set<string>> => {
+  const tables = new Map<string, Set<string>>();
+  let current = new Set<string>();
+  for (const raw of toml.split('\n')) {
+    const line = raw.trim().replace(/\s+/g, ' ');
+    const header = TOML_HEADER.exec(line)?.[1];
+    if (header !== undefined) {
+      current = tables.get(header) ?? new Set<string>();
+      tables.set(header, current);
+    } else if (TOML_KEY_LINE.test(line)) current.add(line);
+  }
+  return tables;
+};
+
+/** Lint settings by tool (`rust`, `clippy`) from the `[<prefix>.<tool>]` tables of a manifest. */
+export const lintTables = (toml: string, prefix: 'workspace.lints' | 'lints'): LintTables =>
+  new Map(
+    [...tomlTables(toml)]
+      .filter(([name]) => name.startsWith(`${prefix}.`))
+      .map(([name, keys]) => [name.slice(prefix.length + 1), keys]),
+  );
+
+/**
+ * Every crate inherits the workspace lints (`[lints] workspace = true`). A fuzz crate is its own workspace, so its
+ * `[lints.<tool>]` tables must repeat every workspace lint setting.
+ */
+const crateLints: Rule = (path, content, ctx) => {
+  if (CRATE_MANIFEST.test(path)) {
+    const inherits = tomlTables(content).get('lints')?.has('workspace = true') === true;
+    return inherits ? [] : [violation(path, 1, 'crate-lints', 'crate must set [lints] workspace = true')];
+  }
+  if (!FUZZ_MANIFEST.test(path)) return [];
+  const own = lintTables(content, 'lints');
+  return [...ctx.workspaceLints].flatMap(([tool, settings]) =>
+    [...settings]
+      .filter((setting) => own.get(tool)?.has(setting) !== true)
+      .map((setting) =>
+        violation(path, 1, 'crate-lints', `fuzz crate lacks workspace lint [lints.${tool}] ${setting}`),
+      ),
+  );
+};
+
 const RULES: Record<RuleId, Rule> = {
   'rust-allow-forbidden': rustAllowForbidden,
   'rust-allow-attribute': rustAllowAttribute,
@@ -239,6 +291,7 @@ const RULES: Record<RuleId, Rule> = {
   'no-install-scripts': noInstallScripts,
   'no-http-engine-dep': noHttpEngineDep,
   'eslint-directive': eslintDirective,
+  'crate-lints': crateLints,
 };
 
 export const checkFile = (path: string, content: string, ctx: Context): Violation[] =>
