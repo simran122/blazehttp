@@ -482,7 +482,7 @@ Every rule here is mandatory. Every review checks them under maintainability, an
 3. **Polymorphism.**
    - Hot paths use static dispatch: generics, or enums with an exhaustive `match`. No `Box<dyn …>` on a hot path.
    - TypeScript uses interfaces and lookup maps, never `switch`. A handler lookup map that this rule requires is not a GoF pattern use, so it is not named under rule 6.
-4. **Composition over inheritance.** No class inheritance, except `extends Error` (`HttpError`, `TransportError`) in TypeScript. Rust composes structs.
+4. **Composition over inheritance.** No class inheritance, except `extends Error` (`HttpError`, `TransportError`) in TypeScript. Rust composes structs. Not everything is a class: plain functions are the default where no state or polymorphism is needed.
 5. **SOLID.**
    - **Single responsibility** per function (§13.1 rule 9) and per file or module (§13.1 rules 1–2).
    - **Open/closed** applies to the genuinely open seams: new TS transports and `PlatformKit`s, interceptors and `DispatchHook`s, `ResponseDecoder`s and `BodyEncoder`s are added without editing the core.
