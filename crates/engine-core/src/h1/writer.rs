@@ -178,6 +178,8 @@ pub enum Reuse {
 /// 7. `Engine(Internal)`: a malformed header line, a forbidden name, a repeated singleton (template included), or
 ///    a line count other than `header_lines`;
 /// 8. `Engine(ResourceExhausted)`: the buffer cannot grow to the request's length.
+// Measured: inlining into the caller's loop is 15–35% faster (docs/perf/journal.md, 2026-11-08).
+#[inline]
 pub fn write_request(
     out: &mut Vec<u8>,
     parts: &RequestParts<'_>,
