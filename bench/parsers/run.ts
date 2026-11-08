@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 
 import { feedFailure, gateFailures } from './gate.ts';
 import type { GateParser } from './gate.ts';
+import { MAX_RUN_MS, integerOption } from './options.ts';
 import { dirtyDigest, readUntrackedAll, revision, sourceChange, staleImages, untrackedPaths } from './provenance.ts';
 import type { TreeState } from './provenance.ts';
 import { parseCheck, parseFeed, parseTime } from './protocol.ts';
@@ -22,9 +23,7 @@ import type { Workload } from './workloads.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const HERE = import.meta.dirname;
-/** The longest `--run-ms`: with the 100 ms warm-up and container start it stays well inside the invocation timeout. */
-const MAX_RUN_MS = 60_000;
-/** A harness invocation runs ≤ 100 ms warm-up + `--run-ms` (or seconds of quadratic feeding); longer is hung. */
+/** A harness invocation: ≤ 100 ms warm-up + `--run-ms` (≤ `MAX_RUN_MS`), or seconds of feeding; longer is hung. */
 const INVOCATION_TIMEOUT_MS = 120_000;
 /** Every container this runner starts: bounded memory (swap included, so the bench host never runs out), no network. */
 const CONTAINER_LIMITS = ['--memory=2g', '--memory-swap=2g', '--network=none'] as const;
@@ -327,14 +326,6 @@ function images(opts: Options): Record<string, { id: string; labels: Record<stri
   );
 }
 
-function positive(text: string, what: string, min = 1, max = Number.MAX_SAFE_INTEGER): number {
-  const n = Number(text);
-  if (!/^\d+$/.test(text) || n < min || n > max) {
-    throw new Error(`${what} must be an integer from ${String(min)} to ${String(max)}`);
-  }
-  return n;
-}
-
 function options(): Options {
   const { values } = parseArgs({
     options: {
@@ -354,10 +345,10 @@ function options(): Options {
   const unknown = wanted?.filter((id) => !PARSERS.some((p) => p.id === id)) ?? [];
   if (unknown.length > 0) throw new Error(`unknown parsers: ${unknown.join(', ')}`);
   return {
-    rounds: positive(values.rounds, '--rounds', 5),
-    runMs: positive(values['run-ms'], '--run-ms', 1, MAX_RUN_MS),
-    feedRounds: positive(values['feed-rounds'], '--feed-rounds'),
-    cpuset: String(positive(values.cpuset, '--cpuset', 0)),
+    rounds: integerOption(values.rounds, '--rounds', 5),
+    runMs: integerOption(values['run-ms'], '--run-ms', 1, MAX_RUN_MS),
+    feedRounds: integerOption(values['feed-rounds'], '--feed-rounds', 1),
+    cpuset: String(integerOption(values.cpuset, '--cpuset', 0)),
     cc: values.cc,
     // Our two rows are always included: the gate and every ratio refer to them.
     parsers: PARSERS.filter((p) => p.id === OURS || p.id === OURS_WITH_FIELDS || (wanted?.includes(p.id) ?? true)),

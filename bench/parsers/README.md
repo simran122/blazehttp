@@ -111,5 +111,6 @@ missing or non-positive run time) exit non-zero:
 
 Allocations are counted by a counting global allocator (Rust), `--wrap=malloc` (C), a replaced `operator new`
 (C++), `runtime.MemStats.Mallocs` (Go); Zig's APIs take no allocator. `protocol.ts` parses this output, `gate.ts`
-holds the gate, `report.ts` assembles the results; each has a `*.test.ts`. CI builds every image and runs a short
+holds the gate, `report.ts` assembles the results, `provenance.ts` records which source built the images and
+`options.ts` checks the runner's integer options; each has a `*.test.ts`. CI builds every image and runs a short
 smoke run on `ubuntu-24.04-arm` (job `bench-parsers`).
