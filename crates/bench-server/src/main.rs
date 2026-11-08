@@ -3,9 +3,10 @@
 //!
 //! Listens on loopback (`127.0.0.1:8080`) unless an address is given; the harness passes `0.0.0.0:…` explicitly.
 //! Prints `ready plain=<addr> [tls=<addr>]` on stdout once it accepts connections, after writing the TLS certificate
-//! (PEM) to `--cert-out`. `--print-cells` prints the cell manifest (`bench/cells.json`) and exits.
+//! (PEM) to `--cert-out` (which needs `--tls`). `--print-cells` prints the cell manifest (`bench/cells.json`) and
+//! exits. The server runs on `--threads` runtime workers; the main thread only waits.
 
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::thread::available_parallelism;
@@ -64,6 +65,9 @@ fn parse(mut words: impl Iterator<Item = String>) -> Result<Args, String> {
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
+    if args.cert_out.is_some() && args.config.tls.is_none() {
+        return Err("--cert-out needs --tls".into());
+    }
     if args.threads == 0 || args.config.max_connections == 0 {
         return Err("--threads and --max-connections must be at least 1".into());
     }
@@ -78,7 +82,8 @@ fn value<T: std::str::FromStr<Err: std::fmt::Display>>(
     raw.parse().map_err(|e| format!("{flag} {raw}: {e}"))
 }
 
-/// Serves on a runtime of its own until the process is stopped.
+/// Serves on a runtime of its own until the process is stopped. `serve` is spawned onto the workers, so the main
+/// thread (which drives `block_on`) does no server work.
 fn run(args: Args) -> io::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(args.threads)
@@ -87,13 +92,19 @@ fn run(args: Args) -> io::Result<()> {
         .build()?;
     runtime.block_on(async {
         let (ready, bound) = oneshot::channel();
-        let serving = serve(args.config, ready, std::future::pending());
-        tokio::try_join!(serving, announce(bound, args.cert_out)).map(|_| ())
+        let serving = tokio::spawn(serve(args.config, ready, std::future::pending()));
+        announce(bound, args.cert_out, io::stdout()).await?;
+        serving.await.map_err(io::Error::other)?
     })
 }
 
-/// Writes the certificate if asked, then prints the bound addresses (the harness waits for this line).
-async fn announce(bound: oneshot::Receiver<Bound>, cert_out: Option<PathBuf>) -> io::Result<()> {
+/// Writes the certificate if asked, then the ready line (the harness waits for it). A server that failed before it
+/// was ready announces nothing; its error comes from `serve`.
+async fn announce(
+    bound: oneshot::Receiver<Bound>,
+    cert_out: Option<PathBuf>,
+    mut out: impl Write,
+) -> io::Result<()> {
     let Ok(bound) = bound.await else {
         return Ok(());
     };
@@ -105,6 +116,79 @@ async fn announce(bound: oneshot::Receiver<Bound>, cert_out: Option<PathBuf>) ->
         .tls
         .map(|tls| format!(" tls={}", tls.addr))
         .unwrap_or_default();
-    println!("ready plain={}{tls}", bound.plain);
-    Ok(())
+    writeln!(out, "ready plain={}{tls}", bound.plain)?;
+    out.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::net::SocketAddr;
+
+    use bench_server::Bound;
+    use tokio::sync::oneshot;
+
+    use super::{Args, announce, parse};
+
+    /// A stdout that has been closed.
+    struct Closed;
+
+    impl Write for Closed {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn ready_server() -> oneshot::Receiver<Bound> {
+        let (ready, bound) = oneshot::channel();
+        let plain = SocketAddr::from(([127, 0, 0, 1], 8080));
+        ready
+            .send(Bound { plain, tls: None })
+            .expect("receiver alive");
+        bound
+    }
+
+    #[tokio::test]
+    async fn announce_prints_the_ready_line() {
+        let mut out = Vec::new();
+        announce(ready_server(), None, &mut out)
+            .await
+            .expect("announced");
+        assert_eq!(out, b"ready plain=127.0.0.1:8080\n");
+    }
+
+    #[tokio::test]
+    async fn announce_reports_a_closed_stdout() {
+        let error = announce(ready_server(), None, Closed)
+            .await
+            .expect_err("closed stdout");
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    fn args(words: &[&str]) -> Result<Args, String> {
+        parse(words.iter().map(|word| (*word).to_owned()))
+    }
+
+    #[test]
+    fn cert_out_needs_a_tls_port() {
+        let refused = args(&["--cert-out", "cert.pem"]).err().expect("refused");
+        assert!(refused.contains("--cert-out"), "{refused}");
+        assert!(args(&["--tls", "127.0.0.1:0", "--cert-out", "cert.pem"]).is_ok());
+    }
+
+    #[test]
+    fn bad_arguments_are_refused() {
+        for words in [
+            &["--threads", "0"][..],
+            &["--max-connections", "0"],
+            &["--unknown"],
+            &["--plain"],
+        ] {
+            assert!(args(words).is_err(), "{words:?}");
+        }
+    }
 }

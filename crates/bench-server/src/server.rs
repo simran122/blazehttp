@@ -52,14 +52,20 @@ impl Default for ServerConfig {
     }
 }
 
-/// The addresses actually bound, sent once the server accepts connections (a passive value, public fields).
+/// The addresses actually bound, sent once the server accepts connections.
+///
+/// A passive value type, so its fields are public (design §13.2 rule 1 carve-out, Rust API Guidelines
+/// C-STRUCT-PRIVATE).
 #[derive(Debug)]
 pub struct Bound {
     pub plain: SocketAddr,
     pub tls: Option<TlsBound>,
 }
 
-/// The bound TLS port and its certificate (a passive value, public fields).
+/// The bound TLS port and its certificate.
+///
+/// A passive value type, so its fields are public (design §13.2 rule 1 carve-out, Rust API Guidelines
+/// C-STRUCT-PRIVATE).
 #[derive(Debug)]
 pub struct TlsBound {
     pub addr: SocketAddr,
@@ -80,12 +86,14 @@ struct TlsPort {
 ///
 /// # Errors
 ///
-/// Binding a listener, generating the TLS identity, or an accept error that is not transient.
+/// `InvalidInput` when `max_connections` is not in `1..=Semaphore::MAX_PERMITS` (checked before binding); binding a
+/// listener, generating the TLS identity, or an accept error that is not transient.
 pub async fn serve(
     cfg: ServerConfig,
     ready: oneshot::Sender<Bound>,
     stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
+    check_connection_limit(cfg.max_connections)?;
     let plain = TcpListener::bind(cfg.plain).await?;
     let tls = match cfg.tls {
         Some(addr) => Some(bind_tls(addr).await?),
@@ -111,6 +119,17 @@ pub async fn serve(
     plain_tasks.shutdown().await;
     tls_tasks.shutdown().await;
     result
+}
+
+fn check_connection_limit(max_connections: usize) -> io::Result<()> {
+    if (1..=Semaphore::MAX_PERMITS).contains(&max_connections) {
+        return Ok(());
+    }
+    let message = format!(
+        "max_connections must be 1..={}, got {max_connections}",
+        Semaphore::MAX_PERMITS
+    );
+    Err(io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
 async fn bind_tls(addr: SocketAddr) -> io::Result<TlsPort> {

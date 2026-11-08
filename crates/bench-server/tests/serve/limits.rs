@@ -153,3 +153,24 @@ async fn test_reader_fails_fast_past_its_cap() {
     requests.extend_from_slice(b"GET /1k HTTP/1.1\r\nconnection: close\r\n\r\n");
     until_close(&mut stream, &requests).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_connection_limits_are_refused_before_binding() {
+    for max_connections in [0, tokio::sync::Semaphore::MAX_PERMITS + 1] {
+        let (ready, _bound) = tokio::sync::oneshot::channel();
+        let cfg = ServerConfig {
+            max_connections,
+            ..config(false)
+        };
+        let served = timeout(
+            CLOSE_WITHIN,
+            bench_server::serve(cfg, ready, std::future::pending()),
+        );
+        let error = served.await.expect("refused at once").expect_err("refused");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "{max_connections}"
+        );
+    }
+}
