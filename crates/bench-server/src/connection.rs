@@ -532,6 +532,17 @@ mod tests {
     }
 
     #[test]
+    fn closing_drains_at_most_64_kib_of_unread_input() {
+        let mut input = b"BROKEN\r\n\r\n".to_vec();
+        input.resize(BUFFER_BYTES * 20, b'x');
+        let mut script = Script::<true>::new(input, Vec::new());
+        serve(&mut script);
+        assert_eq!(script.output, refusal(Refusal::BadRequest));
+        // The first read fills the buffer; lingering then reads 64 KiB (spelled out to pin the limit) and stops.
+        assert_eq!(script.read, BUFFER_BYTES + 65_536);
+    }
+
+    #[test]
     fn head_larger_than_the_buffer_gets_431() {
         let input = format!(
             "GET /1k HTTP/1.1\r\nx-big: {}\r\n\r\n",
