@@ -1,5 +1,6 @@
 // Which source produced a run: the commit, the uncommitted changes, and a stamp the images carry.
 import { createHash } from 'node:crypto';
+import type { Hash } from 'node:crypto';
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -15,19 +16,31 @@ export interface TreeState {
   readonly commit: string;
   /** `git status --porcelain` lines; empty for a clean tree. */
   readonly dirtyFiles: readonly string[];
-  /** SHA-256 over the tracked diff and every untracked entry (path, kind and bytes); null for a clean tree. */
+  /** SHA-256 over the tracked diff and every untracked entry (path, kind and content); null for a clean tree. */
   readonly dirtySha256: string | null;
 }
 
+/** Feeds `bytes` preceded by its length as an unsigned 64-bit big-endian integer, so no field can run into the next. */
+function updateFramed(hash: Hash, bytes: Buffer): Hash {
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64BE(BigInt(bytes.length));
+  return hash.update(length).update(bytes);
+}
+
+const KIND_BYTE: Readonly<Record<UntrackedFile['kind'], number>> = { file: 1, link: 2 };
+
 /**
- * The digest of uncommitted work: `git diff HEAD` plus each untracked entry's path, kind and content, so a tree that
- * is dirty only through new files still gets a digest that changes with them.
+ * The digest of uncommitted work, so a tree that is dirty only through new files still gets a digest that changes with
+ * them. The input is a uniquely decodable stream: the length-framed diff bytes, then for each untracked entry its
+ * length-framed path, one kind byte and the 32-byte SHA-256 of its content.
  */
-export function dirtyDigest(diff: string, untracked: readonly UntrackedFile[]): string | null {
-  if (diff === '' && untracked.length === 0) return null;
-  const hash = createHash('sha256').update(diff);
+export function dirtyDigest(diff: Buffer, untracked: readonly UntrackedFile[]): string | null {
+  if (diff.length === 0 && untracked.length === 0) return null;
+  const hash = updateFramed(createHash('sha256'), diff);
   for (const file of untracked) {
-    hash.update('\0').update(file.path).update('\0').update(file.kind).update('\0').update(file.content);
+    updateFramed(hash, file.path)
+      .update(Buffer.of(KIND_BYTE[file.kind]))
+      .update(createHash('sha256').update(file.content).digest());
   }
   return hash.digest('hex');
 }

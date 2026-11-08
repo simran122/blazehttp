@@ -15,22 +15,34 @@ const file = (path: string, content: string): UntrackedFile => ({
 });
 
 describe('dirtyDigest', () => {
+  const none = Buffer.alloc(0);
+
   it('is null for a clean tree', () => {
-    expect(dirtyDigest('', [])).toBeNull();
+    expect(dirtyDigest(none, [])).toBeNull();
   });
 
   it('covers a tree dirty only through untracked files, and changes with their content and names', () => {
-    const a = dirtyDigest('', [file('x.ts', '1')]);
+    const a = dirtyDigest(none, [file('x.ts', '1')]);
     expect(a).toMatch(/^[0-9a-f]{64}$/);
-    expect(dirtyDigest('', [file('x.ts', '2')])).not.toBe(a);
-    expect(dirtyDigest('', [file('y.ts', '1')])).not.toBe(a);
-    expect(dirtyDigest('diff', [file('x.ts', '1')])).not.toBe(a);
+    expect(dirtyDigest(none, [file('x.ts', '2')])).not.toBe(a);
+    expect(dirtyDigest(none, [file('y.ts', '1')])).not.toBe(a);
+    expect(dirtyDigest(Buffer.from('diff'), [file('x.ts', '1')])).not.toBe(a);
   });
 
   it('tells a symbolic link from a file with the same bytes', () => {
-    expect(dirtyDigest('', [{ ...file('x', 'target'), kind: 'link' }])).not.toBe(
-      dirtyDigest('', [file('x', 'target')]),
+    expect(dirtyDigest(none, [{ ...file('x', 'target'), kind: 'link' }])).not.toBe(
+      dirtyDigest(none, [file('x', 'target')]),
     );
+  });
+
+  it('frames every field, so bytes cannot move between fields or entries', () => {
+    // The collision the unframed digest had: one entry whose content imitates a second entry.
+    expect(dirtyDigest(none, [file('a', 'X\0b\0file\0Y')])).not.toBe(
+      dirtyDigest(none, [file('a', 'X'), file('b', 'Y')]),
+    );
+    // Bytes moving from the diff into the first path, or from a path into its content.
+    expect(dirtyDigest(Buffer.from('dx'), [file('y', '')])).not.toBe(dirtyDigest(Buffer.from('d'), [file('xy', '')]));
+    expect(dirtyDigest(none, [file('ab', 'c')])).not.toBe(dirtyDigest(none, [file('a', 'bc')]));
   });
 });
 

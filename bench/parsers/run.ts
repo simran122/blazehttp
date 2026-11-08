@@ -298,7 +298,11 @@ function tree(): TreeState {
     dirtyFiles: run('git', ['status', '--porcelain'])
       .split('\n')
       .filter((line) => line !== ''),
-    dirtySha256: dirtyDigest(run('git', ['diff', 'HEAD']), untracked),
+    // Raw bytes of the real changes: `--binary` so two binary edits differ, and no colour, external diff or textconv.
+    dirtySha256: dirtyDigest(
+      runBytes('git', ['diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD']),
+      untracked,
+    ),
   };
 }
 
