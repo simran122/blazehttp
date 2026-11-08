@@ -775,6 +775,41 @@ mod tests {
         );
     }
 
+    /// The same after a request with a body: its deadline ends when the last body byte is read.
+    #[test]
+    fn a_request_after_a_body_gets_its_own_deadline() {
+        let first = "POST /1k HTTP/1.1\r\ncontent-length: 10\r\n\r\n0123456789".to_owned();
+        let second = get("/1k-h20");
+        let input = [first.clone(), second].concat().into_bytes();
+        let mut script = Script::new(input, vec![5, first.len() - 4]);
+        script.pauses = vec![
+            (first.len(), Duration::from_secs(5)),
+            (first.len() + 10, Duration::from_millis(500)),
+        ];
+        drive(&mut script, Duration::from_secs(1))
+            .expect("finished")
+            .expect("connection");
+        assert_eq!(
+            script.output,
+            [wire(b"/1k", false), wire(b"/1k-h20", false)].concat()
+        );
+    }
+
+    /// A head that trickles in must still complete within one deadline: reads do not restart it.
+    #[test]
+    fn a_trickled_head_is_closed_at_its_deadline() {
+        let input = get("/1k").into_bytes();
+        let mut script = Script::new(input, Vec::new());
+        script.pauses = (1..=6)
+            .map(|i| (i * 5, Duration::from_millis(300)))
+            .collect();
+        drive(&mut script, Duration::from_secs(1))
+            .expect("finished")
+            .expect("connection");
+        assert_eq!(script.output, b"", "no response after the deadline");
+        assert!(script.shut_down);
+    }
+
     #[test]
     fn a_refusal_respects_the_batch_response_limit() {
         let not_found = wire(b"/x", false);
