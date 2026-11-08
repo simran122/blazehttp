@@ -51,8 +51,84 @@ const rustAllowForbidden: Rule = (path, content) =>
       })
     : [];
 
-const ATTRIBUTE_START = /#!?\s*\[/g;
+const ATTRIBUTE_START = /#\s*!?\s*\[/g;
 const ALLOW_CALL = /\ballow\s*\(/;
+/** A string literal's opening: optional `b`/`c` prefix, optional raw `r` with its `#`s, then `"`. */
+const STRING_OPEN = /[bc]?(?:r(#*))?"/y;
+const IDENT_CHAR = /\w/;
+
+/** End of the block comment starting at `i` (slash-star to star-slash); Rust block comments nest. */
+const blockCommentEnd = (src: string, i: number): number => {
+  let depth = 0;
+  let j = i;
+  while (j < src.length) {
+    const pair = src.slice(j, j + 2);
+    const step = Number(pair === '/*') - Number(pair === '*/');
+    depth += step;
+    j += step === 0 ? 1 : 2;
+    if (depth === 0) return j;
+  }
+  return src.length;
+};
+
+/** End of a `"…"` body starting at `from`, skipping `\` escapes. */
+const quotedEnd = (src: string, from: number): number => {
+  for (let j = from; j < src.length; j += 1) {
+    if (src[j] === '\\') j += 1;
+    else if (src[j] === '"') return j + 1;
+  }
+  return src.length;
+};
+
+/** End of a string literal (plain, byte, C or raw) starting at `i`, or `undefined` when none starts there. */
+const stringEnd = (src: string, i: number): number | undefined => {
+  if (src[i] !== '"' && IDENT_CHAR.test(src[i - 1] ?? '')) return undefined;
+  STRING_OPEN.lastIndex = i;
+  const open = STRING_OPEN.exec(src);
+  if (open === null) return undefined;
+  const bodyStart = i + open[0].length;
+  const hashes = open[1];
+  if (hashes === undefined) return quotedEnd(src, bodyStart);
+  const close = src.indexOf(`"${hashes}`, bodyStart);
+  return close === -1 ? src.length : close + 1 + hashes.length;
+};
+
+/** End of a char literal at `i` (`'x'`, `'\n'`, `'\u{…}'`), or `undefined` for a lifetime such as `'a`. */
+const charLiteralEnd = (src: string, i: number): number | undefined => {
+  if (src[i + 1] === '\\') {
+    const close = src.indexOf("'", i + 3);
+    return close === -1 ? src.length : close + 1;
+  }
+  const width = (src.codePointAt(i + 1) ?? 0) > 0xffff ? 2 : 1;
+  return src[i + 1 + width] === "'" ? i + 2 + width : undefined;
+};
+
+/** End of the comment or literal that starts at `i`, or `undefined` when code starts there. */
+const nonCodeEnd = (src: string, i: number): number | undefined => {
+  if (src.startsWith('//', i)) {
+    const newline = src.indexOf('\n', i);
+    return newline === -1 ? src.length : newline;
+  }
+  if (src.startsWith('/*', i)) return blockCommentEnd(src, i);
+  if (src[i] === "'") return charLiteralEnd(src, i);
+  return stringEnd(src, i);
+};
+
+/** `src` with every comment and string or char literal blanked to spaces; newlines and offsets are kept. */
+const rustCodeOnly = (src: string): string => {
+  const out = src.split('');
+  let i = 0;
+  while (i < src.length) {
+    const end = nonCodeEnd(src, i);
+    if (end === undefined) {
+      i += 1;
+      continue;
+    }
+    for (let k = i; k < end; k += 1) if (out[k] !== '\n') out[k] = ' ';
+    i = end;
+  }
+  return out.join('');
+};
 
 /** Index just past the `]` that closes the attribute whose `[` is at `open` (or the end of `content`). */
 const attributeEnd = (content: string, open: number): number => {
@@ -64,15 +140,19 @@ const attributeEnd = (content: string, open: number): number => {
   return content.length;
 };
 
-/** Every outer (`#[…]`) and inner (`#![…]`) attribute with its first line, brackets balanced across lines. */
+/**
+ * Every outer (`#[…]`) and inner (`#![…]`) attribute with its first line, read from code only (comments and literals
+ * blanked), brackets balanced across lines.
+ */
 const rustAttributes = (content: string): { readonly line: number; readonly text: string }[] => {
+  const code = rustCodeOnly(content);
   let line = 1;
   let counted = 0;
-  return [...content.matchAll(ATTRIBUTE_START)].map((match) => {
-    line += content.slice(counted, match.index).split('\n').length - 1;
+  return [...code.matchAll(ATTRIBUTE_START)].map((match) => {
+    line += code.slice(counted, match.index).split('\n').length - 1;
     counted = match.index;
     const open = match.index + match[0].length - 1;
-    return { line, text: content.slice(match.index, attributeEnd(content, open)) };
+    return { line, text: code.slice(match.index, attributeEnd(code, open)) };
   });
 };
 

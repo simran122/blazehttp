@@ -136,6 +136,30 @@ test('every script extension is checked, JSX comments included and JSX text excl
 test('an unclosed rust attribute counts to the end of the file', () => {
   expect(v('a.rs', '#[allow(clippy::x')).toEqual(['rust-allow-attribute']);
 });
+test('rust attributes are read from code only: comments, strings and char literals are skipped', () => {
+  for (const src of [
+    '/// never write #[allow(x)]\nfn f() {}',
+    '//! crate docs: #![allow(x)]\nfn f() {}',
+    'fn f() { let s = "#[allow(x)]"; }',
+    'fn f() { let s = r#"#[allow(x)] "quoted" "#; let b = b"#[allow(y)]"; }',
+    'fn f() { let s = "escaped \\" #[allow(x)]"; }',
+    '// use #[allow(x)]\nfn f() {}',
+    '/* outer /* nested */ #[allow(x)] */\nfn f() {}',
+    '#[doc = "see allow(x)"]\nfn f() {}',
+    '#[deprecated(note = "allow(x) was removed")]\nfn f() {}',
+    "fn f() { let c = '#'; let d = '\\''; let e = '['; }\nfn g() {}",
+    "fn f<'a>(x: &'a str) -> &'a str { x }\n#[expect(clippy::x, reason = \"r\")]\nfn g() {}",
+  ])
+    expect(v('a.rs', src), src).not.toContain('rust-allow-attribute');
+  for (const src of [
+    '# ! [allow(clippy::doc_markdown)]\nfn f() {}',
+    '#\n[allow(clippy::x)]\nfn f() {}',
+    '#![cfg_attr(fuzzing, doc = "]", allow(clippy::x))]\nfn f() {}',
+    "fn f<'a>(x: &'a str) {}\n#[allow(clippy::x)]\nfn g() {}",
+    "fn f() { let c = '\"'; }\n#[allow(clippy::x)]\nfn g() {}",
+  ])
+    expect(v('a.rs', src), src).toContain('rust-allow-attribute');
+});
 test('every crate inherits the workspace lints', () => {
   expect(v('crates/x/Cargo.toml', '[package]\nname = "x"\n\n[lints]\nworkspace = true\n')).toEqual([]);
   for (const toml of ['[package]\nname = "x"\n', '[lints]\nworkspace = false\n', '[lints.clippy]\npedantic = "deny"\n'])
