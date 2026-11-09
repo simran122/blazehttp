@@ -338,14 +338,14 @@ Record every measured idea. Keep only measured wins.
 - **Hypothesis:** the copy is cheaper because rustls processes each slice of a vectored write separately.
 - **Method:** HTTPS `/1k`, c = 50, wrk pipelining 16 requests per write, server `--cpus=4 --threads 4`, wrk
   `--cpus=3`, shared network namespace, 5 s warm-up + 20 s, server CPU from cgroup `cpu.stat`; 6 rounds (rounds 1–3
-  copy first, rounds 4–6 alternated). Host not idle (load average 10–17), so dev only.
+  copy first, rounds 4–6 alternated). Host not idle (load average 10–15), so dev only.
 - **Numbers (no CI, n = 6):** server CPU per request copy median 2.01 µs (1.74–2.12), gather median 1.74 µs
   (1.62–1.87); gather lower in 4 of 6 rounds.
 - **Kept / dropped:** gather kept on both ports; the copy path and its per-stream switch were deleted (the hypothesis
   was wrong for this workload).
 - **Commit:** see the PR that adds `crates/bench-server`.
 
-### 2026-11-08: bench-server headroom re-measure after fix round 1 (dev)
+### 2026-11-08: bench-server headroom re-measure after fix round 1 (dev; build: fix round 1, see note §7.3)
 
 - **Idea:** confirm the server stays below the 60% CPU limit after the fix round (vectored writes, limits, TLS
   pinning). Detail and raw numbers: `docs/notes/bench-server.md` §7.3.

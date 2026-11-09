@@ -1,6 +1,7 @@
 # `bench-server`: research note (Task 9)
 
-The fixed-response HTTP/1.1 server that every G0/G1/G2 benchmark cell runs against (design §16.2–16.3). Its only
+The fixed-response HTTP/1.1 server that the G0, G1 and G2 cells with fixed bodies run against (design §16.2–16.3;
+the G1 streamed and upload cells need more, see TODO(#16)). Its only
 requirement beyond correct bytes is that it is **never the bottleneck**: a run is discarded when the server uses ≥ 60%
 of its CPUs (§16.2). Research written before any code (owner rule), access date of every source **2026-11-07**.
 **Verified** = checked against the source code or docs at the locked version, or measured; **unverified** = taken from a
@@ -24,12 +25,16 @@ secondary source, not checked.
   - a fixed 16 KiB read buffer per connection; a head that does not fit gets a pre-built `431` and the connection closes;
   - at most `max_connections` open connections per port (default 1024, `--max-connections`); a permit is taken before
     `accept`, so extra clients wait in the kernel backlog;
-  - a request (head and declared body) must complete within `request_timeout` (default 10 s) of its first byte, each
-    batch must be written within the same time, and a TLS handshake too (stall mode is exempt). An idle keep-alive
-    connection with nothing buffered (empty lines alone do not count) is not timed: the connection cap bounds those;
+  - a request (head and declared body) must complete within `request_timeout` (default 10 s, at most
+    `MAX_REQUEST_TIMEOUT` = 1 h) of its first byte; each write or flush call that does not complete at once must make
+    progress within the same time (a slow but steady reader is not cut off, and a write the socket takes at once arms
+    no timer); a TLS handshake too (stall mode is exempt). An idle keep-alive connection with nothing buffered (empty
+    lines alone do not count) is not timed: the connection cap bounds those;
   - a `content-length` request body is skipped by counting (no buffering).
-- Refusals: a head the scan refuses (§5) gets a pre-built `400`, `431` or `505` with `connection: close`. Every close
-  is graceful (after a refusal, the client's close once its declared body has been read, a timeout, or end of stream):
+- Refusals: a head the scan refuses (§5) gets a pre-built `400` or `431` with `connection: close` at once (its
+  framing is unknown); a parsed head with another HTTP major version gets `505` once its declared body has been read.
+  Every close is graceful (after a refusal, the client's close once its declared body has been read, a timeout, end of
+  stream, or the server stopping on SIGTERM/SIGINT or its `stop` future):
   the server shuts down its write side (TLS sends `close_notify`), then drains unread input, all within 1 s and at most
   64 KiB, so the kernel does not reset the connection and destroy responses the client has not read yet.
 - TLS is pinned so every client negotiates the same work: rustls 0.23 with the **ring** provider (as the Rust
@@ -46,10 +51,13 @@ secondary source, not checked.
   - The thread count is a binary flag (`--threads`, it sizes the runtime `main` builds), not a `ServerConfig` field.
     The binary spawns `serve` onto those workers, so the main thread only waits.
   - `serve` should run on a runtime of its own: a client sharing its workers would be charged the server's work.
-  - `serve` refuses a `max_connections` outside `1..=Semaphore::MAX_PERMITS` or a zero `request_timeout` with
-    `InvalidInput` before binding;
-    `--cert-out` without `--tls` is a usage error.
-  - The binary listens on loopback by default (`127.0.0.1:8080`); the harness passes `0.0.0.0:…` explicitly.
+  - `ServerConfig` gained `max_connections` and `request_timeout`; `serve` refuses a `max_connections` outside
+    `1..=Semaphore::MAX_PERMITS` or a `request_timeout` that is zero or above `MAX_REQUEST_TIMEOUT` with
+    `InvalidInput` before binding. `--cert-out` without `--tls` is a usage error.
+  - `Cell` gained `head_len` (the `HEAD` answer) and `close_delimited` (the HTTP/1.0 variant of a chunked cell);
+    `CloseDelimited`, `cells_json()`, `benchmark_crypto_provider()` and `MAX_REQUEST_TIMEOUT` are public too.
+  - The binary listens on loopback by default (`127.0.0.1:8080`): clients in its network namespace reach it there;
+    `0.0.0.0:…` is needed only for clients in another namespace. SIGTERM or SIGINT stops it cleanly (exit 0).
   - It prints `ready plain=<addr> [tls=<addr>]` when it accepts connections.
   - `ServerConfig`, `Bound`, `TlsBound` and `Cell` are passive value types with public fields (design §13.2 rule 1
     carve-out, Rust API Guidelines C-STRUCT-PRIVATE).
@@ -135,15 +143,18 @@ request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells)
    - `content-length`: digits only, at most once, else `400`. The value is the number of body bytes to skip.
    - `transfer-encoding` → `400`. Chunked request bodies are not supported yet, and refusing loudly beats mis-framing
      the requests that follow. TODO(#16): the G1 streaming-upload cell needs them.
-   - `connection`: the `close` token, or HTTP/1.0 without `keep-alive`, closes the connection after this response
+   - `connection`: the `close` token, HTTP/1.0 without `keep-alive`, or a refused version (`505`), closes the
+     connection after this response
      **and its declared body** (the body is read, not treated as junk, so a client that writes it all first gets its
      response and a clean close). The pre-built responses do not echo `connection: close` or `keep-alive` (RFC 9112
      §9.6 SHOULD), deliberately: the bytes stay identical for every client. HTTP/1.0 support is best effort (an
      HTTP/1.0 keep-alive client is kept open but not told so); the benchmark clients all speak HTTP/1.1.
 6. Look the target up in the cell table; an unknown target gets the pre-built 404. An HTTP/1.0 request for the chunked
-   cell gets `505` (RFC 9112 §6.1 forbids a chunked response to HTTP/1.0).
-7. When no complete request is left in the buffer, write the batch and `flush()` it (TLS) within the request timeout
-   (a peer that never reads cannot hold the connection), then compact the leftover bytes.
+   cell gets the same body close-delimited (RFC 9112 §6.1 forbids a chunked response to HTTP/1.0; §6.3 rule 8 lets
+   the close end the body), and the connection closes after it.
+7. When no complete request is left in the buffer, write the batch and `flush()` it (TLS); each call that does not
+   complete at once must progress within the request timeout (a peer that never reads cannot hold the connection),
+   then compact the leftover bytes.
 8. After a `400`/`431`/`505`, the client's close (once its body is read), a request timeout or end of stream: close
    the write side (TLS `close_notify`) and read unread input, both within 1 s and at most 64 KiB, then drop the
    connection.
@@ -213,6 +224,14 @@ per-stream switch were deleted. Plain TCP pipelined at the same depth: 1.26 µs 
 
 ### 7.3 Re-measure after fix round 1 (2026-11-08, dev; host load average 5–20 from other agents' containers)
 
+**Build measured:** branch `p0/bench-server` during fix round 1, before fix rounds 2 and 3. Plain rows ran on the
+vectored-write path that ships; the HTTPS rows ran on the TLS copy path, which was deleted right after because gather
+measured cheaper (§7.2). Later rounds changed bounds and refusal paths; per answered request they add only a check of
+the newly read bytes and no timer when a write completes at once, but that is unmeasured, so all rows are re-measured
+in the nightly window (#15) before they gate anything. wrk reported socket read timeouts (6–152 per
+20 s run, under 0.01% of requests) in 11 of the 17 runs; they are counted as errors by wrk, not as answered
+requests, and are listed in the raw log.
+
 This used the same method as §7, with the server capped at `--memory=1g` and wrk at `--memory=512m`. The raw lines
 are in the Task 9 logs (`measure.log`).
 
@@ -255,7 +274,8 @@ fixtures because `spike/` is deleted at the end of P0, §14.2).
 | `/1k-chunked` | `content-type`, `transfer-encoding: chunked`, `date` | payload in 256-byte chunks (`100` ×3, `4f`) + `0\r\n\r\n` |
 | `/1m` | `content-type: application/octet-stream`, `content-length: 1048576`, `date` | payload repeated to 1 MiB |
 | anything else | `404 Not Found`, `content-length: 0`, `date` | none |
-| refused head | `400 Bad Request` or `431 Request Header Fields Too Large`, `content-length: 0`, `connection: close`, `date` | none |
+| refused head | `400 Bad Request`, `431 Request Header Fields Too Large` or `505 HTTP Version Not Supported`, `content-length: 0`, `connection: close`, `date` | none |
+| `/1k-chunked` to HTTP/1.0 | `content-type`, `date` (no framing field) | payload, ended by closing the connection |
 
 A `HEAD` request gets the cell's head only (`Cell::head_len` bytes of the same pre-built response).
 
