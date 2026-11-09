@@ -302,7 +302,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         self.batch_bytes += response.len();
     }
 
-    /// Writes and flushes the batch within the request timeout (a peer that never reads cannot hold the task).
+    /// Writes and flushes the batch, then empties it ([`Self::write_gathered`] bounds each call).
     async fn write_batch(&mut self) -> io::Result<()> {
         if self.batch.is_empty() {
             return Ok(());

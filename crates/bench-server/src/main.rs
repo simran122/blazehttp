@@ -1,7 +1,8 @@
 //! `bench-server [--plain ADDR] [--tls ADDR] [--cert-out PATH] [--threads N] [--max-connections N] [--stall]
 //! [--print-cells]`
 //!
-//! Listens on loopback (`127.0.0.1:8080`) unless an address is given; the harness passes `0.0.0.0:…` explicitly.
+//! Listens on loopback (`127.0.0.1:8080`) unless an address is given: clients in its network namespace reach it there,
+//! and `0.0.0.0:…` is for clients in another namespace.
 //! Prints `ready plain=<addr> [tls=<addr>]` on stdout once it accepts connections, after writing the TLS certificate
 //! (PEM) to `--cert-out` (which needs `--tls`). `--print-cells` prints the cell manifest (`bench/cells.json`) and
 //! exits. The server runs on `--threads` runtime workers; the main thread only waits. SIGTERM (`docker stop`) or
