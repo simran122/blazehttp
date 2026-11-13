@@ -371,7 +371,7 @@ fn rejects_template_for_other_authority() {
     assert!(write_request(&mut out, &request, &template, b"example.com:8080").is_ok());
 }
 
-const INVALID_HOSTS: [&[u8]; 41] = [
+const INVALID_HOSTS: [&[u8]; 42] = [
     b"",
     b"a b",
     b"a/b",
@@ -408,13 +408,15 @@ const INVALID_HOSTS: [&[u8]; 41] = [
     b"a:0",
     b"a:080",
     // IPv6 literals WHATWG never serialises this way (note §6.2): upper-case hex, leading zeros, no compression, a
-    // dotted IPv4 tail, a run of one zero compressed, and a shorter run compressed before the longest.
+    // dotted IPv4 tail, a run of one zero compressed, a shorter run compressed before the longest, and the second of
+    // two equally long runs compressed (the first one wins).
     b"[2001:DB8::A]",
     b"[0001:0db8::0001]",
     b"[0:0:0:0:0:0:0:1]",
     b"[::ffff:1.2.3.4]",
     b"[1::2:3:4:5:6:7]",
     b"[1::2:0:0:0:3]",
+    b"[1:0:0:2:3::4]",
 ];
 
 #[test]
@@ -429,7 +431,7 @@ fn template_rejects_invalid_host() {
     }
 }
 
-const VALID_HOSTS: [&[u8]; 13] = [
+const VALID_HOSTS: [&[u8]; 14] = [
     b"example.com",
     b"127.0.0.1:3999",
     b"[::1]:8080",
@@ -437,6 +439,7 @@ const VALID_HOSTS: [&[u8]; 13] = [
     b"[2001:db8::a]",
     b"[1:0:2:3:4:5:6:7]",
     b"[1:0:0:2::3]",
+    b"[1::2:3:0:0:4]",
     b"[::]",
     b"xn--bcher-kva.example",
     b"a,b.example",
@@ -1059,7 +1062,7 @@ fn run_case(case: &RequestCase) -> RequestExpect {
 
 /// Every request vector file and its case count (docs/notes/vectors.md).
 const VECTOR_FILES: [(&str, usize); 5] = [
-    ("h1-request/blazehttp-rules.json", 292),
+    ("h1-request/blazehttp-rules.json", 294),
     ("h1-request/undici-selected.json", 38),
     ("h1-request/go-selected.json", 17),
     ("h1-request/httpguts-selected.json", 145),

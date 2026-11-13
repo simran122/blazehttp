@@ -5002,7 +5002,7 @@
       }
     },
     {
-      "name": "template host / ipv6 first of equal zero runs",
+      "name": "template host / ipv6 longest zero run compressed",
       "inputEncoding": "utf8",
       "request": {
         "method": "GET",
@@ -5017,6 +5017,41 @@
       "expect": {
         "bytes": "GET /x HTTP/1.1\r\nhost: [1:0:0:2::3]\r\n\r\n",
         "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv6 first of equal zero runs",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1::2:3:0:0:4]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: [1::2:3:0:0:4]\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv6 second of equal zero runs compressed",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1:0:0:2:3::4]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
       }
     },
     {

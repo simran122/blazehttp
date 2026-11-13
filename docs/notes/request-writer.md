@@ -864,13 +864,15 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 
 **Origin binding and templates:**
 - `rejects_template_for_other_authority`: the authority differs by port, by case and by a trailing dot;
-- `template_rejects_invalid_host` (`INVALID_HOSTS`, 41): empty; SP, `/`, `@`, `?`, `#`, `%`, CR, LF, NUL, DEL, 0x80;
+- `template_rejects_invalid_host` (`INVALID_HOSTS`, 42): empty; SP, `/`, `@`, `?`, `#`, `%`, CR, LF, NUL, DEL, 0x80;
   UTF-8 `é`; `[::1` and `::1]`; port `:`, `:0`, `:65536`, `:123456` and `:-1`; empty labels; IPv6 literals WHATWG
   never writes (fix round 2, W3): `[2001:DB8::A]`, `[0001:0db8::0001]`, `[0:0:0:0:0:0:0:1]`, `[::ffff:1.2.3.4]`,
-  `[1::2:3:4:5:6:7]` (a single zero piece compressed), `[1::2:0:0:0:3]` (not the longest run);
-- `template_accepts_hosts` (`VALID_HOSTS`, 13): `example.com`, `127.0.0.1:3999`, `[::1]:8080`, `xn--bcher-kva.example`,
+  `[1::2:3:4:5:6:7]` (a single zero piece compressed), `[1::2:0:0:0:3]` (not the longest run), `[1:0:0:2:3::4]` (the
+  second of two equal runs);
+- `template_accepts_hosts` (`VALID_HOSTS`, 14): `example.com`, `127.0.0.1:3999`, `[::1]:8080`, `xn--bcher-kva.example`,
   `a,b.example` (`,` is kept, §6.2), and the canonical IPv6 forms `[::ffff:102:304]`, `[2001:db8::a]`,
-  `[1:0:2:3:4:5:6:7]`, `[1:0:0:2::3]` (first of two equal runs) and `[::]`;
+  `[1:0:2:3:4:5:6:7]`, `[1:0:0:2::3]` (the longer of two runs), `[1::2:3:0:0:4]` (the first of two equal runs; fix
+  round 2 mutant `>`→`>=` in `longest_zero_run`) and `[::]`;
 - `template_rejects_forbidden_defaults`: every forbidden name, underscore variants included;
 - `template_sensitive_flag`: set by `authorization`, `cookie`, `x-api-key` and a custom configured name; clear
   otherwise;
@@ -983,7 +985,7 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 
 | File | Source | Cases (planned) |
 |---|---|---|
-| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 292) |
+| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 294) |
 | `h1-request/undici-selected.json` | undici v8.12.4 (§9.4) | ≈ 25 (built: 38) |
 | `h1-request/go-selected.json` | go1.27.3 (§9.4) | ≈ 15 (built: 17) |
 | `h1-request/httpguts-selected.json` | x/net v0.62.0 `TestValidHeaderFieldName`, `TestIsTokenRune`, `TestPunycodeHostPort` | ≈ 15 (built: 145; `TestValidHeaderFieldName` has only 6 cases, so the token-rune and host tests were added) |
@@ -1069,12 +1071,23 @@ and §7 from the RFC grammar with per-byte loops and string comparisons. `write_
 dictionary; the main run keeps its corpus in the task logs and the fuzz mutants are measured from an empty corpus.
 
 ### 9.6 Mutation testing (F8)
-- **`cargo mutants`** (27.1.0): `cargo mutants -p engine-core --file src/h1/writer.rs`. Add `--file src/h1/grammar.rs`
-  if Task 5 changes it, and `--file src/h1/mod.rs` for the hoisted lints (no mutants expected). Target: **0
-  survivors**. Each survivor is either killed by a new test or justified in the PR (e.g. an equivalent mutant),
-  following `docs/notes/response-parser.md`'s fuzz-mutation practice. **Expected survivor (X8):** the overflow
-  branch of the total-length `checked_add` chain is unreachable once the limits (§7 checks 1–3) have passed; a
-  mutant there is equivalent and is justified, not killed.
+- **`cargo mutants`** (27.1.0), in the capped container (`--memory=2g --cpus=1`, `--jobs 1`, 20 s timeout):
+  `cargo mutants -p engine-core --file 'crates/engine-core/src/h1/writer/**' --jobs 1 --timeout 20 -- -- --test-threads 2`
+  (the writer was split into `writer/` in fix round 1, so the original `--file src/h1/writer.rs` named no file;
+  R2-1). Target: **0 survivors**; each survivor is killed by a new test or justified as an equivalent mutant
+  (`docs/notes/response-parser.md`'s practice). The overflow branch of the total-length sum is not a mutant:
+  `try_fold(.., checked_add)` + `ok_or` has no operator cargo-mutants replaces.
+  - **Fix round 1** (`writer.rs`, `grammar.rs`, `mod.rs`): 188 mutants, 174 caught, 2 timeouts, 10 unviable, 2 missed.
+  - **Fix round 2** (`writer/**`): 185 mutants in 22 min, 164 caught, 2 timeouts, 16 unviable, 3 missed. One was a
+    test gap, now killed: `longest_zero_run` `>`→`>=` (compress the *last* of two equal zero runs) survived because
+    the vector named "first of equal zero runs" had runs of 2 and 3; `[1::2:3:0:0:4]` (valid) and `[1:0:0:2:3::4]`
+    (rejected) now fail three tests under that mutant (RED, then GREEN).
+  - **Timeouts (detected):** `split_field_line` replaced by an empty name with a fixed one-byte rest returns a rest
+    that never shrinks, so the field loop never ends; the test run is killed at the timeout, which counts as caught.
+  - **Equivalent (justified):** `admit`'s `seen | bit` → `seen ^ bit` runs only when `seen & bit == 0`, where `|`
+    and `^` agree; `target.rs`'s `NEVER = NOT_IN_PATH | NOT_IN_QUERY` → `^` combines two disjoint bits (1 and 2),
+    where `|` and `^` agree; `grammar::non_field_content_flags` `|` → `^` (fix round 1, outside `writer/` now) is
+    equivalent for the same reason (the first task report).
 - **Fuzz mutant check (X8):** four deliberately broken writers, each applied as a **temporary patch in a scratch
   checkout** (the parser's practice, `docs/notes/response-parser.md` §9.7), never as `cfg`-gated branches in
   engine-core. Each must be caught by §9.5 within **10 minutes or 10 M executions** on one core, from an empty corpus:
