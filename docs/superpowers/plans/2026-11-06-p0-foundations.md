@@ -95,7 +95,7 @@ These apply to every task from Task 4 on and override anything above that confli
 
   Task 4 merged before items 5 and 6 existed: Task 4d runs its mutation pass, and Task 4b is its benchmark.
 - **Owner speed gates for components (hard gates: no release until they are met).**
-  - **Parser (2026-11-07).** `ResponseParser` is faster than every other head parser, C and Rust included (httparse, picohttpparser, llhttp and every other row of the Task 4b race), with **equal work** (per-field name and value spans), on arm64 **and** x64, on the workloads `1k`, `1k-h20`, the 64-variant rings, `mixed` and the 1-byte feeds. The run has 10 rounds in the quiet window, and the §16.4 component statistic's CI upper bound is < 1.0× against every rival. It is checked at the end of P1a.
+  - **Parser (2026-11-07).** `ResponseParser` is faster than every other head parser, C and Rust included (httparse, picohttpparser, llhttp and every other row of the Task 4b race), with **equal work** (per-field name and value spans), on arm64 **and** x64, on the workloads `1k`, `1k-h20`, the 64-variant rings, `mixed` and the 1-byte feeds. The run has 10 rounds in the quiet window, and the §16.4 component statistic's CI upper bound is < 1.0× against every rival. **Owner decision 2026-11-13:** the gate is met by the **scalar** parser, with no `engine-simd` kernel, against rivals that run as shipped with their own SIMD. It is Task 4c's acceptance, and Task 4c is not closed while a cell loses. SIMD (P1a) is an extra layer on a scalar parser that already wins, never the way to meet the gate. The race is re-run whenever the parser changes, P1a included.
   - **Writer (2026-11-08).** `write_request` is faster than every other request writer with equal work (Task 5c's race and tiers), on arm64 and x64, by the same statistic, and `post1k` costs ≤ 2.3× the copy floor.
   - **First in every cell (2026-11-08).** The engine and the client are first in every benchmark, component and cell, shared-limit cells included (§2). A lost cell is an open speed item with an owner task and is never dropped from a report.
 
@@ -175,7 +175,7 @@ Each task's PR updates this table.
 
 ## Schedule and parallel tracks
 
-The original three-week table was replaced on 2026-11-13. In the first 8 days (2026-11-06 to 2026-11-13) 4 of the 20 original tasks merged, plus Task 4b and two research notes; the two largest engine tasks (6 and 12) had not started, and five tasks were added (4c, 4d, 5b, 5c, 15a). At that rate P0 takes **about 5–7 weeks from 2026-11-06 (estimate)**, so it ends between 2026-12-11 and 2026-12-25. The owner sets the end date ("Owner decisions needed"). The order follows the dependencies; the week numbers are estimates.
+The original three-week table was replaced on 2026-11-13. In the first 8 days (2026-11-06 to 2026-11-13) 4 of the 20 original tasks merged, plus Task 4b and two research notes; the two largest engine tasks (6 and 12) had not started, and five tasks were added (4c, 4d, 5b, 5c, 15a). At that rate P0 takes **about 5–7 weeks from 2026-11-06 (estimate)**, so it ends between 2026-12-11 and 2026-12-25. The owner sets the end date ("Owner decisions needed"). The order follows the dependencies; the week numbers are estimates. Task 4c has no end date: by owner decision (2026-11-13) it stays open until the scalar parser wins every cell, so the estimate counts only its first PR. If Task 4c is still open when the rest of P0 is done, it is a gate miss in the sense of design §15 ("Gate misses"): other work continues and the P0 report lists it as open.
 
 | Week | Engine track | Bench track | Platform track |
 |---|---|---|---|
@@ -190,7 +190,7 @@ Dependencies:
 - T1 → T2 → {T3, T9}. {T2, T3} → T4 (the parser's tests run the vectors Task 3 imports). T1 → T15a.
 - T4 → {T4b, T4d, T5}. {T4b, T4d} → T4c: 4c needs the race, and it changes code whose surviving mutants 4d must kill first.
 - T5 → T5b → T5c. T4c → {T5b, T5c}: 5b reuses the name search 4c puts in `grammar.rs`, and 5c reuses `pairedRatioCi`.
-- {T4c, T5} → T6: 4c changes `parse`, which the connection calls. Task 5b keeps `write_request`'s signature, so it may run beside Task 6.
+- {T4c, T5} → T6: 4c changes `parse`, which the connection calls. Task 6 needs Task 4c's first PR, which carries the interface; it does not wait for Task 4c to close. Task 5b keeps `write_request`'s signature, so it may run beside Task 6.
 - T6 → {T7, T12}. T7 → {T8, T10, T11}: the harness smoke run and the xlang runner need `engine-bench`. T9 → {T7, T10}.
 - T12 → T13 → {T14, T15}. T15 → T16 (packaging uses the native matrix's artefacts).
 - {T7, T8, T10, T11, T14} → {T17, T18, T19} → T20. T11 must land before T14 (spike deletion). Task 19's `?size=` cell changes Task 9's `bench-server`.
@@ -512,13 +512,13 @@ impl ResponseParser {
 - [ ] A run of the race on x64 (none exists) → Task 4c Step 7.
 - [ ] A 10-round run in the nightly window on the arm64 reference host → Task 4c Step 7 if the window exists by then, otherwise Task 20 Step 1.
 
-**Acceptance:** on each architecture a committed results file holds 10 valid rounds for every row and workload, and the report prints the paired ratio with its CI for every rival. Passing the owner's gate is not part of this task: the gate is checked at the end of P1a.
+**Acceptance:** on each architecture a committed results file holds 10 valid rounds for every row and workload, and the report prints the paired ratio with its CI for every rival. Passing the owner's gate is not part of this task: it is Task 4c's acceptance.
 
 ---
 
 ### Task 4c: Field spans in the scan (P-A, then P-B)
 
-Research: `docs/notes/h1-speed-research.md` §5 (reviewed, PR #22). It runs after Task 4d and **before Task 6**, because it changes `parse`.
+Research: `docs/notes/h1-speed-research.md` §5 (reviewed, PR #22). It runs after Task 4d, and its first PR merges **before Task 6**, because it changes `parse`. **Owner decision 2026-11-13:** the task passes only when the scalar parser beats every rival in every cell on both architectures (acceptance line 6). Until then it stays open as research (Step 9).
 
 **Files:**
 - Modify: `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/tests/h1_response.rs`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`, `crates/engine-core/examples/h1_parse_bench.rs`
@@ -549,8 +549,9 @@ export function pairedRatioCi(ours: readonly number[], theirs: readonly number[]
 - [ ] **Step 4: Build P-A** (spans written in the scan). Apply the A/B rule against today's scan followed by `split_fields`.
 - [ ] **Step 5: Build P-B one change at a time**, each with its own A/B: locals and one loop body per line; the STOP-set name search against the table loop; the masked `u64` prefix; the shared known-name classifier. Design G stays in the tests as the reference, and the fuzz target gains a differential oracle: the candidate's result and spans equal the reference's on every input. The padded read window is built here only if a measurement supports it; otherwise it moves to P1a.
 - [ ] **Step 6: Add the fasthttp and nginx rows** to the race. Survey the Jetty `HttpParser`, JDK `Http1HeaderParser` and .NET `HttpConnection` response parsers in the research note; one gets a race row only if it is plausibly faster than httparse.
-- [ ] **Step 7: Run the race on both architectures** (quiet-machine rule): arm64, and x64 with every row built for `x86-64-v3` **[author's call]**; 10 rounds in the nightly window if it exists. Record every cell in the journal and in the parser note.
-- [ ] **Step 8: Mutation run and 300 s of fuzzing** in the capped container, as in Task 4d. Update the notes, commit `Record field spans during the response head scan` and open a PR.
+- [ ] **Step 7: Run the race on both architectures** (quiet-machine rule): arm64, and x64 with every row built for `x86-64-v3` **[author's call]**; 10 rounds in the nightly window if it exists. Our row is the scalar parser; every rival runs as shipped with its own SIMD. Record every cell in the journal and in the parser note.
+- [ ] **Step 8: Mutation run and 300 s of fuzzing** in the capped container, as in Task 4d. Update the notes, commit `Record field spans during the response head scan` and open the first PR. It merges when acceptance lines 1–5 hold, so that Task 6 can build on the new `parse`.
+- [ ] **Step 9: Close every open cell (research loop).** While any cell of the race has a CI upper bound ≥ 1.0: profile that cell for our parser and for the rival that wins it; study how the rival wins it; design our own scalar change (own-algorithm rule: study, rewrite, never copy); apply the A/B rule; re-run the race on both architectures; record the cycle in the journal and in the research note. Each cycle is its own PR under the per-task definition of done. After every race run the owner gets a progress report: the open cells with their numbers, what was tried, and what is next. A cell is never closed with SIMD (acceptance line 6).
 
 **Acceptance** (each line can fail and is computed inside the task):
 1. The span tests of Step 3 pass, and the differential fuzz oracle ran 300 s without a finding.
@@ -558,8 +559,9 @@ export function pairedRatioCi(ours: readonly number[], theirs: readonly number[]
 3. Every kept P-B change passed the A/B rule.
 4. Zero allocations, `#![forbid(unsafe_code)]` unchanged, and every surviving mutant is killed or listed as equivalent with a one-line proof.
 5. The race ran on arm64 and x64 with the fasthttp and nginx rows, and the journal holds the paired ratio and CI of every cell.
+6. **The scalar parser beats every rival in every cell (owner decision 2026-11-13).** In a 10-round race in the nightly window on arm64 and a 10-round race on the x64 VM, `pairedRatioCi(ours, theirs)` has its CI upper bound < 1.0 for every rival row and every workload of the race (`1k`, `1k-h20`, the 64-variant rings, `varied-256`, `mixed` and the 1-byte feeds), with equal work. Ours is the scalar parser: `engine-core` only, `#![forbid(unsafe_code)]`, no `engine-simd` kernel and no `std::arch` intrinsic. **[author's call]** Word-at-a-time (SWAR) code on `u64` values counts as scalar, and so does whatever the compiler vectorises by itself in safe code. Every rival runs as shipped with its own SIMD (httparse NEON on arm64 and AVX2 on x64, picohttpparser SSE4.2 on x64, and whatever the other rows ship); on x64 the `x86-64-v3` build of Step 7 is what turns those paths on.
 
-Beating every rival on both architectures is the owner's gate at the end of P1a, not this task's acceptance. The research predicts open cells against httparse, and possibly picohttpparser on x64, after this task; each open cell is reported to the owner with its numbers and carried to P1a.
+**The task passes only when line 6 holds.** Lines 1–5 let the first PR merge; they do not close the task. While a cell loses, the task is not closed: it continues as research (Step 9) and is reported to the owner as open, and the gate is never relaxed. SIMD (P-D, `engine-simd`, P1a) is an extra layer on top of a scalar parser that already wins. It is never the way to pass this task. The arm64 run of line 6 needs the nightly window, which the owner has not chosen yet; until then arm64 results are dev runs and cannot close the task. The research note's estimates (P-A and P-B alone may leave cells open against httparse, and possibly against picohttpparser on x64) are unmeasured: they say where Step 9 is likely to start, and they change nothing in line 6.
 
 ---
 
@@ -694,14 +696,14 @@ The race computes the owner's writer gate (CI upper bound < 1.0 against every ga
 
 These are not P0 work. The P1a plan starts from them; they come from the review of the two research notes.
 
-1. **Prototype comparison first.** P-D (stage 1 plus validator), P-C and the scalar parser that Task 4c leaves are measured on a fixed `1k-h20` head and on the `varied-256` ring, on both architectures. The lead candidate is chosen from that data, not from the estimates.
+1. **Prototype comparison first.** P-D (stage 1 plus validator), P-C and the scalar parser that Task 4c leaves are measured on a fixed `1k-h20` head and on the `varied-256` ring, on both architectures. The lead candidate is chosen from that data, not from the estimates. A SIMD path is kept only where it is faster than the scalar parser, which already meets the parser gate (item 8).
 2. **x64 runtime dispatch is designed before any kernel is written:** how SSSE3 and AVX2 are selected, and whether the gated row is the `x86-64-v3` build or the shipped baseline build with dispatch.
 3. **Every `engine-simd` kernel** runs under Miri with its target features, has a differential fuzz target against the scalar path, and gets a `security-audit` pass.
 4. **The padded-window API changes the read-buffer contract Task 6 sets** (`read_buf_size`, initialised slack). P1a states the new contract before it changes the connection.
 5. **The `[bool; 256]` class tables move** from `engine-core`'s `grammar.rs` into `engine-simd`, and `engine-core` re-exports them: one source of truth, in the lower crate (design §13.1 rule 7).
 6. **The Rust tests that the research note §4.1 "Coverage limits" requires** are written, and then `tools/h1-research/` is deleted (#24).
 7. **W-D is optional:** it is built only if a measurement shows it faster than W-A on large header deltas.
-8. **The parser gate** (every rival, every workload, both architectures) is checked at the end of P1a. The research note §5.7 ranks what to try if P-D misses.
+8. **The parser gate** (every rival, every workload, both architectures) is Task 4c's acceptance and is met by the scalar parser (owner decision 2026-11-13). P1a re-runs the race after every parser change: a SIMD layer must keep every cell. The research note §5.7 ranks further ideas for the hardest cells.
 
 ---
 
