@@ -49,7 +49,7 @@ Every task must also meet these. Values are copied from the design.
 These are the inputs and conditions most likely to hurt users that no single task's main tests exercise. Each one has a test in the task that owns the code.
 
 1. **A response split across reads at any byte boundary**: 1-byte reads, CRLF split between reads, a head split from its body. The result must equal the single-read result. → Task 4 `every_vector_is_split_invariant`.
-2. **The server closes an idle keep-alive connection, or resets mid-body.** The request must settle with `NETWORK/closed-before-response` or `PROTOCOL/incomplete-body`, never hang, and the next request must get a fresh connection. → Task 6 `server_closed_idle_connection_settles_with_network_error`, `eof_mid_body_settles_incomplete_body`.
+2. **The server closes an idle keep-alive connection, or resets mid-body.** A close that the idle check of design §5.1 has seen retires the connection, and the next request succeeds on a fresh one. A close after the request was written and before any response byte settles `NETWORK/closed-before-response`; a reset mid-body settles `PROTOCOL/incomplete-body`. No request hangs, and the request after a failed one gets a fresh connection. → Task 6 `idle_eof_retires_connection_before_next_request`, `close_after_request_settles_closed_before_response`, `eof_mid_body_settles_incomplete_body`.
 3. **More requests submitted than the shard queue holds.** They must fail fast with `QUEUE_FULL` `{ scope: 'global', bound }`, never block the main thread, and never grow memory without bound. → Task 6 `queue_full_fails_fast`, Task 12 `queue_full_is_a_completion_not_a_throw`.
 4. **The native binary is missing, built for another libc, tampered with, or the platform is unsupported.** Loading must return a typed result and must not crash. → Task 13 `tampered_binary_returns_integrity`, `missing_package_returns_binary_load`, `unsupported_platform`. Task 15 Alpine job `glibc_binary_on_musl_returns_binary_load`.
 5. **Process lifetime.** A Node process with no pending requests must exit on its own, and one with pending requests must stay alive until they settle. → Task 12 `process_exits_when_idle`, `process_stays_alive_while_pending`.
@@ -640,7 +640,7 @@ Research: `docs/notes/h1-speed-research.md` §6 (reviewed, PR #22). It runs afte
 **Files:**
 - Modify: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/examples/h1_write_bench.rs`, `crates/engine-core/tests/h1_writer.rs`, `docs/notes/request-writer.md`, `docs/perf/journal.md`
 
-**Not in this task:** binding a template to its connection by `TemplateId` (Task 6, which owns the connection); W-B layout hints (P2: they need the P2 wire contract); W-D SIMD validation (P1a, optional, only if measured faster). `write_request`'s signature does not change.
+**Not in this task:** binding a template to its connection by `TemplateId` (P1a, with the profile leases; Task 6 keeps the authority compare); W-B layout hints (P2: they need the P2 wire contract); W-D SIMD validation (P1a, optional, only if measured faster). `write_request`'s signature does not change.
 
 - [ ] **Step 1: Fix the floor measurement** (same binary, alternated order, `pairedRatioCi`, `varied-delta` workload) before any W-A A/B.
 - [ ] **Step 2: Write the failing tests:** the new classifier returns today's class for every forbidden, singleton and underscore-spelled name, in every letter case, and for fuzzed names (today's `classify` stays in the tests as the reference).
@@ -704,6 +704,8 @@ These are not P0 work. The P1a plan starts from them; they come from the review 
 6. **The Rust tests that the research note §4.1 "Coverage limits" requires** are written, and then `tools/h1-research/` is deleted (#24).
 7. **W-D is optional:** it is built only if a measurement shows it faster than W-A on large header deltas.
 8. **The parser gate** (every rival, every workload, both architectures) is Task 4c's acceptance and is met by the scalar parser (owner decision 2026-11-13). P1a re-runs the race after every parser change: a SIMD layer must keep every cell. The research note §5.7 ranks further ideas for the hardest cells.
+9. **Template binding by id.** With profile leases a shard holds more than one `HeaderTemplate`. The connection then stores the `TemplateId` (slot and generation) it was checked out for and compares ids instead of authority bytes (research note §6.2 item 4); kept only if an A/B shows it faster.
+10. **Read while writing.** The connection reads while it writes a request, so that a final response that arrives early stops the write (design §5.1). The vector `early-final-response` runs through the connection from then on.
 
 ---
 
@@ -721,7 +723,8 @@ These are not P0 work. The P1a plan starts from them; they come from the review 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct RequestKey(pub u64);  // opaque; JS encodes slot+generation (+shard id from P1a)
 pub struct Submit { pub key: RequestKey, pub method: Method, pub req: Vec<u8>,
-                    pub target: Range<u32>, pub headers: Range<u32>, pub body: Range<u32> }   // ranges index `req`
+                    pub target: Range<u32>, pub headers: Range<u32>, pub body: Range<u32>,   // ranges index `req`
+                    pub header_lines: u16 /* lines the caller serialised into `headers`; `RequestParts.header_lines` */ }
 pub enum ShardCommand { Submit(Submit) }                         // P1a adds Credit, Cancel, UploadChunk, Poison
 pub struct ResponseData { pub status: u16, pub buf: Vec<u8>, pub head: Range<u32>, pub body: Range<u32>,
                           pub fields: u16, pub spans: Range<u32> /* `fields` spans as u16 quadruples, stored in `buf` after the body */ }
@@ -732,11 +735,13 @@ pub trait CompletionSink: 'static {
 }
 pub struct ShardConfig { pub addr: SocketAddr, pub host: String, pub max_connections: usize,
                          pub queue_capacity: usize, pub read_buf_size: usize /* default 65536; ≥ H1_LIMITS.max_head_bytes */,
-                         pub request_timeout: Duration /* default 30 s */, pub pool_bytes: usize /* default 8 MiB */ }
+                         pub request_timeout: Duration /* default 30 s */, pub pool_bytes: usize /* default 8 MiB */,
+                         pub max_body_bytes: usize /* default 4 MiB; a larger response body settles TooLarge(ResponseBody) */ }
 #[derive(Clone)] pub struct ShardHandle { /* tokio::sync::mpsc::Sender<ShardCommand> */ }
 impl ShardHandle { pub fn try_submit(&self, s: Submit) -> Result<(), (Submit, ErrorCode)>; } // Full → QueueFull { scope: Global, bound: queue_capacity }
-pub fn shard<S: CompletionSink>(cfg: ShardConfig, sink: S) -> (ShardHandle, impl Future<Output = ()>); // caller runs it inside a LocalSet
-pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -> std::io::Result<ShardHandle>; // dedicated thread: current_thread runtime + LocalSet
+pub enum ShardStartError { Config(ErrorCode) /* the code of the config check that failed */, Spawn(std::io::Error) }
+pub fn shard<S: CompletionSink>(cfg: ShardConfig, sink: S) -> Result<(ShardHandle, impl Future<Output = ()>), ShardStartError>; // checks cfg first; caller runs the future inside a LocalSet
+pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -> Result<ShardHandle, ShardStartError>; // dedicated thread: current_thread runtime + LocalSet
 ```
 
 **Behaviour (decided here):**
@@ -744,42 +749,47 @@ pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -
 - The command loop uses `recv_many` into a reused `Vec` and pushes onto the FIFO. If no connection is idle and `live < max_connections`, it spawns one connection task (`spawn_local`) per missing connection. Otherwise it wakes one idle connection. Requests do not spawn tasks (§5.1).
 - A connection task runs this loop:
   1. Take the next `Submit`.
-  2. `write_request` into the connection's write `Vec`, keep the returned `Reuse`, then `write_all`.
+  2. `write_request` into the connection's write `Vec` (with the shard's template, below), keep the returned `Reuse`, then `write_all`. P0 writes the whole request before it reads: a request is at most `MAX_P0_REQUEST_BYTES`, so the write is bounded. Design §5.1's rule for a final response that arrives during the write (stop writing, deliver, close) needs the read and write halves to run together and arrives with P1a's streamed uploads. Mark it `// removal: P1a read/write split (#issue)`.
   3. Read into a pooled read buffer and `parse(buf, spans)` with the connection's one `FieldSpans`. On `Interim { consumed }`, skip those bytes and parse again in the same read.
-  4. Read the body that `head.framing` announces: `ContentLength(n)` reads n bytes, `Empty` reads nothing, and `CloseDelimited` reads to EOF under the same size bound as a `Content-Length` body.
+  4. Read the body that `head.framing` announces: `ContentLength(n)` reads n bytes, `Empty` reads nothing, and `CloseDelimited` reads to EOF. Both are bounded by `max_body_bytes`: a `Content-Length` above it settles `TooLarge(ResponseBody)` when the head is parsed, before any body byte is buffered; a close-delimited body settles the same error at the first byte past the bound. Either way the connection closes.
   5. Hand off the read buffer if the response fills ≥ ¼ of it. Otherwise copy it out into an exact-size `Vec` and keep the buffer.
-  6. Push the completion, and return `reclaimed` buffers to the free list.
-  7. Take the next request, or park on `Notify`.
+  6. Push the completion, and return `reclaimed` buffers to the free list. A returned buffer whose capacity is above `read_buf_size` (it grew for a large body) is dropped instead, so the free list never holds more than `pool_bytes`.
+  7. Take the next request, or park. A parked connection waits for `Notify` and for socket readability together: a byte or EOF while it is idle closes it (design §5.1, idle-connection rule). When it is woken for a request it does one non-blocking `try_read` before the write, with the same result.
 - `TCP_NODELAY` is on.
 - **Reuse rule in P0** (§5.1 subset): a connection is reused only if the writer returned `Reuse::Allowed`, the parser set `head.keep_alive`, and no bytes remain after the response. Any error closes it. The parser's `keep_alive` already covers `Connection: close` (also in a 1xx head), HTTP/1.0 without keep-alive, close-delimited bodies, and a 204 or 304 that announces a body.
-- **Spans reach the completion:** `ResponseData` carries the field count and the spans, so no later layer scans the head again. The Task 6 research note confirms or replaces the layout shown above before any code **[author's call]**.
-- **`read_buf_size`** below `H1_LIMITS.max_head_bytes` is rejected when the shard starts: the parser reports `TooLarge` only at 65,536 buffered bytes, so a smaller buffer would fill with a `Partial` head.
-- **Template binding:** the connection stores the `TemplateId` (slot and generation) it was checked out for and compares ids, not authority bytes (research note §6.2 item 4); kept only if the A/B shows it faster.
+- **Spans reach the completion:** `ResponseData` carries the field count and the spans, so no Rust consumer (`engine-bench`, and the binding from P1a) scans the head again. The P0 binding does not put them on the wire: Task 13's `RawResponse.head` is one latin1 string and no P0 JavaScript looks at a field. The completion record gains the field count and the span words in P1a, with the JS headers object (design §9.3). The Task 6 research note confirms or replaces the layout shown above before any code **[author's call: the layout depends on the hand-off rule the note fixes]**.
+- **Config checks [author's call]:** `shard` checks the config before it starts anything and returns `ShardStartError::Config` on a bad value, because the future's output is `()` and has no error path. `read_buf_size` below `H1_LIMITS.max_head_bytes` is rejected with `Engine(Internal)`: the parser reports `TooLarge` only at 65,536 buffered bytes, so a smaller buffer would fill with a `Partial` head.
+- **Template in P0:** the shard builds one `HeaderTemplate` when it starts, `HeaderTemplate::new(cfg.host.as_bytes(), b"", 0, &[])` (no default fields in P0); an error from it is returned as `ShardStartError::Config`. Every connection passes `cfg.host` as `conn_authority`. Replacing the writer's authority compare by an id compare (`TemplateId`, research note §6.2 item 4) means something only when a shard holds more than one template, so it moves to P1a with the profile leases **[author's call]** ("P1a entry conditions", item 9).
 - `Framing::Chunked` completes with `Protocol(Other)` and closes the connection. Mark it `// removal: P1a chunked FramingDecoder (#issue)`.
 - **Error mapping:**
   - Connect refused → `Network(Refused)`. Other connect errors → `Network(Other)`.
   - EOF or reset before any byte of the exchange's response, interim heads included → `Network(ClosedBeforeResponse)`. The stale-connection re-send rule arrives in P1a.
   - EOF after at least one response byte but before the final head is complete → `Protocol(MalformedResponse)` (§5.2).
   - EOF mid-body → `Protocol(IncompleteBody)`.
-- **One deadline per request [author's call]:** connect, write and read share `request_timeout`; when it passes, the request settles `Timeout(Total)` and the connection closes. The owner's rule is that every network call has a timeout, so the prototype cannot wait for P1a's phase timer. Mark it `// removal: P1a phase timer (#issue)`.
+- **One deadline per request [author's call]:** the wait in the shard's FIFO, connect, write and read share `request_timeout`. It starts when the command loop takes the `Submit` from the channel (one clock read per `recv_many` batch); a request whose deadline passes while it waits in the FIFO settles `Timeout(Total)` without a connection. When it passes during an exchange, the request settles `Timeout(Total)` and the connection closes. The owner's rule is that every network call has a timeout, so the prototype cannot wait for P1a's phase timer. Mark it `// removal: P1a phase timer (#issue)`.
 
-- [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/shard-and-connection.md`, and it is reviewed before any code in this task.
+- [ ] **Step 0: Research gate** (see "Process rules"). `docs/notes/shard-and-connection.md` exists on the unmerged branch `p0/connection-research`. The research agent updates it for this section (the idle check, the body bound, the deadline, the spans layout), and it is reviewed and merged before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
   - `get_round_trip_returns_status_head_body`
   - `keep_alive_reuses_one_connection`: 100 sequential requests with `max_connections = 1`; the server counts exactly 1 accept.
   - `never_exceeds_max_connections`: 200 concurrent requests with `max_connections = 8`; peak accepted ≤ 8.
   - `connection_close_reconnects`
   - `leftover_bytes_close_connection`: the server appends junk after the response; the next request uses a new connection.
-  - `server_closed_idle_connection_settles_with_network_error` (Review Focus 2): the server closes after the first response; the second request settles with `Network(ClosedBeforeResponse)` within 1 s; the third succeeds on a new connection.
+  - `idle_eof_retires_connection_before_next_request` (Review Focus 2): after the first response the server half-closes and reads until the client closes too, which shows that the idle check saw the EOF; only then is the second request submitted. It succeeds, and the server counts a second accept.
+  - `close_after_request_settles_closed_before_response` (Review Focus 2): on a reused connection the server reads the whole second request and closes without sending a byte; the request settles `Network(ClosedBeforeResponse)` within 1 s, and the third succeeds on a new connection.
   - `eof_mid_body_settles_incomplete_body` (Review Focus 2)
   - `eof_mid_head_settles_malformed_response`
   - `interim_then_final_in_one_read_completes_once`
   - `close_delimited_body_is_read_to_eof_and_not_reused`
   - `head_204_and_304_have_no_body`
   - `stalled_server_settles_timeout_total`: the server accepts and never answers; the request settles within `request_timeout` + 1 s and the connection is closed.
+  - `queued_request_times_out_without_a_connection`: `max_connections = 1` and a stalled server; a second request settles `Timeout(Total)` within `request_timeout` + 1 s of its submit, and the server counts one accept.
+  - `content_length_over_max_body_settles_too_large_at_head`: `Content-Length` is `max_body_bytes` + 1; the request settles `TooLarge(ResponseBody)` before the server sends a body byte, and the connection is closed.
+  - `close_delimited_over_max_body_settles_too_large`: the server streams without end; the request settles `TooLarge(ResponseBody)` and the completion's buffer capacity is ≤ `max_body_bytes` + `read_buf_size`.
+  - `grown_buffer_is_not_pooled`: a body larger than `read_buf_size` is handed off and returned; the free list does not keep it.
   - `read_buf_size_below_head_limit_is_rejected`
-  - The connection vectors the parser note hands over: `extra-response-while-idle`, `early-final-response`, `cl-1tib-no-body`, `http11-then-http09`.
-  - `h1_response_eof_vectors_through_the_connection`: every EOF case of the `engine-core:h1_response` suite, served by the test server, settles with the vector's error.
+  - The connection vectors the parser note hands over: `extra-response-while-idle`, `cl-1tib-no-body`, `http11-then-http09`. `early-final-response` is not run in P0: it needs the read/write split (loop step 2) and is listed in "P1a entry conditions", item 10.
+  - `h1_response_eof_vectors_through_the_connection`: every EOF vector of the `engine-core:h1_response` suite, served by the test server, settles with the vector's error. The EOF vectors are those whose input ends before the final head is complete: today `eof-empty`, `eof-after-h`, `eof-after-version`, `eof-mid-status`, `eof-mid-fields`, `eof-after-interim` and `interim-then-eof`. The test selects them by that property, so a vector added later is run too.
   - `refused_connect_settles_refused`
   - `queue_full_fails_fast` (Review Focus 3): `queue_capacity = 4` and the shard future not yet polled; the 5th `try_submit` returns `QueueFull { scope: Global, bound: 4 }` immediately.
   - `each_key_completes_exactly_once`: 10,000 requests with `max_connections = 50`; the sink records keys and expects no duplicate and no missing key. It is `#[ignore]`d in the default run and runs in the capped container ("Resource limits"); the test server's buffers are capped.
@@ -788,7 +798,7 @@ pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -
   - `request_buffer_returned_in_completion`: `completion.req.as_ptr()` equals the submitted one.
 - [ ] **Step 2: Run** `cargo nextest run -p engine-core --test shard_loopback`. Expected: FAIL.
 - [ ] **Step 3: Implement** `buf.rs` (free list holding at most `min(max_connections × 2, pool_bytes ÷ read_buf_size)` buffers; P1a charges the byte budget of §11.1 instead), then `completion.rs`, `connection.rs` and `shard.rs`. Check the tokio APIs (`mpsc::Receiver::recv_many`, `LocalSet`, `task::spawn_local`, `Notify`) on docs.rs for the locked version.
-- [ ] **Step 4: Run** the tests, clippy and `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`. Expected: PASS.
+- [ ] **Step 4: Run** the tests, clippy and `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`. Expected: PASS. Then run the ignored test once in the capped container (`docker run --rm --memory=2g --memory-swap=2g --cpus=1`, source mounted read-only and copied inside): `cargo nextest run -p engine-core --test shard_loopback --run-ignored only` (flag name from the nextest documentation for the installed version). CI does not run it; the PR shows its output, and the controller re-runs it before the merge.
 - [ ] **Step 5: Commit** `Add prototype shard with connection tasks, buffer handoff and completion sink` and open a PR.
 
 ---
@@ -990,7 +1000,7 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
 - Create: `crates/node-binding/fuzz/fuzz_targets/submit_codec.rs` (own workspace, like the engine's fuzz crate)
 
 **`wire` section (u32 words, generated into `SUBMIT_RECORD`/`COMPLETION_RECORD` index constants in TS and Rust):**
-- Submit record, 9 words: `keyLo, keyHi, method, targetOff, targetLen, headersOff, headersLen, bodyOff, bodyLen`. Offsets index the submit arena.
+- Submit record, 10 words: `keyLo, keyHi, method, targetOff, targetLen, headersOff, headersLen, headerLines, bodyOff, bodyLen`. Offsets index the submit arena. `headerLines` is the number of header entries the JS layer serialised (`Submit.header_lines`); it is counted while the entries are written, never from the bytes.
 - Completion record, 9 words: `keyLo, keyHi, status, errWord, errArg, headOff, headLen, bodyOff, bodyLen`. Offsets index the completion arena. `errWord = 0` means success, otherwise it is `ErrorCode::to_wire().0 + 1`.
 - `takeCompleted` returns `count | (more << 31)`.
 - `arenaBytes: 4194304`, `batchRecords: 4096` (§11.5; Task 19 confirms or retunes them).
@@ -1006,8 +1016,8 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
 - Per-environment state lives in napi instance data.
 - `TsfnSink::push` locks the mutex, pushes into the active `Vec`, drains this shard thread's return `Vec` into `reclaimed`, and records `was_empty`. It unlocks, and then calls the TSFN if `was_empty`. No code that can panic runs under the lock.
 - `takeCompleted` swaps active and spare under the lock (the spare must be empty). It copies outside the lock into the JS arrays and arena. Records that do not fit stay in a carry-over and set `more`. Consumed read buffers go into the return `Vec` under the lock.
-- The response head (excluding the status line) and the body are copied into the arena. Bodies larger than the arena are capped in P0 at `arenaBytes` and settle `TooLarge(ResponseBody)`; external buffers arrive in P1a.
-- The binding validates the codec input: offsets and lengths must be within the arena and the method id must be in range. A bad record produces an `Engine(Internal)` completion for that key and is never a panic.
+- The response head (excluding the status line) and the body are copied into the arena. The binding starts the shard with `max_body_bytes = arenaBytes − H1_LIMITS.max_head_bytes`, so one response always fits an empty arena and a larger body settles `TooLarge(ResponseBody)` in the shard before it is buffered (Task 6); external buffers arrive in P1a.
+- The binding validates the codec input: offsets and lengths must be within the arena, the method id must be in range and `headerLines` must fit `u16`. A bad record produces an `Engine(Internal)` completion for that key and is never a panic.
 - When `try_submit` returns `QueueFull`, a completion is queued with that error. It is never a JS throw (Review Focus 3).
 - **Ref/unref (Review Focus 5):** use the safe wrapper `TsfnRef` over `napi_ref_threadsafe_function` and `napi_unref_threadsafe_function`, called through `napi-sys`. Every `unsafe` block carries `// SAFETY:`. `ThreadsafeFunction::aborted()` is the only source of truth. The TSFN is ref'd while pending > 0 and unref'd at 0. Pending is incremented in `submit` and decremented in `takeCompleted`.
 - The env cleanup hook drops the TSFN clones and never calls `abort()` (§11.3). Verify each napi-rs 3 API in its documentation for the locked version (`docs-lookup` skill) before use, and confirm none is deprecated.
@@ -1054,7 +1064,7 @@ export class SlotTable<T> { alloc(v: T): number /* index; generation via generat
 export interface RawResponse { status: number; head: string /* latin1, exact size */; body: Uint8Array /* copied; no arena view escapes */ }
 export class NativeSession {
   constructor(binding: NativeBinding, cfg: { host: string; port: number; maxConnections: number; queueCapacity: number });
-  request(method: Method, target: string, headers: string, body?: Uint8Array): Promise<RawResponse>;   // rejects only with TransportError
+  request(method: Method, target: string, headers: string, headerLines: number, body?: Uint8Array): Promise<RawResponse>;   // headerLines: entries the caller serialised into `headers`; rejects only with TransportError
 }
 ```
 
