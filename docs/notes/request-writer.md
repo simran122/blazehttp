@@ -1096,7 +1096,11 @@ dictionary; the main run keeps its corpus in the task logs and the fuzz mutants 
   3. accept a bare LF in values;
   4. accept DEL in the target.
 
-  Report the time to first crash for each in the PR.
+  Report the time to first crash for each in the PR. **Fix round 1** (empty corpus, after the speed fix): m1 0 s,
+  m2 0 s, m3 15 s, m4 8 s. **Fix round 2** rewrote only the target check (a flag table, `target.rs`); the field,
+  grammar and framing code m1–m3 patch is unchanged. m4 was re-applied to the table (DEL's flags set to 0) and
+  caught from an empty corpus after 424,029 executions (≈ 44 s at 9,637/s). The item-10 oracle fix was checked the
+  same way (§9.5 property 9).
 
 ## 10. Hand-offs
 
