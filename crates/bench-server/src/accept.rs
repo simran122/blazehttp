@@ -147,7 +147,10 @@ impl ErrorLog {
     }
 }
 
-#[cfg(all(test, unix))]
+// Two attributes rather than `cfg(all(test, unix))`: cargo-mutants skips only modules marked with a plain
+// `#[cfg(test)]`, and would otherwise mutate the test doubles below.
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::future::Future;
     use std::io;
