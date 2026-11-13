@@ -1,5 +1,6 @@
 //! `bench-server` end to end: real sockets, real TLS, the committed `bench/cells.json`.
-//! HTTP behaviour beyond the cells is in `serve/protocol.rs`, connection limits and lifecycle in `serve/limits.rs`.
+//! HTTP behaviour beyond the cells and the TLS suite and group pinning are in `serve/protocol.rs`, connection limits
+//! and lifecycle in `serve/limits.rs`.
 
 mod limits;
 mod protocol;

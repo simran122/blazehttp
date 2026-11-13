@@ -85,8 +85,8 @@ enum Progress {
     NeedBytes,
     /// The batch is full: write it, then keep taking from the buffer.
     BatchFull,
-    /// The last batched response ends the connection (a refusal, or once the request's declared body is read: the
-    /// client's close, a 505, or a close-delimited response).
+    /// The last batched response ends the connection (a 400 or 431 refusal at once; or, once the request's declared
+    /// body is read: the client's close, a 505, or a close-delimited response).
     Close,
 }
 

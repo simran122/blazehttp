@@ -53,7 +53,8 @@ pub(crate) struct Served {
     pub(crate) close: bool,
 }
 
-/// Why a request is answered with an error and the connection closed.
+/// Why a request is answered with an error that closes the connection: at once for a 400 or 431, after the request's
+/// declared body for a 505.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
     /// 400: a request head this fixture does not accept.

@@ -1,9 +1,11 @@
-//! HTTP/1.1 behaviour beyond the cells: persistence, `HEAD`, versions, leading empty lines, refusals and graceful
-//! close.
+//! HTTP/1.1 behaviour beyond the cells: persistence, `HEAD`, versions, leading empty lines, refusals, graceful close,
+//! and the TLS port's pinned cipher suite and key exchange group.
 
 use std::sync::Arc;
 
 use bench_server::cells;
+use tokio_rustls::rustls;
+use tokio_rustls::rustls::AlertDescription;
 use tokio_rustls::rustls::crypto::{CryptoProvider, ring};
 
 use crate::support::{
@@ -54,12 +56,17 @@ async fn tls_close_sends_close_notify() {
     assert_eq!(until_close(&mut stream, request.as_bytes()).await, first());
 }
 
-/// A client offering everything ring supports (preferring AES-256) still gets the one pinned suite and group.
+/// A client offering everything ring supports, preferring AES-256 and P-256, still gets the one pinned suite and group
+/// (the server honours the client's order, so an unpinned server would pick AES-256 and P-256).
 #[tokio::test(flavor = "multi_thread")]
 async fn tls_negotiates_only_the_pinned_suite_and_group() {
     let server = start(config(true)).await;
     let tls = server.bound.tls.as_ref().expect("TLS port");
-    let stream = handshake(tls, Arc::new(ring::default_provider()))
+    let prefers_p256 = CryptoProvider {
+        kx_groups: vec![ring::kx_group::SECP256R1, ring::kx_group::X25519],
+        ..ring::default_provider()
+    };
+    let stream = handshake(tls, Arc::new(prefers_p256))
         .await
         .expect("handshake");
     let (_, session) = stream.get_ref();
@@ -81,7 +88,18 @@ async fn tls_refuses_a_client_without_the_pinned_group() {
         kx_groups: vec![ring::kx_group::SECP256R1, ring::kx_group::SECP384R1],
         ..ring::default_provider()
     };
-    assert!(handshake(tls, Arc::new(without_x25519)).await.is_err());
+    let refused = handshake(tls, Arc::new(without_x25519))
+        .await
+        .expect_err("no shared group");
+    let cause = refused
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>());
+    assert_eq!(
+        cause,
+        Some(&rustls::Error::AlertReceived(
+            AlertDescription::HandshakeFailure
+        ))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

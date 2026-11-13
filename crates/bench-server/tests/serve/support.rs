@@ -1,5 +1,5 @@
 //! Shared helpers for the `bench-server` integration tests: a server on free loopback ports, raw HTTP/1.1 exchanges
-//! and a TLS client with the server's own crypto provider.
+//! and a TLS client with any crypto provider (the server's by default).
 
 use std::io;
 use std::net::SocketAddr;
@@ -79,6 +79,7 @@ pub async fn connect(addr: SocketAddr) -> TcpStream {
     stream
 }
 
+/// A TLS connection with the server's own crypto provider; a failed handshake fails the test.
 pub async fn connect_tls(tls: &TlsBound) -> TlsStream<TcpStream> {
     handshake(tls, benchmark_crypto_provider())
         .await
@@ -101,8 +102,8 @@ pub async fn handshake(
         .with_no_client_auth();
     let name = ServerName::try_from("localhost").expect("server name");
     let tcp = connect(tls.addr).await;
-    let handshake = TlsConnector::from(Arc::new(config)).connect(name, tcp);
-    timeout(CLOSE_WITHIN, handshake)
+    let connecting = TlsConnector::from(Arc::new(config)).connect(name, tcp);
+    timeout(CLOSE_WITHIN, connecting)
         .await
         .expect("handshake in time")
 }
