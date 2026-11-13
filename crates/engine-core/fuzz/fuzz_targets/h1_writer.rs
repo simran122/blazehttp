@@ -433,7 +433,8 @@ fn spec_admit(names: &[&[u8]], seen: &mut Vec<String>) -> bool {
 }
 
 /// A reg-name as WHATWG serialises it: lowercase `unreserved`/`sub-delims` without `%`, labels non-empty except
-/// one trailing dot.
+/// one trailing dot; a name whose last label is a number (URL Standard §3.5 "ends in a number checker") is an IPv4
+/// address and must be four decimal parts 0–255 without leading zeros and without a trailing dot (§3.6).
 fn spec_reg_name(name: &[u8]) -> bool {
     let bytes_ok = name
         .iter()
@@ -444,7 +445,29 @@ fn spec_reg_name(name: &[u8]) -> bool {
         .iter()
         .enumerate()
         .all(|(i, l)| !l.is_empty() || (i == labels.len() - 1 && i > 0));
-    !name.is_empty() && bytes_ok && labels_ok
+    let address_ok = !spec_ends_in_a_number(&labels) || spec_ipv4(&labels);
+    !name.is_empty() && bytes_ok && labels_ok && address_ok
+}
+
+/// The URL Standard's "ends in a number checker", step by step on the dot-split labels.
+fn spec_ends_in_a_number(labels: &[&str]) -> bool {
+    let mut parts = labels.to_vec();
+    if parts.len() > 1 && parts.last() == Some(&"") {
+        parts.pop();
+    }
+    let last = parts.last().copied().unwrap_or("");
+    let decimal = !last.is_empty() && last.bytes().all(|b| b.is_ascii_digit());
+    let hex = (last.starts_with("0x") || last.starts_with("0X"))
+        && last[2..].bytes().all(|b| b.is_ascii_hexdigit());
+    decimal || hex
+}
+
+/// The URL Standard's IPv4 serialisation: exactly four parts, each the decimal text of a number 0–255.
+fn spec_ipv4(labels: &[&str]) -> bool {
+    labels.len() == 4
+        && labels
+            .iter()
+            .all(|part| part.parse::<u8>().is_ok_and(|n| n.to_string() == *part))
 }
 
 /// The WHATWG serialisation of an IPv6 address, modelled on `Ipv6Addr`'s RFC 5952 `Display`, which equals it except
@@ -524,7 +547,8 @@ fn spec_template(r: &Request) -> Result<(Vec<String>, bool), ErrorCode> {
     Ok((seen, sensitive))
 }
 
-/// Origin-form per note §6.3: `/` first; visible ASCII except `#`, `"`, `<`, `>`; no `\` before the first `?`.
+/// Origin-form per note §6.3: `/` first; visible ASCII except `#`, `"`, `<`, `>`; no `\`, `^`, `` ` ``, `{`, `}`
+/// in the path (before the first `?`) and no `'` in the query.
 fn spec_target(target: &[u8]) -> bool {
     let path_end = target
         .iter()

@@ -371,7 +371,7 @@ fn rejects_template_for_other_authority() {
     assert!(write_request(&mut out, &request, &template, b"example.com:8080").is_ok());
 }
 
-const INVALID_HOSTS: [&[u8]; 42] = [
+const INVALID_HOSTS: [&[u8]; 52] = [
     b"",
     b"a b",
     b"a/b",
@@ -417,6 +417,20 @@ const INVALID_HOSTS: [&[u8]; 42] = [
     b"[1::2:3:4:5:6:7]",
     b"[1::2:0:0:0:3]",
     b"[1:0:0:2:3::4]",
+    // A name that ends in a number is an IPv4 address to WHATWG (URL Standard §3.5 "ends in a number checker"), and
+    // the IPv4 serializer (§3.6) writes four decimal parts without leading zeros and without a trailing dot: short
+    // forms, one number, hex and octal parts, a trailing dot, too many parts, a part above 255, and a domain that
+    // ends in a number but is no IPv4 address (WHATWG's host parser fails on it).
+    b"127.1",
+    b"2130706433",
+    b"0x7f.0.0.1",
+    b"127.0.0.01",
+    b"1.2.3.4.",
+    b"1.2.3.4.5",
+    b"1.2.3.256",
+    b"a.1",
+    b"a.0x",
+    b"a.1.:80",
 ];
 
 #[test]
@@ -431,7 +445,7 @@ fn template_rejects_invalid_host() {
     }
 }
 
-const VALID_HOSTS: [&[u8]; 14] = [
+const VALID_HOSTS: [&[u8]; 19] = [
     b"example.com",
     b"127.0.0.1:3999",
     b"[::1]:8080",
@@ -446,6 +460,12 @@ const VALID_HOSTS: [&[u8]; 14] = [
     b"a:1",
     b"a:65535",
     b"example.com.",
+    // IPv4 as the IPv4 serializer writes it, and names whose last label is not a number to WHATWG.
+    b"1.2.3.4",
+    b"0.0.0.0:80",
+    b"255.255.255.255",
+    b"a.1b",
+    b"a.0xg",
 ];
 
 #[test]
@@ -712,7 +732,7 @@ fn accepts_obs_text_htab_ows_and_empty_values() {
 // ---------------------------------------------------------------- target (§6.3)
 
 /// Targets that are not origin-form as note §6.3 defines it: bytes WHATWG never emits in the component they sit in.
-const INVALID_TARGETS: [&[u8]; 21] = [
+const INVALID_TARGETS: [&[u8]; 22] = [
     b"http://evil/",
     b"*",
     b"?x",
@@ -736,17 +756,21 @@ const INVALID_TARGETS: [&[u8]; 21] = [
     // Query only: WHATWG percent-encodes `'` in the query of special URLs.
     b"/a?b'c",
     b"/a?b=c&d='",
+    // The query starts at the first `?`: a split at a later one would read `b'` as path bytes and accept them.
+    b"/a?b'?c",
 ];
 /// Origin-form targets: `//`, dot segments and `%` sequences are the caller's (note §6.3); the bytes WHATWG keeps raw
 /// in each component.
-const VALID_TARGETS: [&[u8]; 7] = [
+const VALID_TARGETS: [&[u8]; 8] = [
     b"//evil.example/x",
     b"/",
     b"/../a/%zz",
     b"/a%0d%0a'|[]?b=c&d=~!$()*+,;=:@/",
     b"/a?q=\\^`{|}",
-    // A second `?` stays inside the query, so the bytes after it are query data.
+    // A second `?` stays inside the query, so the bytes after it are query data; `\` between the two is query data
+    // too, which a split at the last `?` would reject as a path byte.
     b"/a?x?\\y{",
+    b"/a?\\?b",
     b"/~!$&'()*+,;=:@|[]%",
 ];
 
@@ -1062,7 +1086,7 @@ fn run_case(case: &RequestCase) -> RequestExpect {
 
 /// Every request vector file and its case count (docs/notes/vectors.md).
 const VECTOR_FILES: [(&str, usize); 5] = [
-    ("h1-request/blazehttp-rules.json", 294),
+    ("h1-request/blazehttp-rules.json", 309),
     ("h1-request/undici-selected.json", 38),
     ("h1-request/go-selected.json", 17),
     ("h1-request/httpguts-selected.json", 145),

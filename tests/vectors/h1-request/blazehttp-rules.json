@@ -4810,6 +4810,41 @@
       }
     },
     {
+      "name": "target / quote between two question marks is query data",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a?b'?c",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / backslash between two question marks is query data",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a?\\?b",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /a?\\?b HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
       "name": "target / dot segments are not normalised",
       "inputEncoding": "utf8",
       "request": {
@@ -5052,6 +5087,231 @@
       },
       "expect": {
         "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 short form",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.1",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 single number",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "2130706433",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 hex part",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "0x7f.0.0.1",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 leading zero",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.01",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 trailing dot",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "1.2.3.4.",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 five parts",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "1.2.3.4.5",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 part above 255",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "1.2.3.256",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / domain ending in a number",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "a.1",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / domain ending in an empty hex number",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "a.0x",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv4 dotted decimal",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "1.2.3.4",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 1.2.3.4\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv4 all zero with port",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "0.0.0.0:80",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 0.0.0.0:80\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / last label not a number",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "a.1b",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: a.1b\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / last label not a hex number",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "a.0xg",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: a.0xg\r\n\r\n",
+        "reuse": "allowed"
       }
     },
     {

@@ -2,8 +2,8 @@
 //! serialiser writes it for an `http(s)` URL, so one origin has one spelling and the byte-equality binding of the
 //! template to its connection is sound.
 
-use core::fmt;
-use core::net::Ipv6Addr;
+use core::fmt::{self, Write as _};
+use core::net::{Ipv4Addr, Ipv6Addr};
 use core::ops::Range;
 
 use crate::generated::spec::ErrorCode;
@@ -14,9 +14,10 @@ const MAX_PORT_DIGITS: usize = 5;
 const IPV6_PIECES: usize = 8;
 
 /// `host = ( "[" IPv6address "]" / reg-name ) [ ":" port ]` as WHATWG serialises it: the IPv6 literal in the URL
-/// Standard's IPv6 serialisation (no zone id, no dotted IPv4 tail); a reg-name or IPv4 address is lowercase
-/// `unreserved` / `sub-delims` without `%`, with no empty label (a trailing dot is allowed); the port is 1–65535
-/// without a leading zero (WHATWG omits default ports and never pads).
+/// Standard's IPv6 serialisation (no zone id, no dotted IPv4 tail); a reg-name is lowercase `unreserved` /
+/// `sub-delims` without `%`, with no empty label (a trailing dot is allowed); a name that ends in a number is an IPv4
+/// address in the URL Standard's IPv4 serialisation; the port is 1–65535 without a leading zero (WHATWG omits default
+/// ports and never pads).
 ///
 /// # Errors
 ///
@@ -51,7 +52,35 @@ fn host_name_len(host: &[u8]) -> Option<usize> {
         .filter(|rest| !rest.is_empty())
         .unwrap_or(name);
     let labels_ok = labels.split(|&b| b == b'.').all(|label| !label.is_empty());
-    labels_ok.then_some(len)
+    let address_ok = !ends_in_a_number(labels) || is_whatwg_ipv4(name);
+    (labels_ok && address_ok).then_some(len)
+}
+
+/// The URL Standard's "ends in a number checker" (§3.5) on `labels`, the name without its one trailing dot: the last
+/// label is all ASCII digits, or `0x`/`0X` and ASCII hex digits (an IPv4 number in radix 16). The host parser then
+/// parses the whole name as IPv4 or fails, so such a name is never serialised as a domain.
+fn ends_in_a_number(labels: &[u8]) -> bool {
+    let last = labels.rsplit(|&b| b == b'.').next().unwrap_or_default();
+    let decimal = !last.is_empty() && last.iter().all(u8::is_ascii_digit);
+    let hex = last
+        .strip_prefix(b"0x")
+        .or_else(|| last.strip_prefix(b"0X"))
+        .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit));
+    decimal || hex
+}
+
+/// Whether `name` is an IPv4 address in the URL Standard's IPv4 serialisation (§3.6): four decimal parts 0–255
+/// without leading zeros and no trailing dot. `Ipv4Addr`'s `Display` writes exactly that form, so the parsed address
+/// is written back and compared without allocating.
+fn is_whatwg_ipv4(name: &[u8]) -> bool {
+    let Some(address) = core::str::from_utf8(name)
+        .ok()
+        .and_then(|text| text.parse::<Ipv4Addr>().ok())
+    else {
+        return false;
+    };
+    let mut expected = PrefixMatcher(Some(name));
+    write!(expected, "{address}").is_ok() && expected.0 == Some(&[])
 }
 
 /// Whether `literal` is `address` in the URL Standard's IPv6 serialisation (§3.6): lowercase hex pieces without
