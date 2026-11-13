@@ -40,6 +40,7 @@ pub struct Cell {
 /// rule 8). A passive value type with public fields (design §13.2 rule 1 carve-out).
 #[derive(Debug)]
 pub struct CloseDelimited {
+    /// Status line, head and unframed body, exactly as written to the socket.
     pub response: Vec<u8>,
     /// Bytes of `response` up to and including the blank line: the answer to a `HEAD` request.
     pub head_len: usize,
@@ -135,14 +136,6 @@ impl Catalog {
                 ("date", DATE),
             ],
         );
-        let chunked_head = head(
-            "200 OK",
-            &[
-                ("content-type", JSON),
-                ("transfer-encoding", "chunked"),
-                ("date", DATE),
-            ],
-        );
         let big_head = head(
             "200 OK",
             &[
@@ -157,8 +150,7 @@ impl Catalog {
             Cell::new("/1k-gzip", &gzip_head, PAYLOAD_GZIP, PAYLOAD),
             Cell::chunked(
                 "/1k-chunked",
-                &chunked_head,
-                &head("200 OK", &[("content-type", JSON), ("date", DATE)]),
+                &[("content-type", JSON), ("date", DATE)],
                 PAYLOAD,
             ),
             Cell::new("/1m", &big_head, &big, &big),
@@ -185,15 +177,21 @@ impl Cell {
         }
     }
 
-    /// A cell whose `body` goes out in chunked framing, with a close-delimited variant (`plain_head`) for HTTP/1.0.
-    fn chunked(path: &'static str, head: &[u8], plain_head: &[u8], body: &[u8]) -> Self {
+    /// A cell whose `body` goes out in chunked framing after `fields`, with a close-delimited variant for HTTP/1.0:
+    /// the same `fields` without the framing field, so the two heads cannot drift apart.
+    fn chunked(path: &'static str, fields: &[(&str, &str)], body: &[u8]) -> Self {
+        let plain_head = head("200 OK", fields);
+        let chunked_head = head(
+            "200 OK",
+            &[fields, &[("transfer-encoding", "chunked")]].concat(),
+        );
         let variant = CloseDelimited {
-            response: [plain_head, body].concat(),
+            response: [&plain_head[..], body].concat(),
             head_len: plain_head.len(),
         };
         Self {
             close_delimited: Some(variant),
-            ..Self::new(path, head, &frame_chunked(body), body)
+            ..Self::new(path, &chunked_head, &frame_chunked(body), body)
         }
     }
 }
@@ -247,9 +245,10 @@ pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{self, Read};
     use std::process::{Command, Stdio};
     use std::sync::LazyLock;
+    use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
 
     use flate2::read::GzDecoder;
@@ -456,6 +455,22 @@ mod tests {
 
     /// How long the child test process may take.
     const CHILD_WITHIN: Duration = Duration::from_secs(30);
+    /// Bytes of each child output stream kept for the assertions; the rest is read and dropped.
+    const OUTPUT_KEPT: u64 = 1 << 20;
+
+    /// Reads a child's output stream on its own thread while the child runs, so a chatty child cannot fill the pipe
+    /// and block; keeps the first [`OUTPUT_KEPT`] bytes.
+    fn read_on_a_thread(mut pipe: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut kept = Vec::new();
+            (&mut pipe)
+                .take(OUTPUT_KEPT)
+                .read_to_end(&mut kept)
+                .expect("read the child's output");
+            io::copy(&mut pipe, &mut io::sink()).expect("drain the child's output");
+            kept
+        })
+    }
 
     #[test]
     fn prebuild_builds_the_catalog_in_a_fresh_process() {
@@ -468,20 +483,27 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("start the test binary");
+        let stdout = read_on_a_thread(child.stdout.take().expect("piped stdout"));
+        let stderr = read_on_a_thread(child.stderr.take().expect("piped stderr"));
         let started = Instant::now();
-        while child.try_wait().expect("child status").is_none() {
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("child status") {
+                break status;
+            }
             if started.elapsed() > CHILD_WITHIN {
-                let _ = child.kill();
+                child.kill().expect("kill the child");
+                child.wait().expect("reap the child");
                 panic!("the fresh-process test ran past {CHILD_WITHIN:?}");
             }
             std::thread::sleep(Duration::from_millis(20));
-        }
-        let run = child.wait_with_output().expect("child output");
-        let stdout = String::from_utf8_lossy(&run.stdout);
+        };
+        let stdout = stdout.join().expect("stdout reader");
+        let stdout = String::from_utf8_lossy(&stdout);
+        let stderr = stderr.join().expect("stderr reader");
         assert!(
-            run.status.success(),
+            status.success(),
             "{stdout}{}",
-            String::from_utf8_lossy(&run.stderr)
+            String::from_utf8_lossy(&stderr)
         );
         assert!(
             stdout.contains("1 passed"),
