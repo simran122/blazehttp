@@ -10,6 +10,7 @@ const MAX_LEADING_EMPTY_LINES: usize = 8;
 /// A complete request head at the start of the scanned bytes.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Request<'a> {
+    /// What the request asks for: a target, or nothing this fixture serves (a refused version).
     pub(crate) wants: Wants<'a>,
     /// Head bytes including leading empty lines and the blank line.
     pub(crate) head_len: usize,

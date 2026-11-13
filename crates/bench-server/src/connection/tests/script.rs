@@ -24,8 +24,8 @@ const WRITES_CAP: usize = 100_000;
 /// (virtual time) at each `pauses` offset and stop for good at `stall_reads_at`; each write call can wait
 /// `write_delay`, and writes or the shutdown can be made to never complete, to test the deadlines.
 pub(super) struct Script {
-    pub(super) input: Vec<u8>,
-    pub(super) cuts: Vec<usize>,
+    input: Vec<u8>,
+    cuts: Vec<usize>,
     pub(super) read: usize,
     pub(super) output: Vec<u8>,
     pub(super) writes: Vec<usize>,
@@ -37,10 +37,12 @@ pub(super) struct Script {
     pub(super) stall_shutdown: bool,
     /// `(offset, wait)` in offset order: before reading at `offset`, wait `wait`.
     pub(super) pauses: Vec<(usize, Duration)>,
-    pub(super) sleeping: Option<Pin<Box<Sleep>>>,
+    /// The pause being waited out.
+    sleeping: Option<Pin<Box<Sleep>>>,
     /// Each write call waits this long (virtual time) before it completes.
     pub(super) write_delay: Option<Duration>,
-    pub(super) writing: Option<Pin<Box<Sleep>>>,
+    /// The write delay being waited out.
+    writing: Option<Pin<Box<Sleep>>>,
 }
 
 impl Script {
