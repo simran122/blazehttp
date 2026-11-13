@@ -24,7 +24,7 @@ Every task must also meet these. Values are copied from the design.
 - TypeScript: `strict`, no `any`, lookup maps instead of `switch`, and only `Error` may be extended. Rust: exhaustive `enum` + `match`, no `Box<dyn …>` on the hot path (§13).
 - No `postinstall`. `@blazehttp/<target>` packages are exact-pinned `optionalDependencies`. Build with `napi build --no-js` plus our own loader with a SHA-256 integrity check (§12).
 - Licence is `MIT OR Apache-2.0`. Ported vectors keep their copyright notice in the vector file and in `THIRD_PARTY_NOTICES`. No third-party code goes into the npm packages (§6.1).
-- Coverage: ≥ 95% for TS and ≥ 90% for Rust (G7). CI enforces the Rust figure from Task 15a on. Until it merges, CI runs `cargo test -p engine-core`, a step that says `cargo nextest run` may use `cargo test` with the same arguments, and the task lead reports the `cargo llvm-cov` figure in the PR.
+- Coverage: ≥ 95% for TS and ≥ 90% for Rust (G7). CI enforces the Rust figure from Task 15a on. Until Task 15a merges, CI runs `cargo test -p engine-core`. A step of this plan that says `cargo nextest run` may use `cargo test` with the same arguments until then. The task lead reports the `cargo llvm-cov` figure in the PR.
 - The 8 targets: `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`, `linux-x64-musl`, `linux-arm64-gnu`, `linux-arm64-musl`, `win32-x64-msvc`, `win32-arm64-msvc`. CI runners: `macos-15`, `macos-15-intel`, `ubuntu-24.04`, `ubuntu-24.04-arm` (musl through `docker run` on Alpine), `windows-2025`, `windows-11-arm` (§14).
 - Node floor is `>=22.19` (`engines`). Benchmarks run on Node 24 LTS and Node 26 (§16.1).
 - Every queue, buffer and cache is bounded. When a bound is hit the request fails fast with a typed error and never blocks (G6).
@@ -74,9 +74,9 @@ These apply to every task from Task 4 on and override anything above that confli
   - The first review uses these reviewers:
     - the `code-review` agent (the owner's `review-workflow` skill), which returns the coverage table;
     - the built-in `/code-review` at high effort on the task PR;
-    - a `security-audit` pass for Tasks 4, 4c, 5, 5b, 6, 12 and 13 and, in P1a, for every `engine-simd` kernel.
+    - a `security-audit` pass for Tasks 4, 4c, 4d, 5, 5b, 6, 12 and 13 and, in P1a, for every `engine-simd` kernel.
   - They run one after another whenever two at once would put more than 2 helper agents alive: the `code-review` and `security-audit` agents start their own finders and verifiers ("Resource limits").
-  - A documentation-only PR is reviewed by the `code-review` agent alone **[author's call]**.
+  - Which reviewers a documentation-only PR needs is an open owner decision ("Owner decisions needed"). #25 and #26 were reviewed by the `code-review` agent alone, with the fix round and the verification passes of this section.
   - A PR above about 1,000 changed lines is split into sequential PRs, or flagged to the owner before review.
   - All findings, minor ones included, are merged into **one** fix round. After it, a verification pass (one verifier for the open findings plus one finder on the fix diff) checks every finding (FIXED / NOT FIXED) and applies the full checklist to the fix diff.
   - **Review until clean:** if the verification pass finds anything, of any severity, including problems the first review missed, the implementer fixes it and another verification pass runs. A task merges only after a pass reports zero findings. If a fifth pass still finds problems, the controller reports to the owner instead of continuing silently.
@@ -93,7 +93,7 @@ These apply to every task from Task 4 on and override anything above that confli
   8. CI green.
   9. The controller re-runs the tests, the lints and a bench smoke run itself before every merge.
 
-  Task 4 merged before items 5 and 6 existed: Task 4d runs its mutation pass, and Task 4b is its benchmark.
+  Task 4 merged before items 5 and 6 existed: Task 4d runs its mutation pass, and Task 4b is its benchmark. Tasks 4d and 15a have no research step of their own. For item 1, Task 4d records its decisions in `docs/notes/response-parser.md`, and Task 15a records its tool choices in `docs/notes/toolchain.md`, before the code that follows from them.
 - **Owner speed gates for components (hard gates: no release until they are met).**
   - **Parser (2026-11-07).** `ResponseParser` is faster than every other head parser, C and Rust included (httparse, picohttpparser, llhttp and every other row of the Task 4b race), with **equal work** (per-field name and value spans), on arm64 **and** x64, on the workloads `1k`, `1k-h20`, the 64-variant rings, `mixed` and the 1-byte feeds (in `bench/parsers/workloads.ts`: `1k-3-headers`, `1k-20-headers`, `1k-3-headers-ring64`, `1k-20-headers-ring64`, `mixed-64` and the four feed inputs; `varied-256`, which Task 4c adds, is gated as well, because the decision of 2026-11-13 says every cell). The run has 10 rounds in the quiet window, and the §16.4 component statistic's CI upper bound is < 1.0× against every rival. **Owner decision 2026-11-13:** the gate is met by the **scalar** parser, with no `engine-simd` kernel, against rivals that run as shipped with their own SIMD. It is Task 4c's acceptance, and Task 4c is not closed while a cell loses. SIMD (P1a) is an extra layer on a scalar parser that already wins, never the way to meet the gate. The race is re-run whenever the parser changes, P1a included.
   - **Writer (2026-11-08).** `write_request` is faster than every other request writer with equal work (Task 5c's race and tiers), on arm64 and x64, by the same statistic, and `post1k` costs ≤ 2.3× the copy floor.
@@ -103,10 +103,10 @@ These apply to every task from Task 4 on and override anything above that confli
 - **Resource limits (owner).** The Mac has 16 GiB, is shared with other sessions, and has had a kernel panic from a mutation run on the host.
   - At most 2 helper agents are alive per task, and about 8 are used per task in total. Run `bash ~/.claude/scripts/preflight.sh --wait 600` before starting an agent or a heavy job.
   - No process fan-out on the host. Build parallelism is at most 2 (`CARGO_BUILD_JOBS=2`), which matters for the fat-LTO release builds.
-  - Fuzzing, mutation testing, load tests, benchmarks and any test over about 30 s or 10,000 cases run **one at a time in a capped container**: `docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, with the source mounted read-only and copied inside. Check `docker ps` first: never two containers at once. cargo-mutants runs with `--jobs 1`, at most 2 test threads and a timeout of about 20 s. libFuzzer gets `-rss_limit_mb=2048`. Without Docker the job is skipped and reported as "not run (resource policy)".
+  - Fuzzing, mutation testing, load tests, benchmarks and any test over about 30 s or 10,000 cases run **one at a time in a capped container**: `docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, with the source mounted read-only and copied inside. Check `docker ps` first: never two such jobs at once. One benchmark run's own containers (its server and its clients, labelled `blazehttp-bench`) count as one job; this reading of the owner's rule is listed under "Owner decisions needed". cargo-mutants runs with `--jobs 1`, at most 2 test threads and a timeout of about 20 s. libFuzzer gets `-rss_limit_mb=1536` **[author's call: below the container's 2 GiB, so libFuzzer stops by itself and writes the reproducer before the kernel kills the container; 2048 is libFuzzer's default and equals the container limit]**. Without Docker the job is skipped and reported as "not run (resource policy)".
   - Test stubs, buffers and collectors have a size cap (for example 64 MiB) and fail fast, so a runaway mutant fails in milliseconds.
   - A step in this plan that runs such a job "locally" or on the host runs it in the capped container. That covers Task 4 Step 7 (fuzzing), Task 6 `each_key_completes_exactly_once` (10,000 requests) and Task 18 `pending-cost.ts` (100,000 pending requests).
-  - Every benchmark container carries `--memory` and `--memory-swap`: 2 GiB for a server or a client, 128 MiB for the G2 memory cells **[author's call]**. The G0 server's 4 CPUs (Task 10) are the one exception to `--cpus=1`. It follows from the owner's benchmark-host decision (§16.1, §21) and is used only on a quiet machine; the owner's confirmation of this exception is listed under "Owner decisions needed".
+  - Every benchmark container carries `--memory` and `--memory-swap`: 2 GiB for a server or a client, 128 MiB for the G2 memory cells (the design's G2 container size, §16.3). The G0 server's 4 CPUs (Task 10) are the one exception to `--cpus=1`. It follows from the owner's benchmark-host decision (§16.1, §21) and is used only on a quiet machine; the owner's confirmation of this exception is listed under "Owner decisions needed".
   - **Quiet machine for every benchmark (owner, 2026-11-13).** An agent never starts a benchmark, dev runs included, while other agents may be running. It commits, pushes, writes its checkpoint and replies "ready for benchmark". The controller stops the other agents, checks the load, `docker ps` and peer sessions, runs the benchmark alone, and resumes them.
 - **Upstream test vectors** come from the latest published, non-prerelease release **source** tag, and the exact commit is recorded in each vector file.
   - The llhttp sets have an importer: `pnpm vectors:import-llhttp --refresh` re-imports them at the start of each phase.
@@ -135,7 +135,7 @@ tools/pack/                               integrity hashes, packing, placeholder
 tests/vectors/index.json                  vector file → consuming suites
 tests/vectors/h1-response/*.json          llhttp (imported); curl, Go, httparse, hyper (hand-ported); blazehttp-rules
 tests/fixtures/h1-heads/                  response heads the parser benches time
-tools/h1-research/                        bit-stream model of the P1a parser candidates; deleted in P1a (#24)
+tools/h1-research/                        bit-stream model of the P1a parser candidates (scanthru_model.py) and the asmcheck crate; deleted in P1a (#24)
 crates/engine-core/                       prototype engine (parser, writer, shard, connection, sink trait)
 crates/engine-core/examples/              h1_parse_bench.rs, h1_write_bench.rs: same-container A/B benches (criterion in P1a, #23)
 crates/engine-core/fuzz/                  cargo-fuzz (own workspace)
@@ -148,7 +148,7 @@ bench/xlang/{c,cpp,zig,go}/               cross-language baseline clients
 bench/parsers/                            cross-language parser race (Task 4b; CI job bench-parsers)
 bench/writers/                            cross-language writer race (Task 5c; replaces Task 5's bench/writer/)
 bench/docker/                             Dockerfiles
-bench/results/                            committed JSONL: gate runs, and the dev runs a note or the journal cites (named *-dev-*)
+bench/results/                            committed JSONL: gate runs, and the dev runs a note or the journal cites (named *-dev-*, with their load-sample .txt)
 bench/aws-cost-log.md                     duration and cost of every x64 VM run
 packages/blazehttp/                       main npm package (loader, NativeSession seed, generated spec)
 npm/<target>/                             8 platform packages
@@ -181,22 +181,22 @@ The original three-week table was replaced on 2026-11-13. In the first 8 days (2
 | Week | Engine track | Bench track | Platform track |
 |---|---|---|---|
 | 1 (done) | T4 parser, research notes | T4b parser race | T1 bootstrap, T2 specgen, T3 vectors |
-| 2 | T5 writer, T4d parser fixes and mutation pass | T9 bench-server | T15a Rust CI jobs |
+| 2 | T5 writer, T4d parser fixes and mutation pass | T9 bench-server | T15a CI jobs without the binding |
 | 3 | T4c spans in the scan, T5b writer speed | T5c writer race | — |
 | 4 | T6 shard + connection | T7, T8 engine-bench, T10 harness | T12 binding |
-| 5 | T17 wake latency | T11 xlang baseline | T13 loader + session, T15 CI matrix |
-| 6–7 | T18–T19 measurements | T14 G1 + spike retirement | T16 packaging, T20 gate + review |
+| 5 | — | T11 xlang baseline | T13 loader + session, T15 CI matrix |
+| 6–7 | T17 wake latency (after T14), T18–T19 measurements | T14 G1 + spike retirement | T16 packaging, T20 gate + review |
 
 Dependencies:
 - T1 → T2 → {T3, T9}. {T2, T3} → T4 (the parser's tests run the vectors Task 3 imports). T1 → T15a.
 - T4 → {T4b, T4d, T5}. {T4b, T4d} → T4c: 4c needs the race, and it changes code whose surviving mutants 4d must kill first.
 - T5 → T5b → T5c. T4c → {T5b, T5c}: 5b reuses the name search 4c puts in `grammar.rs`, and 5c reuses `pairedRatioCi`.
 - {T4c, T5} → T6: 4c changes `parse`, which the connection calls. Task 6 needs Task 4c's first PR, which carries the interface; it does not wait for Task 4c to close. Task 5b keeps `write_request`'s signature, so it may run beside Task 6.
-- T6 → {T7, T12}. T7 → {T8, T10, T11}: the harness smoke run and the xlang runner need `engine-bench`. T9 → {T7, T10}.
-- T12 → T13 → {T14, T15}. T15 → T16 (packaging uses the native matrix's artefacts).
+- T6 → {T7, T12}. T7 → {T8, T10, T11}: the harness smoke run and the xlang runner need `engine-bench`. T9 → {T7, T10}. T10 → {T11, T14}: the xlang baseline and the G1 runs use the harness.
+- T12 → T13 → {T14, T15}. T15a → T15 (Task 15 extends Task 15a's jobs). T15 → T16 (packaging uses the native matrix's artefacts).
 - {T7, T8, T10, T11, T14} → {T17, T18, T19} → T20. T11 must land before T14 (spike deletion). Task 19's `?size=` cell changes Task 9's `bench-server`.
 
-**Schedule deviation:** §9.4 asks for the 2-hop wake measurement in week 1. Measuring it needs T6 + T12 + T13, so T17 starts as soon as T13 merges (week 5 of the estimate). This must be reported to the owner in the P0 report.
+**Schedule deviation:** §9.4 asks for the 2-hop wake measurement in week 1. Measuring it needs T6 + T12 + T13, and its G1 reference cell needs T14, so T17 starts as soon as T14 merges (week 6 of the estimate). This must be reported to the owner in the P0 report.
 
 **Window time (estimate).** One measured run is about 12 s (`--secs 10` plus warm-up). Container starts, the pause between rounds and re-runs of invalid rounds roughly double it.
 
@@ -208,10 +208,11 @@ Dependencies:
 | 19 Steps 3–4 sweeps and undici baselines | 120 + 60 + 160 = 340 | 68 min |
 | 11 xlang baseline | 5 clients × 10 = 50 | 10 min |
 | 14 §1 reproduction and first G1 number | 3 clients × 10 = 30 | 6 min |
-| 20 G0 reference gate | 6 clients × 10 + saturation runs ≈ 80 | 16 min |
-| **Total with two kept strategies** | ≈ 1,090 runs | ≈ 3.7 h measured, ≈ 7–8 h of window |
+| 20 G0 reference gate | 5 pairs (4 rivals and the raw loop) × 2 clients × 10 rounds = 100, + about 10 saturation runs ≈ 110 | 22 min |
+| Component races: parser (Tasks 4b, 4c) and writer (Task 5c) | 1 invocation each, 10 rounds; every further Task 4c gate race repeats the parser one | ≈ 10 min each: 45–120 timed cells × 300 ms × 10 rounds, plus container starts |
+| **Total with two kept strategies** | ≈ 1,120 runs and 2 races | ≈ 4.1 h measured, ≈ 8–9 h of window |
 
-- Wake strategies are screened in dev runs of 3 rounds; only a strategy that looks faster gets the 10-round window run **[author's call]**.
+- Wake strategies are screened in dev runs of 3 rounds. A strategy gets the 10-round window run only if its median p50 or its median p99 over the 3 rounds is below the baseline's on at least one low-load cell **[author's call: 3 rounds cannot carry a CI, so the screen only drops a strategy that shows no gain at all; the window run decides]**.
 - A decision taken on dev data (TLS provider, wake strategy, allocator, sizes) is provisional and is re-run in the window before Task 20.
 - x64 (AWS, inside the monthly cap): the parser and writer races (Tasks 4b, 4c, 5b, 5c: minutes each plus image builds), the TLS provider cells, the spike re-measure and the Task 20 gate. Estimate: 3–4 instance-hours for P0.
 
@@ -223,15 +224,19 @@ Dependencies:
 - Tasks 17–20: gate runs need the nightly window, which the owner has not chosen yet. Until then, runs use `--dev` and do not count as gate evidence.
 - Task 20: the decision on `io_uring` funding (if triggered), and approval of the milestone PR. The x64 VM and its budget cap exist since 2026-11-07.
 
-**Owner decisions needed (open on 2026-11-13).** No task lead decides these; each line carries a recommendation. The questions from the design review (the G0/G1 statistic, shared-limit cells, the size of the G0 matrix, the 128 MiB budget, the arm64 gate host, gates without a rule, the mixed-load cell, the axios surface) are in design §21 "Open owner decisions".
+**Owner decisions needed (open on 2026-11-13).** No task lead decides these; each row gives the options and a recommendation. The questions from the design review (the G0/G1 statistic, shared-limit cells, the size of the G0 matrix, the 128 MiB budget, the arm64 gate host, gates without a rule, the mixed-load cell, the axios surface) are in design §21 "Open owner decisions".
 
 | Decision | Options | Recommendation |
 |---|---|---|
-| P0 end date | (a) accept the 5–7 week estimate; (b) move Tasks 17–19 to P1a and end P0 about 2 weeks earlier; (c) keep 3 weeks, which is not reachable at the measured rate | (a), with a new estimate when Task 6 merges |
-| Nightly window: hours and length | the table above needs ≈ 7–8 h on arm64 | a fixed 3 h window on at least 3 nights, chosen now, so that Task 4b's owed run can use it |
-| Writer line "`post1k` ≤ 2.3× the copy floor" | (a) keep the ratio to the floor; (b) replace it by the Task 5c race result plus a fixed ns budget | (b): the floor moved 13–21% between binaries, so the ratio is not a stable measure. Until the owner decides, the line stays as it is |
-| The 4-CPU G0 server as an exception to the `--cpus=1` container rule | (a) confirm it for quiet-machine runs; (b) 2 CPUs on the Mac and 4 only on x64 | (a) |
-| AWS budget alert; npm org `blazehttp` with OIDC | owner actions still pending | — |
+| P0 end date | (a) accept the 5–7 week estimate; (b) move Tasks 17–19 to P1a and end P0 about 2 weeks earlier, which also changes the P0 row of design §15 (wake-latency measurements, allocator choice) and §22; (c) keep 3 weeks, which is not reachable at the measured rate | (a), with a new estimate when Task 6 merges |
+| Nightly window: hours and length (the table above needs ≈ 8–9 h on arm64) | (a) a fixed 3 h window on at least 4 nights; (b) one night of about 9 h; (c) no fixed window yet: every run stays a dev run and no gate closes | (a), chosen now, so that Task 4b's owed run can use it; the fourth night covers re-runs and further Task 4c races |
+| Writer line "`post1k` ≤ 2.3× the copy floor" | (a) keep the ratio to the floor; (b) replace it by the Task 5c race result plus a fixed ns budget | (b): between two binaries with the same floor code the measured floor moved by 13–21% on `varied` and by 14–15% on `post1k` (measurement review of 2026-11-13; the journal entries are on `p0/writer`, PR #18), so the ratio is not a stable measure. Until the owner decides, the line stays as it is |
+| The 4-CPU G0 server as an exception to the `--cpus=1` container rule | (a) confirm it for quiet-machine runs; (b) 2 CPUs on the Mac and 4 only on x64, which also changes design §16.1 and §16.2 (a G0 server on ≥ 4 CPUs on the arm64 reference host) | (a) |
+| One benchmark run's server and client containers as one job under "never two at once" | (a) confirm this reading for quiet-machine runs; (b) one container at a time without exception, which rules out the client-and-server harness of design §16.2 on the Mac | (a) |
+| Reviewers of a documentation-only PR | (a) all reviewers of definition-of-done item 7; (b) the `code-review` agent alone, with the same fix round and verification passes | (b): the built-in `/code-review` and `security-audit` check code paths, and a documentation PR has none. #25 and #26 were reviewed as in (b) |
+| PR #18 (Task 5 writer) is above the limit of about 1,000 changed lines ("Review setup"; review report 3, PL1) | (a) merge it as one PR after its review loop; (b) split it into sequential PRs | (a): its review loop already covers the whole diff, and a split now would repeat it |
+
+Owner actions still pending (not decisions): the AWS budget alert, and the npm org `blazehttp` with OIDC trusted publishing.
 
 ---
 
@@ -500,7 +505,7 @@ impl ResponseParser {
   - Do no allocation.
   - Parse `Content-Length` with checked u64 arithmetic.
 - [ ] **Step 6: Run** the tests, then `cargo clippy -p engine-core --all-targets -- -D warnings`. Expected: PASS.
-- [ ] **Step 7: Add the fuzz target.** It is structure-aware: it builds heads from a model, mutates them, and checks the parser against the model's verdict (an oracle), and the split result must equal the whole result. Run `cargo +nightly-<pinned> fuzz run h1_response -- -max_total_time=300 -rss_limit_mb=2048` in the capped container ("Resource limits"). Expected: no crash. Record the pinned nightly date in `docs/notes/toolchain.md`.
+- [ ] **Step 7: Add the fuzz target.** It is structure-aware: it builds heads from a model, mutates them, and checks the parser against the model's verdict (an oracle), and the split result must equal the whole result. Run `cargo +nightly-<pinned> fuzz run h1_response -- -max_total_time=300 -rss_limit_mb=1536` in the capped container ("Resource limits"). Expected: no crash. Record the pinned nightly date in `docs/notes/toolchain.md`.
 - [ ] **Step 8: Commit** `Add strict HTTP/1.1 response head parser with rule vectors and fuzz target` and open a PR.
 
 ---
@@ -907,7 +912,7 @@ pub struct RunResult { pub client: String, pub cell: String, pub load: String, p
 
 **Files:**
 - Create: `crates/bench-server/Cargo.toml` (lib + bin; tokio multi-thread, tokio-rustls, `rcgen` for a self-signed certificate at start-up, `flate2` to pre-gzip at start-up)
-- Create: `crates/bench-server/src/{lib.rs, main.rs, cells.rs}`, `crates/bench-server/tests/serve.rs`
+- Create: `crates/bench-server/src/{lib.rs, main.rs, cells/mod.rs}`, `crates/bench-server/tests/serve.rs`
 - Create: `bench/cells.json` (generated by `bench-server --print-cells`: path, response bytes length, header count, FNV-1a of the body)
 
 **Interfaces:**
@@ -1027,7 +1032,7 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
 - Modify: `policy/spec.json` (add `wire`), and regenerate with `pnpm specgen`
 - Create: `crates/node-binding/test/binding.test.ts`, `crates/node-binding/test/fixtures/{idle-exit.mjs, pending-alive.mjs}`, `crates/node-binding/package.json` (private workspace package with a `build` script: `napi build --platform --release --no-js --output-dir ./dist`)
 - Create: `docs/notes/completion-path.md`
-- Create: `crates/node-binding/fuzz/fuzz_targets/submit_codec.rs` (own workspace, like the engine's fuzz crate)
+- Create: `crates/node-binding/fuzz/{Cargo.toml, fuzz_targets/submit_codec.rs}` (own workspace, like the engine's fuzz crate). A fuzz target cannot depend on a `cdylib`, and napi symbols do not resolve outside Node. The fuzz crate therefore compiles `src/codec.rs` and the generated wire constants directly, as `#[path]` modules, and `codec.rs` imports nothing else from `node-binding` **[author's call: no extra crate for one file, so the design's crate list (§5) is unchanged]**.
 
 **`wire` section (u32 words, generated into `SUBMIT_RECORD`/`COMPLETION_RECORD` index constants in TS and Rust):**
 - Submit record, 10 words: `keyLo, keyHi, method, targetOff, targetLen, headersOff, headersLen, headerLines, bodyOff, bodyLen`. Offsets index the submit arena. `headerLines` is the number of header entries the JS layer serialised (`Submit.header_lines`); it is counted while the entries are written, never from the bytes.
@@ -1064,7 +1069,7 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
   - `process_stays_alive_while_pending` (Review Focus 5): `pending-alive.mjs` against a server that answers after 500 ms; the child exits after the response, not before, with the result printed.
 - [ ] **Step 2: Run** `pnpm --filter node-binding build && pnpm vitest run crates/node-binding`. Expected: FAIL.
 - [ ] **Step 3: Implement** it.
-- [ ] **Step 4: Run** the tests with `--throw-deprecation`, then clippy on `node-binding`. Expected: PASS. Fuzz `submit_codec` for 300 s in the capped container: the record decoder is a pure function in `codec.rs` with no napi types, and arbitrary records and arenas must never panic or read outside the arena.
+- [ ] **Step 4: Run** the tests with `--throw-deprecation`, then clippy on `node-binding`. Expected: PASS. Fuzz `submit_codec` for 300 s in the capped container: the record decoder is a pure function in `codec.rs` with no napi types (which is what lets the fuzz crate compile it), and arbitrary records and arenas must never panic or read outside the arena.
 - [ ] **Step 5: Commit** `Add napi binding with batched submit and swapped completion buffers` and open a PR.
 
 ---
@@ -1099,7 +1104,7 @@ export class NativeSession {
 ```
 
 **Rules:**
-- musl is detected when `process.report.getReport().header.glibcVersionRuntime` is `undefined` on Linux, called once. Verify this in the Node docs. The research step measures the call's start-up cost on Linux; if it is above 5 ms, the loader uses the fallback the note chooses (for example the interpreter path in `/usr/bin/ldd`) and keeps the report as the cross-check **[author's call]**.
+- musl is detected when `process.report.getReport().header.glibcVersionRuntime` is `undefined` on Linux, called once. Verify this in the Node docs. The research step measures the call's start-up cost on Linux; if it is above 5 ms, the loader uses the fallback the note chooses (for example the interpreter path in `/usr/bin/ldd`) and does not call the report at start-up. The report then runs only in the loader's tests and in CI, where it cross-checks the fallback **[author's call: a cross-check at start-up would pay the cost the fallback avoids]**.
 - The loader:
   1. resolves `@blazehttp/<target>/blazehttp.<target>.node`;
   2. checks SHA-256 (`node:crypto`) against `integrity.ts` before loading;
@@ -1163,26 +1168,38 @@ export class NativeSession {
 
 ---
 
-### Task 15a: Rust-only CI jobs
+### Task 15a: CI jobs that do not need the binding
 
 It needs only Task 1 and runs now, so that the parser, writer and connection code (Tasks 4–6) merge under these checks. None of the jobs needs the binding.
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
+- Create: `tools/policy-check/crate-direction.ts` and `tools/policy-check/crate-direction.test.ts` (the test feeds it recorded `cargo tree` output, one allowed and one reversed)
+- Modify: `eslint.config.js` and `package.json` (the import-cycle lint. The repo's ESLint setup has no such rule today, so the task picks the plugin or tool after a docs check and records the choice and its reason in the note)
+- Modify: `docs/notes/toolchain.md` (the tools and versions the jobs use)
 
 **Jobs:**
 - `rust` on `ubuntu-24.04` gains:
   - `cargo deny check` (RUSTSEC unmaintained and yanked = error), `cargo audit`, `cargo shear`, `cargo hack check --workspace --each-feature`;
   - `cargo nextest run --workspace`;
   - `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`;
-  - the crate-direction check of design §13.1 rule 7: a script over `cargo tree` fails if `engine-core` depends on `node-binding`, `engine-bench`, `bench-server` or napi.
-- `ts` gains the import-cycle lint of the same rule.
-- `fuzz-smoke`: pinned nightly, every fuzz target for 300 s with `-rss_limit_mb=2048`. At the measured ≈ 800 executions per second on 70 KB inputs, 120 s is too short to reach the limit paths.
+  - the crate-direction check of design §13.1 rule 7: `crate-direction.ts` reads `cargo tree` and fails if `engine-core` depends on `node-binding`, `engine-bench`, `bench-server` or napi.
+- `ts` gains the import-cycle lint of the same rule (it runs inside `pnpm lint`).
+- `fuzz-smoke`: pinned nightly, every fuzz target for 300 s with `-rss_limit_mb=1536` (the value of "Resource limits"). At the measured ≈ 800 executions per second on 70 KB inputs, 120 s is too short to reach the limit paths.
 
 - [ ] **Step 1:** Add the jobs on a branch and open a PR. Fix what they find at the cause: no `continue-on-error`.
-- [ ] **Step 2:** Commit `Run dependency, coverage and fuzz smoke checks on every pull request`.
+- [ ] **Step 2:** Commit `Run dependency, coverage, layering and fuzz smoke checks on every pull request`.
 
-**Acceptance:** every job is green on the PR; a deliberate violation of each check (an unused dependency, a reversed crate dependency, an import cycle) fails its job in a throwaway commit that is not merged.
+**Acceptance:** every job is green on the PR. For each check that the repo's own code can violate, a throwaway commit that is not merged shows the job failing, and the PR links the failed run:
+- an unused dependency (`cargo shear`);
+- a feature that does not compile alone (`cargo hack`);
+- a failing test (`cargo nextest`);
+- an untested module that takes `engine-core` below 90% line coverage (`cargo llvm-cov`);
+- a reversed crate dependency (`crate-direction.ts`);
+- an import cycle (the `ts` job);
+- a planted panic in a fuzz target (`fuzz-smoke`).
+
+`cargo deny` and `cargo audit` are shown by their output on the PR: the advisory database was fetched and no error is reported.
 
 ---
 
@@ -1306,7 +1323,7 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
 **Files:**
 - Modify: `crates/engine-bench/src/clients/raw.rs`. Add an HTTPS mode over tokio-rustls behind the features `tls-ring` and `tls-aws-lc`. After the decision, only the winner's feature remains.
 - Modify: `policy/spec.json` `wire.arenaBytes` / `wire.batchRecords` (only if Step 3 changes them)
-- Modify: `crates/bench-server/src/cells.rs` and `bench/cells.json` (Task 9's code: the `?size=` cells of Step 3)
+- Modify: `crates/bench-server/src/cells/mod.rs` and `bench/cells.json` (Task 9's code: the `?size=` cells of Step 3)
 - Create: `docs/notes/tls-provider.md`, `docs/notes/external-memory.md`
 
 - [ ] **Step 1: `ring` vs `aws-lc-rs`.**
