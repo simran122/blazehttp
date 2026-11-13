@@ -1,0 +1,7 @@
+[
+  { "path": "/1k", "responseBytes": 956, "headerCount": 3, "bodyFnv1a64": "0xe89c6e4174c1f99f" },
+  { "path": "/1k-h20", "responseBytes": 1626, "headerCount": 20, "bodyFnv1a64": "0xe89c6e4174c1f99f" },
+  { "path": "/1k-gzip", "responseBytes": 328, "headerCount": 4, "bodyFnv1a64": "0xe89c6e4174c1f99f" },
+  { "path": "/1k-chunked", "responseBytes": 995, "headerCount": 3, "bodyFnv1a64": "0xe89c6e4174c1f99f" },
+  { "path": "/1m", "responseBytes": 1048697, "headerCount": 3, "bodyFnv1a64": "0xb5940e60f8b4a33a" }
+]

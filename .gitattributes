@@ -1,2 +1,3 @@
-# Raw HTTP head fixtures: exact bytes (CRLF), never converted.
-tests/fixtures/**/*.http -text
+# Benchmark bytes and fixtures (raw HTTP heads with CRLF, bodies) compared byte for byte, never converted.
+bench/cells.json -text
+tests/fixtures/** -text

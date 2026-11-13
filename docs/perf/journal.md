@@ -315,3 +315,47 @@ Record every measured idea. Keep only measured wins.
   (not the `h1_parse_bench` entries).
 - **Commit:** results `7295506`, load metadata `255aa65` (window edges stated in a later commit), measured at
   `8ff4b87`.
+
+
+### 2026-11-07: bench-server runtime: multi-thread vs per-core `current_thread` + `SO_REUSEPORT`
+
+- **Idea:** one tokio multi-thread runtime (design A) vs one `current_thread` runtime and one `SO_REUSEPORT` listener
+  per core (design B). Detail: `docs/notes/bench-server.md` §4, §7.
+- **Hypothesis:** B costs less server CPU per request (no cross-thread wakes or work stealing).
+- **Method:** Linux arm64, Docker Desktop on the owner's M2 (8 CPUs), server `--cpus=4 --threads 4`, wrk 4.1.0
+  `--cpus=3 -t3 -c50` in the server's network namespace, `GET /1k`, 5 s warm-up + 20 s, server CPU from its cgroup
+  `cpu.stat`; A and B alternated, 3 rounds each. Host **not idle** (load average 14–28 from other work), so dev only.
+- **Numbers (no CI, n = 3):** server CPU per request A 10.17 / 9.74 / 10.64 µs (median 10.17), B 11.05 / 10.13 /
+  13.67 µs (median 11.05); 85–87% of it is kernel time in both.
+- **Kept / dropped:** A kept (simpler, no measured loss at c = 50). B is not settled: c = 500 was not measured, so the
+  comparison is repeated at c = 50 and 500 in the nightly window (#15).
+- **Commit:** see the PR that adds `crates/bench-server`.
+
+### 2026-11-08: bench-server TLS batch writes: gather vs copy
+
+- **Idea:** write a TLS batch of several pre-built responses as one vectored write of the static slices (gather)
+  instead of copying them into one buffer (copy). Detail: `docs/notes/bench-server.md` §7.2.
+- **Hypothesis:** the copy is cheaper because rustls processes each slice of a vectored write separately.
+- **Method:** HTTPS `/1k`, c = 50, wrk pipelining 16 requests per write, server `--cpus=4 --threads 4`, wrk
+  `--cpus=3`, shared network namespace, 5 s warm-up + 20 s, server CPU from cgroup `cpu.stat`; 6 rounds (rounds 1–3
+  copy first, rounds 4–6 alternated). Host not idle (load average 10–15), so dev only.
+- **Numbers (no CI, n = 6):** server CPU per request copy median 2.01 µs (1.74–2.12), gather median 1.74 µs
+  (1.62–1.87); gather lower in 4 of 6 rounds.
+- **Kept / dropped:** gather kept on both ports; the copy path and its per-stream switch were deleted (the hypothesis
+  was wrong for this workload).
+- **Commit:** see the PR that adds `crates/bench-server`.
+
+### 2026-11-08: bench-server headroom re-measure after fix round 1 (dev; build: fix round 1, see note §7.3)
+
+- **Idea:** confirm the server stays below the 60% CPU limit after the fix round (vectored writes, limits, TLS
+  pinning). Detail and raw numbers: `docs/notes/bench-server.md` §7.3.
+- **Hypothesis:** about 10 µs of server CPU per `/1k` request, mostly kernel time, so a 1-CPU client keeps the server
+  far below 60%.
+- **Method:** Linux arm64, Docker Desktop on the owner's M2, server `--cpus=4 --memory=1g --threads 4`, wrk 4.1.0
+  `--cpus=3 --memory=512m` in the server's network namespace, 5 s warm-up + 20 s, server CPU from cgroup `cpu.stat`.
+  Host not idle (load average 5–20), so dev only.
+- **Numbers (no CI):** `/1k` c = 50 median 9.96 µs (≈ 241k req/s at 60%), c = 500 9.77 µs, `/1k-h20` 10.40 µs,
+  HTTPS c = 50 12.9 µs, HTTPS c = 500 21.5 µs, `/1m` 415 µs per request; 83–86% kernel time on plaintext.
+- **Kept / dropped:** no code change; the bound for the gate cells (a 1-CPU client keeps the server ≈ 30%) and the
+  per-run < 60% assertion (Task 10) are recorded in the note.
+- **Commit:** see the PR that adds `crates/bench-server`.
