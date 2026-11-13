@@ -9,7 +9,7 @@
 #                                             any other container runs.
 #
 # Usage, from the repository root (measure alone on a quiet machine):
-#   python3 docs/perf/harness/writer-ab/build.py AB_DIR 12d82d7 89a028c HEAD
+#   python3 docs/perf/harness/writer-ab/build.py AB_DIR 68c48f0 abe8c87 HEAD
 #   docs/perf/harness/writer-ab/run.sh build AB_DIR BIN_DIR
 #   docs/perf/harness/writer-ab/run.sh measure BIN_DIR LOG_DIR [CPUSET]
 set -euo pipefail

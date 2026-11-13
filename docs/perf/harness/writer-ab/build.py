@@ -1,7 +1,7 @@
 """Builds the one-binary writer A/B workspace: engine-core at three revisions as renamed crates plus a bench binary.
 
 Run from the repository root: python3 docs/perf/harness/writer-ab/build.py OUT_DIR BASE_REV FR1_REV NEW_REV
-(journal 2026-11-13: 12d82d7 = pre-review, 89a028c = fix round 1, the fix-round-2 head). OUT_DIR must be outside the
+(journal 2026-11-13: 68c48f0 = pre-review, abe8c87 = fix round 1, the fix-round-2 head). OUT_DIR must be outside the
 repository; it is replaced.
 """
 import io
