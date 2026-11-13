@@ -1059,7 +1059,7 @@ fn run_case(case: &RequestCase) -> RequestExpect {
 
 /// Every request vector file and its case count (docs/notes/vectors.md).
 const VECTOR_FILES: [(&str, usize); 5] = [
-    ("h1-request/blazehttp-rules.json", 270),
+    ("h1-request/blazehttp-rules.json", 292),
     ("h1-request/undici-selected.json", 38),
     ("h1-request/go-selected.json", 17),
     ("h1-request/httpguts-selected.json", 145),

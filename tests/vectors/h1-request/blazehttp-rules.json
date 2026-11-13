@@ -4652,6 +4652,390 @@
       "expect": {
         "error": "ENGINE/internal"
       }
+    },
+    {
+      "name": "target / caret in path",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a^b",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / backtick in path",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a`b",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / open brace in path",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a{b",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / close brace in path",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a}b",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / backslash in path before a query",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a\\b?c",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / apostrophe in query",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a?b'c",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "target / caret, backtick, braces and pipe in query",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a?q=^`{|}",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /a?q=^`{|} HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "target / apostrophe, pipe and brackets in path",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a'|[]b",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /a'|[]b HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "target / second question mark stays in the query",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/a?x?\\y{",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /a?x?\\y{ HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "target / dot segments are not normalised",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/../../etc",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /../../etc HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "target / invalid percent sequence is not checked",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/%zz",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /%zz HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "target / at sign after the slash",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/@evil.example",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /@evil.example HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv6 upper-case hex",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[2001:DB8::A]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv6 leading zeros",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[0001:0db8::0001]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv6 not compressed",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[0:0:0:0:0:0:0:1]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv6 dotted ipv4 tail",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[::ffff:1.2.3.4]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv6 single zero compressed",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1::2:3:4:5:6:7]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv6 shorter zero run compressed",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1::2:0:0:0:3]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      }
+    },
+    {
+      "name": "template host / ipv6 mapped ipv4 in hex",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[::ffff:102:304]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: [::ffff:102:304]\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv6 single zero kept",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1:0:2:3:4:5:6:7]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: [1:0:2:3:4:5:6:7]\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv6 first of equal zero runs",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1:0:0:2::3]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: [1:0:0:2::3]\r\n\r\n",
+        "reuse": "allowed"
+      }
+    },
+    {
+      "name": "template host / ipv6 unspecified",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[::]",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: [::]\r\n\r\n",
+        "reuse": "allowed"
+      }
     }
   ]
 }

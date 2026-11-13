@@ -957,7 +957,7 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 
 | File | Source | Cases (planned) |
 |---|---|---|
-| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 270) |
+| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 292) |
 | `h1-request/undici-selected.json` | undici v8.12.4 (§9.4) | ≈ 25 (built: 38) |
 | `h1-request/go-selected.json` | go1.27.3 (§9.4) | ≈ 15 (built: 17) |
 | `h1-request/httpguts-selected.json` | x/net v0.62.0 `TestValidHeaderFieldName`, `TestIsTokenRune`, `TestPunycodeHostPort` | ≈ 15 (built: 145; `TestValidHeaderFieldName` has only 6 cases, so the token-rune and host tests were added) |
