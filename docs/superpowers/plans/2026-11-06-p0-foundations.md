@@ -24,7 +24,7 @@ Every task must also meet these. Values are copied from the design.
 - TypeScript: `strict`, no `any`, lookup maps instead of `switch`, and only `Error` may be extended. Rust: exhaustive `enum` + `match`, no `Box<dyn …>` on the hot path (§13).
 - No `postinstall`. `@blazehttp/<target>` packages are exact-pinned `optionalDependencies`. Build with `napi build --no-js` plus our own loader with a SHA-256 integrity check (§12).
 - Licence is `MIT OR Apache-2.0`. Ported vectors keep their copyright notice in the vector file and in `THIRD_PARTY_NOTICES`. No third-party code goes into the npm packages (§6.1).
-- Coverage: ≥ 95% for TS and ≥ 90% for Rust (G7). CI enforces the Rust figure from Task 15a on. Until Task 15a merges, CI runs `cargo test -p engine-core`. A step of this plan that says `cargo nextest run` may use `cargo test` with the same arguments until then. The task lead reports the `cargo llvm-cov` figure in the PR.
+- Coverage: ≥ 95% for TS and ≥ 90% for Rust (G7). CI enforces the Rust figure from Task 15a on. Until Task 15a merges, CI runs `cargo test --workspace`. A step of this plan that says `cargo nextest run` may use `cargo test` with the same arguments until then. The task lead reports the `cargo llvm-cov` figure in the PR.
 - The 8 targets: `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`, `linux-x64-musl`, `linux-arm64-gnu`, `linux-arm64-musl`, `win32-x64-msvc`, `win32-arm64-msvc`. CI runners: `macos-15`, `macos-15-intel`, `ubuntu-24.04`, `ubuntu-24.04-arm` (musl through `docker run` on Alpine), `windows-2025`, `windows-11-arm` (§14).
 - Node floor is `>=22.19` (`engines`). Benchmarks run on Node 24 LTS and Node 26 (§16.1).
 - Every queue, buffer and cache is bounded. When a bound is hit the request fails fast with a typed error and never blocks (G6).
@@ -76,7 +76,7 @@ These apply to every task from Task 4 on and override anything above that confli
     - the built-in `/code-review` at high effort on the task PR;
     - a `security-audit` pass for Tasks 4, 4c, 4d, 5, 5b, 6, 12 and 13 and, in P1a, for every `engine-simd` kernel.
   - They run one after another whenever two at once would put more than 2 helper agents alive: the `code-review` and `security-audit` agents start their own finders and verifiers ("Resource limits").
-  - Which reviewers a documentation-only PR needs is an open owner decision ("Owner decisions needed"). #25 and #26 were reviewed by the `code-review` agent alone, with the fix round and the verification passes of this section.
+  - Which reviewers a documentation-only PR needs is an open owner decision ("Owner decisions needed"). #25 and #26 were reviewed by the `code-review` agent alone, with the fix round and the verification passes of this section. Until the owner decides, a documentation-only PR is reviewed as the controller's brief for it says, and the owner can ask for the other reviewers before the milestone PR merges.
   - A PR above about 1,000 changed lines is split into sequential PRs, or flagged to the owner before review.
   - All findings, minor ones included, are merged into **one** fix round. After it, a verification pass (one verifier for the open findings plus one finder on the fix diff) checks every finding (FIXED / NOT FIXED) and applies the full checklist to the fix diff.
   - **Review until clean:** if the verification pass finds anything, of any severity, including problems the first review missed, the implementer fixes it and another verification pass runs. A task merges only after a pass reports zero findings. If a fifth pass still finds problems, the controller reports to the owner instead of continuing silently.
@@ -103,7 +103,7 @@ These apply to every task from Task 4 on and override anything above that confli
 - **Resource limits (owner).** The Mac has 16 GiB, is shared with other sessions, and has had a kernel panic from a mutation run on the host.
   - At most 2 helper agents are alive per task, and about 8 are used per task in total. Run `bash ~/.claude/scripts/preflight.sh --wait 600` before starting an agent or a heavy job.
   - No process fan-out on the host. Build parallelism is at most 2 (`CARGO_BUILD_JOBS=2`), which matters for the fat-LTO release builds.
-  - Fuzzing, mutation testing, load tests, benchmarks and any test over about 30 s or 10,000 cases run **one at a time in a capped container**: `docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, with the source mounted read-only and copied inside. Check `docker ps` first: never two such jobs at once. One benchmark run's own containers (its server and its clients, labelled `blazehttp-bench`) count as one job; this reading of the owner's rule is listed under "Owner decisions needed". cargo-mutants runs with `--jobs 1`, at most 2 test threads and a timeout of about 20 s. libFuzzer gets `-rss_limit_mb=1536` **[author's call: below the container's 2 GiB, so libFuzzer stops by itself and writes the reproducer before the kernel kills the container; 2048 is libFuzzer's default and equals the container limit]**. Without Docker the job is skipped and reported as "not run (resource policy)".
+  - Fuzzing, mutation testing, load tests, benchmarks and any test over about 30 s or 10,000 cases run **one at a time in a capped container**: `docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, with the source mounted read-only and copied inside. Check `docker ps` first: never two such jobs at once. One benchmark run's own containers (its server and its clients, labelled `blazehttp-bench`) count as one job; this reading of the owner's rule is listed under "Owner decisions needed". Until the owner decides, the harness runs as designed (its server and its clients together), only on a quiet machine, and no other job runs beside it. cargo-mutants runs with `--jobs 1`, at most 2 test threads and a timeout of about 20 s. libFuzzer gets `-rss_limit_mb=1536` **[author's call: below the container's 2 GiB, so libFuzzer stops by itself and writes the reproducer before the kernel kills the container; 2048 is libFuzzer's default and equals the container limit]**. Without Docker the job is skipped and reported as "not run (resource policy)".
   - Test stubs, buffers and collectors have a size cap (for example 64 MiB) and fail fast, so a runaway mutant fails in milliseconds.
   - A step in this plan that runs such a job "locally" or on the host runs it in the capped container. That covers Task 4 Step 7 (fuzzing), Task 6 `each_key_completes_exactly_once` (10,000 requests) and Task 18 `pending-cost.ts` (100,000 pending requests).
   - **Mutation testing and fuzzing run in GitHub Actions CI (owner decision 2026-11-13).** A separate PR adds the workflow for the mutation pass and the fuzz runs the task steps ask for. Task 15a's `fuzz-smoke` job, the short run of every fuzz target on each pull request, is part of the same move: if that PR adds it first, Task 15a adds only what is still missing. From the workflow's merge on, a step of this plan that runs cargo-mutants or a fuzz target "in the capped container" is done by the CI run, and the evidence the step asks for (for cargo-mutants the `mutants.out/` files, for a fuzz run its log and any reproducer) comes from that run's artefacts. The capped container stays as the local fallback, under the rules above: before the workflow exists, to reproduce a CI finding, and when CI is not available.
@@ -626,7 +626,10 @@ It runs before Tasks 4c and 6, which build on the parser's exact limit behaviour
 
 **Files:**
 - Create: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs, host.rs, target.rs, template.rs}`, `crates/engine-core/tests/{h1_writer.rs, h1_writer_alloc.rs}`, `crates/engine-core/tests/support/{request_vectors.rs, response_vectors.rs, write_bench.rs, write_rings.rs}`, `crates/engine-core/fuzz/fuzz_targets/h1_writer.rs`, `crates/engine-core/fuzz/h1_writer.dict`, `crates/engine-core/examples/h1_write_bench.rs`, `docs/perf/harness/writer-ab/` (the A/B harness), `tests/vectors/h1-request/*.json`, `docs/notes/request-writer.md`
-- Modify: `policy/spec.json` (the limits `maxRequestTargetBytes`, `maxRequestFieldsBytes` and `maxCopiedBodyBytes`) and the regenerated `crates/engine-core/src/generated/spec.rs`
+- Modify: `policy/spec.json` (the limits `maxRequestTargetBytes`, `maxRequestFieldsBytes` and `maxCopiedBodyBytes`), the regenerated `crates/engine-core/src/generated/spec.rs` and `packages/blazehttp/src/generated/spec.ts`, and their tests `crates/engine-core/tests/spec_wire.rs` and `packages/blazehttp/test/spec.test.ts`
+- Modify: `crates/engine-core/src/h1/{mod.rs, grammar.rs}`, `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/{Cargo.toml, fuzz/Cargo.toml}`, `Cargo.lock`, `crates/engine-core/tests/{h1_response.rs, vectors_load.rs, support/vectors.rs}`, `crates/engine-core/examples/h1_parse_bench.rs`, `tools/vectors/{schema.ts, schema.test.ts, notices.ts, notices.test.ts, import-llhttp.ts}`, `tests/vectors/index.json`, `THIRD_PARTY_NOTICES`, `.github/workflows/ci.yml`
+- Modify: `docs/notes/{response-parser.md, vectors.md}`, `docs/perf/{journal.md, ideas.md}`, `docs/specs/2026-11-06-blazehttp-design.md`; Create: `docs/perf/logs/writer/`
+- The four lines above and the one below are the diff of PR #18 against the milestone on 2026-11-13.
 - Create: `bench/writer/` (hyper and Go comparisons; replaced by Task 5c's `bench/writers/`)
 
 **Interfaces:**
@@ -949,7 +952,7 @@ change from the original sketch and why.
     `pub const MAX_REQUEST_TIMEOUT: Duration`
 
 **Cells (all response bytes pre-built at start-up):**
-- `/1k`: the spike payload (`spike/g0/body.json`, 847 bytes, `"id":42`, generated deterministically by the same shape as `spike/httpbench/goserver/main.go`) with 3 headers: `content-type`, `content-length` and a fixed `date`.
+- `/1k`: the spike payload (`tests/fixtures/bodies/1k.json`, a byte-for-byte copy of `spike/g0/body.json`, 847 bytes, `"id":42`, generated deterministically by the same shape as `spike/httpbench/goserver/main.go`) with 3 headers: `content-type`, `content-length` and a fixed `date`.
 - `/1k-h20`: the same payload with 20 headers.
 - `/1k-gzip`: the payload gzipped once and committed (`tests/fixtures/bodies/1k.json.gz`), with `content-encoding: gzip`.
 - `/1k-chunked`: chunked framing.
@@ -1218,7 +1221,7 @@ It needs only Task 1 and runs now, so that the parser, writer and connection cod
   - `cargo nextest run --workspace`;
   - `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`;
   - the crate-direction check of design §13.1 rule 7: `crate-direction.ts` reads `cargo tree` and fails if `engine-core` depends on `node-binding`, `engine-bench`, `bench-server` or napi.
-- `ts` gains the import-cycle lint of the same rule (it runs inside `pnpm lint`).
+- `ts` gains the import-cycle lint of the same rule (it runs in the `ts` job; whether inside `pnpm lint` or as a step of its own follows from the tool the task picks).
 - `fuzz-smoke`: pinned nightly, every fuzz target for 300 s with `-rss_limit_mb=1536`, the value the local container uses ("Resource limits"), so that a memory finding in CI reproduces under the container's 2 GiB. At the measured ≈ 800 executions per second on 70 KB inputs, 120 s is too short to reach the limit paths.
 
 - [ ] **Step 1:** Add the jobs on a branch and open a PR. Fix what they find at the cause: no `continue-on-error`.
@@ -1231,7 +1234,7 @@ It needs only Task 1 and runs now, so that the parser, writer and connection cod
 - an untested module that takes `engine-core` below 90% line coverage (`cargo llvm-cov`);
 - a reversed crate dependency (`crate-direction.ts`);
 - an import cycle (the `ts` job);
-- a planted panic in a fuzz target (`fuzz-smoke`).
+- a planted panic in a fuzz target (`fuzz-smoke`). If the CI-move PR of "Resource limits" added the job first and showed the failing run there, this task links that run.
 
 `cargo deny` and `cargo audit` are shown by their output on the PR: the advisory database was fetched and no error is reported.
 
