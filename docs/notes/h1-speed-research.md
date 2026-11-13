@@ -1303,8 +1303,8 @@ commit (line start L, below); facts per field (scalar)
   and the `varied-256` ring are added before any candidate is judged. P-A has no equal-work baseline in the A/B
   harness, so it is judged in a 10-round dev race against the pinned `blazehttp+fields@4d` row, with the A/B rule's
   thresholds. Each P-B change (locals / one loop per line; the STOP search as its own A/B against the table loop;
-  the masked `u64` prefix; the shared classifier) is kept only if it passes the plan's A/B rule in the same
-  container (`crates/engine-core/examples/h1_parse_bench.rs`, 10 alternated rounds, `pairedRatioCi(new, old)`) and
+  the masked `u64` prefix; the shared classifier) is kept only if it passes the plan's A/B rule (old and new
+  revision in one bench binary with `h1_parse_bench`'s workloads, 10 launches, `pairedRatioCi(new, old)`) and
   dropped otherwise. Spans equal the reference, and the new parser is faster than the pinned baseline row on every
   timed workload, with no feed slower. The race on both arches then records every cell against httparse,
   picohttpparser, llhttp, Beast, Zig, Go, fasthttp and nginx, with a Clang build of every C and C++ row beside the
@@ -1508,9 +1508,9 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
 ### 6.7 Measurement plan and acceptance (writer)
 
 - **Workloads:** `get`, `post1k`, `varied` (256-ring), plus `h20` (20 per-request fields); arm64 and x64.
-- **A/B:** `crates/engine-core/examples/h1_write_bench.rs` (writer vs copy floor, same container, alternated
-  binaries, 10 rounds, the A/B rule of plan "Task 4c"); ablations per check (classification off, delta scan off,
-  authority off).
+- **A/B:** the workloads of `crates/engine-core/examples/h1_write_bench.rs` in the one-binary harness of plan
+  "Task 4c" (old and new revision and the copy floor as variants of one binary, 10 launches, the A/B rule);
+  ablations per check (classification off, delta scan off, authority off).
 - **Task 5b acceptance (plan "Task 5b" is the source):** first the floor measurement is fixed (§6 intro); W-A is
   kept only if faster in that A/B and dropped otherwise; `post1k` ≤ 2.3× floor on both arches (the owner's line,
   unchanged; W-A alone is projected to straddle it, §6.2); 0 allocations (`tests/h1_writer_alloc.rs`). "Every
@@ -1524,7 +1524,7 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
 | What | Where | Workloads | Arches | Statistic / acceptance |
 |---|---|---|---|---|
 | P-A (keep or drop) | `bench/parsers`, a 10-round dev race against the pinned row `blazehttp+fields@4d` (`h1_parse_bench` has no equal-work baseline for spans) | the race's timed and feed workloads | arm64, x64 | the thresholds of the A/B rule of plan "Task 4c", on `pairedRatioCi(ours, blazehttp+fields@4d)` (plan Step 4 and acceptance line 2) |
-| P-B (keep or drop, one change at a time) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | the A/B rule of plan "Task 4c" (10 alternated rounds, `pairedRatioCi`) |
+| P-B (keep or drop, one change at a time) | the one-binary A/B of plan "Task 4c" with `h1_parse_bench`'s workloads | 1k, 1k-h20, ring64, mixed, trickle, varied-256, and the 1-byte feeds | arm64, x64 | the A/B rule of plan "Task 4c" (10 launches, `pairedRatioCi`) |
 | Plain G profile (4c step 1) | `perf stat`/sampling (x64 VM) or Instruments (arm64) | 1k-h20 | either | measured per-field split replaces §5.0's guess |
 | Parser race (4c; run again in P1a) | `bench/parsers` + fasthttp, nginx rows + `pairedRatioCi` | same | arm64 ref + x64 VM (`x86-64-v3`) | design §16.4 statistic per rival and cell; Task 4c passes only when the scalar parser wins every cell (owner decision 2026-11-13) |
 | P-C, P-D, scalar | P1a prototypes (lead chosen from data), then the race | 1k-h20, varied-256, then all | both | kept only where faster than the scalar parser; every cell of the race still passes |
