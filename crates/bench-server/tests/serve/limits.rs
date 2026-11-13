@@ -200,6 +200,23 @@ async fn invalid_limits_are_refused_before_binding() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn the_longest_request_timeout_is_accepted() {
+    let cfg = ServerConfig {
+        request_timeout: bench_server::MAX_REQUEST_TIMEOUT,
+        ..config(false)
+    };
+    let server = timeout(CLOSE_WITHIN, start(cfg))
+        .await
+        .expect("bound in time");
+    let cell = &cells()[0];
+    let mut stream = connect(server.bound.plain).await;
+    assert_eq!(
+        exchange(&mut stream, &get(cell.path), cell.response.len()).await,
+        cell.response
+    );
+}
+
 /// The helpers' own guard: a server that never answers fails `exchange` instead of hanging the test.
 #[tokio::test(flavor = "multi_thread")]
 #[should_panic(expected = "answered in time")]
