@@ -31,7 +31,7 @@ generic Armv8-A; median per-round ratio ours / theirs (> 1 = theirs faster) for 
 
 | Component | Gate (owner; statistic defined once in design §16.4 (component micro-gates)) | Today | Gap |
 |---|---|---|---|
-| `ResponseParser` with per-field spans | **#1 against every rival** (httparse, picohttpparser, llhttp, Beast, Zig, Go and any row added): the cell passes when the design §16.4 CI upper bound is < 1.0; every workload (1k, 1k-h20, ring64, mixed, trickle), arm64 reference host **and** x64 VM; checked at the end of P1a | loses to httparse (1.23–1.95×), picohttpparser (1.19–1.42×), and llhttp on 20-field and mixed heads (1.09–1.18×) | 1.1–2.0× |
+| `ResponseParser` with per-field spans | **#1 against every rival** (httparse, picohttpparser, llhttp, Beast, Zig, Go and any row added): the cell passes when the design §16.4 CI upper bound is < 1.0; every workload (1k, 1k-h20, ring64, mixed, trickle), arm64 reference host **and** x64 VM; met by the **scalar** parser and checked by Task 4c (owner decision 2026-11-13, §0.2) | loses to httparse (1.23–1.95×), picohttpparser (1.19–1.42×), and llhttp on 20-field and mixed heads (1.09–1.18×) | 1.1–2.0× |
 | `write_request` | the same statistic against every writer of the Task 5c race (§3.13) at equal work (§3.12); `post1k` ≤ 2.3× copy floor (provisional) | `post1k` 3.01–3.07× floor, `varied` 2.58–2.63×, `get` 2.43–2.51× (measured: journal "Request writer after review fix round 1", branch `p0/writer`, PR #18, head `786d341`, dev run, not a gate run); 1.16–1.22× hyper encode-only (earlier journal entry of 2026-11-08) | ≈ 25% on the floor ratio, on a floor that is not yet a stable measure (§6) |
 
 Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-core`, `unsafe` SIMD only in
@@ -46,18 +46,22 @@ Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-co
   body per line on locals, the STOP-set name search with an off-critical-path tchar fold, caller-owned spans. P-B's
   gain is **unmeasured**: the §5.3 arithmetic gives ≈ 0.4–0.85× httparse on 20-field heads on arm64 depending on
   whether the name search saves anything (the SIMD note measured a SWAR name path as slower in the chain, §5.3), and
-  x64 has **no data**. The first step of 4c is a profile of plain G that replaces the guessed split. **Honest
-  position:** a scalar parser may not beat httparse's NEON name scan on arm64, or picohttpparser's `pcmpestri` on x64
-  (the race builds every row for `x86-64-v3`, so pico's SSE4.2 path is on), with a CI upper bound < 1.0 on every
-  cell. **Task 4c is expected to end with open cells against httparse (and possibly picohttpparser on x64); that is
-  not a failure of the task**, whose pass/fail is the plan's (A/B keep-or-drop, span equality, no cell slower than
-  today). Open cells are reported to the owner with data and carried to P1a. **P1a's P-D** (bit-stream validator over
-  `engine-simd` bitmaps, §5.5) is the next candidate, not a proven closer: its speed is unknown until prototyped (the
-  only stage-1 measurement, SIMD note §4.2, was not faster than scalar on a fixed head), and P1a chooses its lead from
-  a prototype comparison (plan "P1a entry conditions recorded in P0"; §5.5). What follows if P-D also misses: §5.7.
-  The final gate is checked at the end of P1a, as the owner set it.
+  x64 has **no data**. The first step of 4c is a profile of plain G that replaces the guessed split.
+- **Owner decision (2026-11-13): the gate is met without SIMD.** Task 4c passes only when our **scalar** parser (no
+  `engine-simd` kernel) beats every rival in every cell on arm64 and x64, with equal work, by the design §16.4
+  statistic (CI upper bound < 1.0). Rivals run as shipped with their own SIMD: httparse NEON and AVX2,
+  picohttpparser `pcmpestri` (the race builds every row for `x86-64-v3`, so that path is on). While a cell loses,
+  Task 4c is not closed: it continues as research (profile, study the rival, design our own algorithm, measure) and
+  reports progress to the owner. **Where the estimates stand:** they do not show P-A + P-B winning every cell (a
+  scalar name scan may not beat httparse's NEON name scan on arm64 or picohttpparser's `pcmpestri` on x64), so the
+  research loop is expected to be needed; §5.7 lists where it starts. **SIMD is an extra layer:** P1a's P-D
+  (bit-stream validator over `engine-simd` bitmaps, §5.5) is built on top of a scalar parser that already wins and is
+  kept only where it measures faster than that parser. It is never the way to meet the gate. Its speed is unknown
+  until prototyped (the only stage-1 measurement, SIMD note §4.2, was not faster than scalar on a fixed head), and
+  P1a chooses its lead from a prototype comparison (plan "P1a entry conditions recorded in P0"; §5.5).
 - **Task 5b builds W-A** (shared known-name classifier, STOP search; §6.2) without the authority-id item, whose
-  `TemplateId` binding belongs to Task 6 (it owns the connection). **W-B** (layout hints) moves to **P2** (it needs the
+  `TemplateId` binding moves to P1a (plan "P1a entry conditions recorded in P0", item 9): in P0 a shard has one
+  template, so Task 6 keeps the authority compare. **W-B** (layout hints) moves to **P2** (it needs the
   P2 wire contract). **Task 5c** builds the writer race (§3.13). **P1a** builds `classify_block` and P-D; W-D is
   optional in P1a, behind a measurement (§6.5).
 - Expected x64 position of every candidate: §5.2–§5.5 (parser) and §6.7 (writer).
@@ -66,7 +70,8 @@ Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-co
 
 Each is applied by the task that builds it, in the same PR as the code:
 1. `ResponseParser::parse(&mut self, buf, spans: &mut FieldSpans)` — caller-owned spans (§5.1); `ResponseHead` gains
-   `fields: u16`; the bench's `blazehttp+fields` row is retired (our row emits spans itself).
+   `fields: u16`; our bench row emits spans itself, and `blazehttp+fields` is deleted after one pinned-baseline
+   comparison (§5.7).
 2. Optional padded read buffer: `parse` receives the received length and a slice with initialised slack (§5.3,
    measured first).
 3. Parser note §6.3 "body bytes are never examined": P-D loads up to 63 body bytes into registers when a block
@@ -811,7 +816,8 @@ Fields that cannot be turned off are added to **our** template for that row, so 
 digest, rival sources by SHA-256 and tag commit, `docker run --cpus=1 --cpuset-cpus=<n> --memory=2g --memory-swap=2g
 --network=none`, the runner refuses to start while another container runs, the same CPU baseline everywhere
 (generic Armv8-A; on x64 every row, ours and every rival, is built for `x86-64-v3`, as in §5.7), release flags per
-design §16.2 (Java: JMH after warm-up), rounds rotated by start position, JSONL with provenance
+design §16.2 (Java: JMH after warm-up), row order shuffled per round from a recorded seed (design §16.4), JSONL with
+provenance
 (`bench/results/<date>-<arch>-dev-writers.jsonl`), and `check`/`time` modes with the same protocol (`harness
 <writer> <mode> <workload> [run ms]`).
 
@@ -1254,10 +1260,10 @@ commit (line start L, below); facts per field (scalar)
   B) a realistic derived range is **≈ 0.6–1.0 cycles per byte on arm64 (estimate, unmeasured)**, i.e. parity to a
   modest gain on fixed heads. simdjson's stage 1 alone costs 0.5–1 cycle per byte on AVX2 (32-byte vectors). x64: no
   data.
-- **Expected position:** unknown; P-D is the next candidate for cells P-B leaves open, not a proven closer. P1a
-  starts by prototyping P-D stage 1 + validator, P-C and scalar on the fixed `1k-h20` head and the `varied-256` ring
-  on both arches and chooses the lead from the data (plan "P1a entry conditions recorded in P0"). If a cell is still
-  open after that: §5.7.
+- **Expected position:** unknown. P-D is not what closes a gate cell: the scalar parser must already win every cell
+  in Task 4c (owner decision 2026-11-13, §5.7). P-D is an extra layer, kept only where it measures faster than that
+  scalar parser. P1a starts by prototyping P-D stage 1 + validator, P-C and scalar on the fixed `1k-h20` head and the
+  `varied-256` ring on both arches and chooses the lead from the data (plan "P1a entry conditions recorded in P0").
 - **Our own additions** beyond Parabix/simdjson: error handling by scalar re-run (§4.3), so the fast path is only an
   acceptance filter and the scalar parser keeps all error semantics; the line-start hand-off; `u16` spans for JS.
 - **Risks:** (1) security — the filter must never accept what the scalar parser rejects: classes from the single
@@ -1279,33 +1285,45 @@ commit (line start L, below); facts per field (scalar)
 ### 5.7 Measurement plan and acceptance (parser)
 
 - **Equal work:** every row produces status, version, head length, per-field name/value spans with OWS trimmed,
-  framing facts and keep-alive. Once P-A lands, `blazehttp+fields` is retired (our row emits spans itself); the
-  plain row stays as "facts only" for Zig.
+  framing facts and keep-alive. Once P-A lands, our row emits spans itself. `blazehttp+fields` then stays for one
+  comparison, as the pinned baseline row `blazehttp+fields@4d` (the parser Task 4d leaves, plan Task 4c acceptance
+  line 2), and is deleted after it; the plain row stays as "facts only" for Zig.
 - **Workloads:** `1k`, `1k-h20`, `ring64` (both), `mixed`, `trickle` (feeds (a)–(d), ≤ 1 ms each), **plus a
   `varied-256` ring** (names shuffled, value lengths 0.5–1.5×) because `ring64` varies only digits.
 - **Statistic (owner gate, §0.1):** design §16.4 (component micro-gates), per rival and workload, computed by
   `pairedRatioCi` in `bench/parsers/stats.ts` (added by Task 4c before any candidate is judged); arm64 reference
   host (nightly window) and x64 VM. **x64 build baseline [author's call]:** every row, ours and every rival, is built
-  for `x86-64-v3` (Task 4b's same-baseline rule); this turns on each rival's best path the host has (SSE4.2
-  `pcmpestri` in picohttpparser and llhttp at compile time, AVX2 in httparse). Whether ours is gated from P1a on as
-  the v3 build or as the shipped build (baseline `x86-64` + runtime dispatch) is decided in P1a with the dispatch
-  design; until `engine-simd` exists both are the same scalar code. Superseded: the unpaired ratio-of-medians
+  for `x86-64-v3` (design §16.4 states it as the one exception to §16.2's shipped-baseline rule; the flags are the
+  same for every row); this turns on each rival's best path the host has (SSE4.2
+  `pcmpestri` in picohttpparser and llhttp at compile time, AVX2 in httparse). The gated row of ours is the scalar
+  parser on both arches. Which x64 build a later SIMD row of ours uses, the v3 build or the shipped build (baseline
+  `x86-64` + runtime dispatch), is decided in P1a with the dispatch design. Superseded: the unpaired ratio-of-medians
   statistic and `response-parser.md`'s "≤ 0.85× httparse on 1k-h20" line.
 - **Task 4c acceptance (plan "Task 4c" is the source):** its first step profiles plain G on `1k-h20`; the paired CI
-  and the `varied-256` ring are added before any candidate is judged; P-A, then each P-B change (locals / one loop per
-  line; the STOP search as its own A/B against the table loop; the masked `u64` prefix; the shared classifier) is
-  kept only if it passes the plan's A/B rule in the same container (`crates/engine-core/examples/h1_parse_bench.rs`,
-  10 alternated rounds, `pairedRatioCi(new, old)`) and dropped otherwise; spans equal the reference; no cell slower
-  than today. The race on both arches then
-  records every cell against httparse, picohttpparser, llhttp, Beast, Zig, Go, fasthttp and nginx. **4c is expected
-  to end with open cells against httparse (and possibly picohttpparser on x64); that is not a failure of 4c.** Open
-  cells are reported to the owner with their numbers and carried to P1a; the gate is not relaxed. **Final gate:**
-  every cell, every rival, both arches, at the end of P1a.
-- **If a cell is still open after P-D (ranked; each an estimate until measured):** (1) on x64, wider stage-1 kernels
-  — AVX2 32-byte, then AVX-512 64-byte only after AVX2 is measured (SIMD note §1.1); (2) lazy per-block stage 1, the
-  only stage-1 variant measured faster than scalar on a fixed head (0.88×, SIMD note §4.2, dev); (3) specialised
-  short-name paths (a known-name word compare, §6.1, that locates and validates common names in one step). Any cell
-  still open after these is reported to the owner with data; the task does not relax the gate.
+  and the `varied-256` ring are added before any candidate is judged. P-A has no equal-work baseline in the A/B
+  harness, so it is judged in a 10-round dev race against the pinned `blazehttp+fields@4d` row, with the A/B rule's
+  thresholds. Each P-B change (locals / one loop per line; the STOP search as its own A/B against the table loop;
+  the masked `u64` prefix; the shared classifier) is kept only if it passes the plan's A/B rule in the same
+  container (`crates/engine-core/examples/h1_parse_bench.rs`, 10 alternated rounds, `pairedRatioCi(new, old)`) and
+  dropped otherwise. Spans equal the reference, and the new parser is faster than the pinned baseline row on every
+  timed workload, with no feed slower. The race on both arches then records every cell against httparse,
+  picohttpparser, llhttp, Beast, Zig, Go, fasthttp and nginx, with a Clang build of every C and C++ row beside the
+  GCC one. **Owner decision
+  (2026-11-13): Task 4c passes only when the scalar parser, with no `engine-simd` kernel, wins every one of those
+  cells on both arches** (CI upper bound < 1.0; rivals as shipped, with their own SIMD). The estimates above do not
+  show P-A + P-B reaching that against httparse (and possibly picohttpparser on x64), so open cells after the first
+  race are likely. An open cell keeps Task 4c open: the task continues as research and reports progress to the
+  owner. The gate is not relaxed and the cell is not handed to P1a. P1a runs the race again after every parser
+  change.
+- **Scalar ideas for a cell that stays open (Task 4c research loop; ranked; each an estimate until measured and
+  kept only through the A/B rule):** (1) specialised short-name paths (a known-name word compare, §6.1, that locates
+  and validates common names in one step); (2) the padded read window of §5.3, which removes the scalar tails;
+  (3) for each open cell, a profile of the rival that wins it and our own redesign of the step where it leads
+  (study, rewrite, never copy).
+- **SIMD ideas (P1a only; never a way to close a Task 4c cell):** on x64, wider stage-1 kernels — AVX2 32-byte,
+  then AVX-512 64-byte only after AVX2 is measured (SIMD note §1.1); lazy per-block stage 1, the only stage-1
+  variant measured faster than scalar on a fixed head (0.88×, SIMD note §4.2, dev). Each is kept only where it is
+  faster than the scalar parser.
 - **Secondary metrics** (x64 VM): `perf stat -e instructions,branches,branch-misses` per head to check the
   branches-per-byte claims; `--emit asm` audit of each kernel (no panic paths; parser note §8.5).
 - **Design §16.4 (component micro-gates)** holds the parser and writer micro-gate statistic (§0.3 item 5).
@@ -1357,8 +1375,8 @@ pub fn classify(name: &[u8], has_underscore: bool) -> Option<(KnownName, Spellin
    with the `_` flag folded into a `[u8; 256]` flags table (tchar bit, underscore bit) so the fold yields both.
 2. **Classification:** §6.1.
 3. **Values:** today's SWAR `value_len`, then `": "` before and CRLF after checked with slice patterns.
-4. **Authority binding by id — not part of Task 5b; Task 6 (which owns the connection) builds it:** instead of a
-   10–30-byte compare per request, the connection
+4. **Authority binding by id — not part of Task 5b or Task 6; a P1a entry condition (plan item 9), kept only if an
+   A/B shows it faster:** instead of a 10–30-byte compare per request, the connection
    stores the `TemplateId` it was checked out for; ids are `(slot, generation)` pairs whose generation increments on
    every slot reuse and never wraps within the process (`u64`), so a stale or recycled id can never match a template
    built for another authority (the credential-leak case). −2–4 ns (estimate).
@@ -1366,7 +1384,7 @@ pub fn classify(name: &[u8], has_underscore: bool) -> Option<(KnownName, Spellin
 - **Time:** O(target + delta) validation + O(head + body) copy. **Space:** 0 extra. **Branches per delta byte:**
   ≈ 0.25 (from ≈ 0.6). **Allocations:** 0.
 - **Expected (estimate, unmeasured):** the ablation's ≈ 21–22 ns saving (classification share applied as if it all
-  disappears; the new classifier and STOP search still cost something; it includes item 4's 2–4 ns, now Task 6)
+  disappears; the new classifier and STOP search still cost something; it includes item 4's 2–4 ns, now P1a)
   gives `post1k` ≈ 2.15–2.7× floor, depending on which baseline it is applied to: ≈ 2.35–2.4× as a ≈ 22% share of
   the fix-round-1 ratio; ≈ 2.5–2.7× as 21–22 ns on the fix-round-1 rounds (writer 135.5–166.6 ns, floor 45.2–54.5
   ns, loaded host); ≈ 2.15–2.7× on the review's derived figures (docs-review-1 F-05). **W-A alone straddles the 2.3×
@@ -1507,8 +1525,8 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
 |---|---|---|---|---|
 | P-A, P-B (keep or drop) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | the A/B rule of plan "Task 4c" (10 alternated rounds, `pairedRatioCi`) |
 | Plain G profile (4c step 1) | `perf stat`/sampling (x64 VM) or Instruments (arm64) | 1k-h20 | either | measured per-field split replaces §5.0's guess |
-| Parser race (4c, then P1a) | `bench/parsers` + fasthttp, nginx rows + `pairedRatioCi` | same | arm64 ref + x64 VM (`x86-64-v3`) | design §16.4 statistic per rival and cell |
-| P-C, P-D, scalar | P1a prototypes (lead chosen from data), then the race | 1k-h20, varied-256, then all | both | as above (final gate) |
+| Parser race (4c; run again in P1a) | `bench/parsers` + fasthttp, nginx rows + `pairedRatioCi` | same | arm64 ref + x64 VM (`x86-64-v3`) | design §16.4 statistic per rival and cell; Task 4c passes only when the scalar parser wins every cell (owner decision 2026-11-13) |
+| P-C, P-D, scalar | P1a prototypes (lead chosen from data), then the race | 1k-h20, varied-256, then all | both | kept only where faster than the scalar parser; every cell of the race still passes |
 | W-A (keep or drop) | fixed floor measurement first, then `h1_write_bench` A/B + ablations | get, post1k, varied, h20, varied-delta | both | faster; `post1k` ≤ 2.3× floor; 0 allocations |
 | Writer race (5c) | §3.13 harness | get, post1k, varied, h20 | both | design §16.4 statistic, ours@EW2/theirs@EW1, per runnable rival |
 | W-D (optional) | P1a criterion | post1k, h20 | both | kept only where faster than W-A |
@@ -1539,18 +1557,20 @@ each task's first step is the measurement that turns it into a measured figure, 
 
 **What each task builds** (steps, order and acceptance: the plan sections "Task 4c", "Task 4d", "Task 5b", "Task 5c"
 and "P1a entry conditions recorded in P0"; this note does not repeat them):
-- **Task 4c (parser, scalar, P0; runs before Task 6 because it changes `parse`):** first the profile of plain G and
+- **Task 4c (parser, scalar, P0; its first PR merges before Task 6 because it changes `parse`):** first the profile
+  of plain G and
   `pairedRatioCi` + the `varied-256` ring; then P-A and each P-B change, each dropped unless faster in the A/B; the
   fasthttp and nginx rows; the survey of the Jetty/JDK/.NET response parsers (§10); span tests (§5.1). Acceptance:
-  §5.7 (open cells expected and reported with data; not a failure of 4c). Task 4d runs mutation testing on the merged
-  parser.
-- **Task 5b (writer, P0):** first the fixed floor measurement (§6 intro); then W-A without the authority id (Task 6),
+  §5.7: the task passes only when the scalar parser wins every cell on both arches (owner decision 2026-11-13);
+  until then it stays open as research. Task 4d runs mutation testing on the merged parser.
+- **Task 5b (writer, P0):** first the fixed floor measurement (§6 intro); then W-A without the authority id (P1a),
   dropped unless faster; `post1k` ≤ 2.3× floor. W-B is P2; W-D is P1a.
 - **Task 5c:** the writer race (§3.13), replacing `bench/writer/`; it evaluates "every rival@EW1 beaten".
 - **P1a (SIMD):** first the prototype comparison (P-D stage 1 + validator, P-C, scalar; fixed `1k-h20` and the
   varied ring; both arches) that chooses the lead, the x64 runtime-dispatch design, Miri for the kernels, the
   padded-window API; then `engine-simd` `Classifier`/`BlockMasks` (NEON; SSSE3/AVX2; scalar), the class tables moved
   into `engine-simd`, the chosen parser path, W-D only if measured faster, and the §4.1 required tests (issue #24).
+  Every SIMD path is an extra layer on the scalar parser of Task 4c and is kept only where it is faster.
 
 ## 9. Sources
 

@@ -300,6 +300,10 @@ container in the nightly window before any decision, and on the x64 VM.
 
 ## 6. Recommendations for P1a `engine-simd`
 
+**Owner decision (2026-11-13):** the parser speed gate is met by the scalar parser in P0 Task 4c, with no
+`engine-simd` kernel. Every kernel recommended here is an extra layer on that parser and is kept only where it
+measures faster than it (`docs/notes/h1-speed-research.md` §0.2 and §5.7).
+
 ### 6.1 API and dispatch
 - **Official rules (verified, Rust Reference 1.99.1 "Code generation attributes"):** "Functions marked with
   `target_feature` are not inlined into a context that does not support the given features. The `#[inline(always)]`
