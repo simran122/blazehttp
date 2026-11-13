@@ -157,7 +157,8 @@ request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells)
 7. When no complete request is left in the buffer, write the batch and `flush()` it (TLS); each call that does not
    complete at once must progress within the request timeout (a peer that never reads cannot hold the connection),
    then compact the leftover bytes.
-8. After a `400`/`431`/`505`, the client's close (once its body is read), a request timeout or end of stream: close
+8. After a `400`/`431` (at once), a `505` or the client's close (each once the declared body is read), a request
+   timeout or end of stream: close
    the write side (TLS `close_notify`) and read unread input, both within 1 s and at most 64 KiB, then drop the
    connection.
 
