@@ -1,25 +1,33 @@
 # Request writer comparisons
 
 Reproduces the comparison numbers of `docs/notes/request-writer.md` §8.2/§8.4; results go to `docs/perf/journal.md`.
+`bench/writer/run.sh LOG_DIR [CPUSET]` runs all three benches below, one after the other, in pinned containers (rustc
+1.99.1 and Go 1.27.3 images by digest, `--cpus=1` pinned to one vCPU, `--memory=2g`), and records the commit.
 
-`hyper-emul/` (its own Cargo workspace, never an engine dependency) runs blazehttp's `write_request` and its copy floor
-against an emulation of hyper 1.12's request encoder over `http` 1.5.0, on the same request sets as
-`crates/engine-core/examples/h1_write_bench.rs`: `cargo run --release --manifest-path bench/writer/hyper-emul/Cargo.toml`.
-Three hyper variants, each checked to write exactly our bytes:
+`crates/engine-core/examples/h1_write_bench.rs` times `write_request` against three baselines in one binary, in
+rotated order (`crates/engine-core/tests/support/write_bench.rs`): `memcpy` of the finished request (the lower bound),
+the unchecked appends (the same bytes as plain `extend_from_slice` calls; called the "copy floor" before 2026-11-13,
+and not a lower bound) and the writer's own append shape without checks. `writer − shape` is what the checks cost.
 
-- **construct+encode** (the headline, equal work): per request, parse the target, clone the defaults-only map, build
-  each per-request field with `from_bytes`, insert `content-length` (and `connection: close` when due), encode. It
+`hyper-emul/` (its own Cargo workspace, never an engine dependency) runs `write_request` against an **emulation** of
+hyper 1.12's request encoder over `http` 1.5.0, on the same request sets. No hyper code runs: the encoder is
+re-implemented and checked against our bytes only; Task 5c replaces it with hyper itself. Variants, each checked to
+write exactly our bytes:
+
+- **construct+encode** (the headline): per request, parse the target, clone the defaults-only map, build each
+  per-request field with `from_bytes`, insert `content-length` (and `connection: close` when due), encode. It
   validates as much per call as our writer except our forbidden-name, singleton, line-count and authority checks.
-  Compare it with our writer.
-- **clone+encode**: clones an already-validated map and never re-parses the target; a lower bound on hyper's cost.
-- **encode-only**: hyper's serialisation floor with no validation; compare it with our copy floor, never with our
-  writer.
+  Its input is `(name, value)` pairs; compare it with **ours + join**, our writer fed the same pairs and joining them
+  per call. Plain "ours" gets the fields already joined, as the JS layer will hand them over.
+- **clone+encode**: clones an already-validated map and never re-parses the target; a lower bound on the emulation's
+  cost and the conservative comparison for our writer.
+- **encode-only**: the emulation's serialisation with no validation; compare it with our unchecked appends, never
+  with our writer.
 
-`go/` benchmarks Go 1.27.3's `(*Request).Write` on the `get` and `post1k` requests (the body reader is reset in place,
-so every reported allocation is `Request.Write`'s): `docker run --rm --cpus=1 -e GOMAXPROCS=1 -v
-"$PWD/bench/writer/go:/b" -w /b golang:1.27.3-bookworm go test -run '^$' -bench . -benchmem -count 5`.
+`go/` benchmarks Go 1.27.3's `(*Request).Write` on the `get` and `post1k` requests. The body is what
+`http.NewRequest` builds for a byte slice (`io.NopCloser` over a `*bytes.Reader`, reset in place), so net/http takes
+its in-memory path and every reported allocation is `Request.Write`'s; `TestPost1kBodyIsInMemory` checks that path.
 
-`-- --verify` on either Rust binary runs only the byte-equality checks (CI does, with one Go iteration). The Linux
-numbers come from `rust:1-bookworm` / `golang:1.27.3-bookworm` containers with `--cpus=1`; they are dev numbers
-outside the nightly window unless the journal says otherwise. The owner's goal is to beat every writer; the
-cross-language writer race is Task 5c.
+`-- --verify` on either Rust binary runs only the byte-equality checks (CI does, with the Go tests and one Go
+iteration). Numbers are dev numbers outside the nightly window unless the journal says otherwise. The owner's goal is
+to beat every writer; the cross-language writer race is Task 5c.

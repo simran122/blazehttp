@@ -11,11 +11,15 @@
 //! - **hyper clone+encode (lower bound on hyper's cost):** clones a map whose values are already validated and never
 //!   re-parses the target.
 //! - **hyper encode-only (hyper's serialisation floor, no validation):** the map is pre-built with `content-length`.
-//!   It is compared with our copy floor, never with our writer.
+//!   It is compared with our unchecked appends, never with our writer.
+//! - **ours + join:** our writer given the per-request fields as hyper gets them, `(name, value)` pairs, joined per
+//!   call into a reused buffer first; the input-shape-equal counterpart of construct+encode.
 //!
-//! Every variant is checked to write exactly our bytes before timing. Run: `cargo run --release --manifest-path
-//! bench/writer/hyper-emul/Cargo.toml` (`-- --verify` checks only, as CI does). Prints one JSON line per run and a
-//! Markdown table; results go to `docs/perf/journal.md`.
+//! No hyper code runs: `encode` re-implements `Client::encode` over `http` types, checked against our bytes only
+//! (Task 5c replaces the emulation with hyper itself). Every variant is checked to write exactly our bytes before
+//! timing; all run in one binary in rotated order. Run: `cargo run --release --manifest-path
+//! bench/writer/hyper-emul/Cargo.toml` (`-- --verify` checks only, as CI does; `bench/writer/run.sh` runs it in the
+//! pinned container). Prints one JSON line per run and a Markdown table; results go to `docs/perf/journal.md`.
 
 #[path = "../../../../crates/engine-core/tests/support/write_bench.rs"]
 mod write_bench;
@@ -23,20 +27,27 @@ mod write_bench;
 mod write_rings;
 
 use std::fmt::Write as _;
-use std::time::Instant;
 
-use engine_core::h1::{HeaderTemplate, write_request};
+use engine_core::h1::{HeaderTemplate, RequestParts, write_request};
 use http::header::{CONNECTION, CONTENT_LENGTH, HeaderMap, HeaderName, HeaderValue};
 use http::{Method, Uri};
 use write_bench::{
-    BLOCKS_PER_RUN, Framed, RUNS, WARM_UP, floor, frame, median, template_bytes, time_block,
+    BLOCKS_PER_RUN, Framed, RUNS, frame, measure_variants, median, template_bytes, time_block,
+    unchecked_appends,
 };
 use write_rings::{DEFAULT_LINES, DEFAULTS, HOST};
 
 /// hyper's `AVERAGE_HEADER_SIZE` (role.rs L32).
 const AVERAGE_HEADER_SIZE: usize = 30;
-/// Variants in timing order: ours, our floor, hyper construct+encode, clone+encode, encode-only.
-const VARIANTS: usize = 5;
+/// The timed variants; the order of the JSON fields and of `measure`'s result.
+const VARIANTS: [&str; 6] = [
+    "ours",
+    "ours_join",
+    "appends",
+    "hyper_construct_encode",
+    "hyper_clone_encode",
+    "hyper_encode",
+];
 
 /// One request in every shape the variants need.
 struct Prepared {
@@ -155,9 +166,29 @@ fn hyper_encode_only(out: &mut Vec<u8>, p: &Prepared) {
     encode(out, p, &p.uri, &p.framed_map);
 }
 
-/// Checks every hyper variant writes exactly our bytes.
+/// Our writer fed `(name, value)` pairs: joins them into `joined` (capacity reused), then writes.
+fn ours_join(out: &mut Vec<u8>, joined: &mut Vec<u8>, p: &Prepared, template: &HeaderTemplate) {
+    joined.clear();
+    for (name, value) in &p.delta {
+        joined.extend_from_slice(name);
+        joined.extend_from_slice(b": ");
+        joined.extend_from_slice(value);
+        joined.extend_from_slice(b"\r\n");
+    }
+    let request = &p.framed.request;
+    let parts = RequestParts {
+        method: request.method,
+        target: &request.target,
+        headers: joined,
+        header_lines: u16::try_from(p.delta.len()).expect("few fields"),
+        body: &request.body,
+    };
+    let _ = write_request(out, &parts, template, HOST).expect("valid");
+}
+
+/// Checks every hyper variant and the join variant write exactly our bytes.
 fn verify(ring: &[Prepared], template: &HeaderTemplate) {
-    let (mut ours, mut theirs) = (Vec::new(), Vec::new());
+    let (mut ours, mut theirs, mut joined) = (Vec::new(), Vec::new(), Vec::new());
     for p in ring {
         let _ = write_request(&mut ours, &p.framed.request.parts(), template, HOST).expect("valid");
         for variant in [
@@ -168,57 +199,29 @@ fn verify(ring: &[Prepared], template: &HeaderTemplate) {
             variant(&mut theirs, p);
             assert_eq!(theirs, ours, "a hyper variant writes our bytes");
         }
+        ours_join(&mut theirs, &mut joined, p, template);
+        assert_eq!(theirs, ours, "ours + join writes our bytes");
     }
 }
 
-/// One block of each variant, in `VARIANTS` order.
-fn blocks(
-    ring: &[Prepared],
-    out: &mut Vec<u8>,
-    template: &HeaderTemplate,
-    template_bytes: &[u8],
-) -> [f64; VARIANTS] {
-    let ours = |out: &mut Vec<u8>, p: &Prepared| {
-        let _ = write_request(out, &p.framed.request.parts(), template, HOST).expect("valid");
-    };
-    let copy = |out: &mut Vec<u8>, p: &Prepared| floor(out, &p.framed, template_bytes);
-    [
-        time_block(ring, out, ours),
-        time_block(ring, out, copy),
-        time_block(ring, out, hyper_construct_encode),
-        time_block(ring, out, hyper_clone_encode),
-        time_block(ring, out, hyper_encode_only),
-    ]
-}
-
-/// Interleaved runs; returns the per-variant medians.
-fn measure(name: &str, ring: &[Prepared], template: &HeaderTemplate) -> [f64; VARIANTS] {
+/// Per-variant medians, in `VARIANTS` order.
+fn measure(name: &str, ring: &[Prepared], template: &HeaderTemplate) -> [f64; VARIANTS.len()] {
     let template_bytes = template_bytes();
-    let mut out = Vec::new();
-    let start = Instant::now();
-    while start.elapsed() < WARM_UP {
-        let _ = blocks(ring, &mut out, template, &template_bytes);
-    }
-    let mut runs: [Vec<f64>; VARIANTS] = Default::default();
-    for run in 0..RUNS {
-        let mut ns = [0.0; VARIANTS];
-        for _ in 0..BLOCKS_PER_RUN {
-            for (sum, block) in ns
-                .iter_mut()
-                .zip(blocks(ring, &mut out, template, &template_bytes))
-            {
-                *sum += block;
-            }
-        }
-        let [ours, copy, construct, cloned, encode] = ns.map(|n| n / f64::from(BLOCKS_PER_RUN));
-        println!(
-            "{{\"set\":\"{name}\",\"run\":{run},\"ours_ns\":{ours:.2},\"floor_ns\":{copy:.2},\
-             \"hyper_construct_encode_ns\":{construct:.2},\"hyper_clone_encode_ns\":{cloned:.2},\"hyper_encode_ns\":{encode:.2}}}"
-        );
-        for (series, value) in runs.iter_mut().zip([ours, copy, construct, cloned, encode]) {
-            series.push(value);
-        }
-    }
+    let (mut out, mut joined) = (Vec::new(), Vec::new());
+    let runs = measure_variants(name, VARIANTS, |variant| match variant {
+        0 => time_block(ring, &mut out, |out, p: &Prepared| {
+            let _ = write_request(out, &p.framed.request.parts(), template, HOST).expect("valid");
+        }),
+        1 => time_block(ring, &mut out, |out, p| {
+            ours_join(out, &mut joined, p, template);
+        }),
+        2 => time_block(ring, &mut out, |out, p| {
+            unchecked_appends(out, &p.framed, &template_bytes);
+        }),
+        3 => time_block(ring, &mut out, hyper_construct_encode),
+        4 => time_block(ring, &mut out, hyper_clone_encode),
+        _ => time_block(ring, &mut out, hyper_encode_only),
+    });
     runs.map(|mut series| median(&mut series))
 }
 
@@ -242,7 +245,9 @@ fn main() {
         verify(ring, &template);
     }
     if write_bench::verify_only() {
-        println!("verified: every hyper variant and the copy floor write the writer's bytes");
+        println!(
+            "verified: every hyper variant, ours + join and the baselines write the writer's bytes"
+        );
         return;
     }
     let rows: Vec<_> = rings
@@ -251,19 +256,19 @@ fn main() {
         .collect();
     println!();
     println!(
-        "write_request vs hyper 1.12 encoder emulation; {RUNS} runs x {BLOCKS_PER_RUN} blocks, medians"
+        "write_request vs hyper 1.12 encoder emulation; {RUNS} runs x {BLOCKS_PER_RUN} rotated blocks, medians"
     );
     println!(
-        "| set | ours ns | hyper construct+encode ns | ours / construct+encode | ours / clone+encode | our floor ns | \
-         hyper encode-only ns | our floor / hyper encode-only |"
+        "| set | ours ns | ours + join ns | hyper construct+encode ns | ours + join / construct+encode | \
+         ours / clone+encode | our appends ns | hyper encode-only ns | our appends / hyper encode-only |"
     );
-    println!("|---|---|---|---|---|---|---|---|");
-    for (name, [a, f, c, k, e]) in rows {
+    println!("|---|---|---|---|---|---|---|---|---|");
+    for (name, [ours, join, appends, construct, cloned, encode]) in rows {
         println!(
-            "| `{name}` | {a:.1} | {c:.1} | {:.3} | {:.3} | {f:.1} | {e:.1} | {:.3} |",
-            a / c,
-            a / k,
-            f / e
+            "| `{name}` | {ours:.1} | {join:.1} | {construct:.1} | {:.3} | {:.3} | {appends:.1} | {encode:.1} | {:.3} |",
+            join / construct,
+            ours / cloned,
+            appends / encode
         );
     }
 }
