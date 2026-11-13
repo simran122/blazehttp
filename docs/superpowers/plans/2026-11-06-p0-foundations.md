@@ -95,7 +95,7 @@ These apply to every task from Task 4 on and override anything above that confli
 
   Task 4 merged before items 5 and 6 existed: Task 4d runs its mutation pass, and Task 4b is its benchmark.
 - **Owner speed gates for components (hard gates: no release until they are met).**
-  - **Parser (2026-11-07).** `ResponseParser` is faster than every other head parser, C and Rust included (httparse, picohttpparser, llhttp and every other row of the Task 4b race), with **equal work** (per-field name and value spans), on arm64 **and** x64, on the workloads `1k`, `1k-h20`, the 64-variant rings, `mixed` and the 1-byte feeds. The run has 10 rounds in the quiet window, and the §16.4 component statistic's CI upper bound is < 1.0× against every rival. **Owner decision 2026-11-13:** the gate is met by the **scalar** parser, with no `engine-simd` kernel, against rivals that run as shipped with their own SIMD. It is Task 4c's acceptance, and Task 4c is not closed while a cell loses. SIMD (P1a) is an extra layer on a scalar parser that already wins, never the way to meet the gate. The race is re-run whenever the parser changes, P1a included.
+  - **Parser (2026-11-07).** `ResponseParser` is faster than every other head parser, C and Rust included (httparse, picohttpparser, llhttp and every other row of the Task 4b race), with **equal work** (per-field name and value spans), on arm64 **and** x64, on the workloads `1k`, `1k-h20`, the 64-variant rings, `mixed` and the 1-byte feeds (in `bench/parsers/workloads.ts`: `1k-3-headers`, `1k-20-headers`, `1k-3-headers-ring64`, `1k-20-headers-ring64`, `mixed-64` and the four feed inputs; `varied-256`, which Task 4c adds, is gated as well, because the decision of 2026-11-13 says every cell). The run has 10 rounds in the quiet window, and the §16.4 component statistic's CI upper bound is < 1.0× against every rival. **Owner decision 2026-11-13:** the gate is met by the **scalar** parser, with no `engine-simd` kernel, against rivals that run as shipped with their own SIMD. It is Task 4c's acceptance, and Task 4c is not closed while a cell loses. SIMD (P1a) is an extra layer on a scalar parser that already wins, never the way to meet the gate. The race is re-run whenever the parser changes, P1a included.
   - **Writer (2026-11-08).** `write_request` is faster than every other request writer with equal work (Task 5c's race and tiers), on arm64 and x64, by the same statistic, and `post1k` costs ≤ 2.3× the copy floor.
   - **First in every cell (2026-11-08).** The engine and the client are first in every benchmark, component and cell, shared-limit cells included (§2). A lost cell is an open speed item with an owner task and is never dropped from a report.
 
@@ -169,6 +169,7 @@ docs/notes/  docs/perf/ideas.md  docs/perf/journal.md  docs/reports/p0.md
 | Process and design changes | merged | #8, #9, #12, #17, #19, #20 |
 | 5 `RequestWriter` | open, in review | #18 |
 | 9 bench-server | open, in review | #13 |
+| Documentation review fixes | open. #25 (plan, design) and #26 (research notes) merge together: this plan cites note text that #26 adds (§4.1 "Coverage limits", §5.7, the W-A estimate of §6.2) | #25, #26 |
 | 4c, 4d, 5b, 5c, 6–8, 10–20, 15a | not started | — |
 
 Each task's PR updates this table.
@@ -433,9 +434,10 @@ git push -u origin p0/bootstrap && gh pr create --base milestone/p0 --fill
 
 **Files:**
 - Create: `crates/engine-core/src/h1/mod.rs`, `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/src/h1/grammar.rs`
-- Create: `tests/vectors/h1-response/blazehttp-rules.json` (source project `blazehttp`, licence `MIT OR Apache-2.0`), registered in `index.json`
-- Create: `crates/engine-core/tests/h1_response.rs`
-- Create: `crates/engine-core/fuzz/Cargo.toml`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`
+- Create: `tests/vectors/h1-response/blazehttp-rules.json` (source project `blazehttp`, licence `MIT OR Apache-2.0`) and the hand-ported `tests/vectors/h1-response/{curl, go, httparse, hyper}-selected.json`, registered in `index.json`
+- Create: `crates/engine-core/tests/h1_response.rs`, `crates/engine-core/tests/support/fixtures.rs`, `tests/fixtures/h1-heads/*.http`
+- Create: `crates/engine-core/fuzz/Cargo.toml`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`, `crates/engine-core/fuzz/h1_response.dict`
+- Create: `crates/engine-core/examples/h1_parse_bench.rs`
 - Create: `docs/notes/response-parser.md`. Update `docs/perf/ideas.md` with the P0 survey.
 
 **Interfaces:**
@@ -494,7 +496,7 @@ impl ResponseParser {
   `parse_whole` and its two variants run the parser and then slice the body by `Framing::ContentLength`. This keeps CL body slicing inside the test helper, because the connection owns body reading.
 - [ ] **Step 4: Run** `cargo nextest run -p engine-core --test h1_response`. Expected: FAIL.
 - [ ] **Step 5: Implement the parser.**
-  - Use a single fused forward scan (a table loop for names, SWAR for value bytes; no `memchr`), a resume offset stored in the struct, and token and value tables as `const [bool; 256]` in `h1/grammar.rs`.
+  - Use a single fused forward scan (a table loop for names, SWAR for value bytes; no `memchr`), a resume offset stored in the struct, and token and value tables as `static [bool; 256]` in `h1/grammar.rs`.
   - Do no allocation.
   - Parse `Content-Length` with checked u64 arithmetic.
 - [ ] **Step 6: Run** the tests, then `cargo clippy -p engine-core --all-targets -- -D warnings`. Expected: PASS.
@@ -512,17 +514,18 @@ impl ResponseParser {
 - [ ] A run of the race on x64 (none exists) → Task 4c Step 7.
 - [ ] A 10-round run in the nightly window on the arm64 reference host → Task 4c Step 7 if the window exists by then, otherwise Task 20 Step 1.
 
-**Acceptance:** on each architecture a committed results file holds 10 valid rounds for every row and workload, and the report prints the paired ratio with its CI for every rival. Passing the owner's gate is not part of this task: it is Task 4c's acceptance.
+**Acceptance:** two committed results files hold 10 valid rounds (design §16.4) for every row and workload: `bench/results/<date>-arm64-ref-parsers.jsonl`, run in the nightly window on the reference host, and `bench/results/<date>-x64-parsers.jsonl`, run on the x64 VM. A dev run (a `-dev-` file) does not count. The report prints the paired ratio with its CI for every rival. If no window exists when Task 4c reaches Step 7, the arm64 file comes from Task 20 Step 1 and this task stays open until then. Passing the owner's gate is not part of this task: it is Task 4c's acceptance.
 
 ---
 
 ### Task 4c: Field spans in the scan (P-A, then P-B)
 
-Research: `docs/notes/h1-speed-research.md` §5 (reviewed, PR #22). It runs after Task 4d, and its first PR merges **before Task 6**, because it changes `parse`. **Owner decision 2026-11-13:** the task passes only when the scalar parser beats every rival in every cell on both architectures (acceptance line 6). Until then it stays open as research (Step 9).
+Research: `docs/notes/h1-speed-research.md` §5 (reviewed, PR #22). It runs after Task 4d, and its first PR merges **before Task 6**, because it changes `parse`. **Owner decision 2026-11-13:** the task passes only when the scalar parser beats every rival in every cell on both architectures (acceptance line 6). Until then it stays open as research (Step 9). This section is the rule for the round count, the A/B rule and the acceptance; the research note §5.7 summarises them (as amended by PR #26).
 
 **Files:**
 - Modify: `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/tests/h1_response.rs`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`, `crates/engine-core/examples/h1_parse_bench.rs`
-- Modify: `bench/parsers/{stats.ts, stats.test.ts, workloads.ts, report.ts, README.md}`, `bench/parsers/rust/` (our row emits spans; the `blazehttp+fields` row is retired), `bench/parsers/go/` (fasthttp row), `bench/parsers/c/` (nginx row)
+- Create: `bench/parsers/stats.test.ts`, `crates/engine-core/tests/h1_response_alloc.rs`
+- Modify: `bench/parsers/{stats.ts, workloads.ts, workloads.test.ts, gate.ts, run.ts, protocol.ts, options.ts, report.ts, README.md}`, `bench/parsers/rust/` (our row emits spans; the `blazehttp+fields` row becomes the pinned baseline row of acceptance line 2 and is deleted after that comparison), `bench/parsers/go/` (fasthttp row), `bench/parsers/c/` (nginx row; Clang builds), `bench/parsers/cpp/` (Clang builds)
 - Modify: `docs/notes/response-parser.md`, `docs/notes/h1-speed-research.md`, `docs/perf/journal.md`
 
 **Interfaces** (Task 6 consumes exactly these):
@@ -541,25 +544,25 @@ export function pairedRatioCi(ours: readonly number[], theirs: readonly number[]
 
 **Span invariants (tested):** for every field `name_start < name_end < value_start ≤ value_end < head_len`; fields are in input order; leading and trailing OWS is outside the value and obs-text is never trimmed; a span is written only when its line's CRLF is confirmed; `fields` restarts at 0 after an `Interim`.
 
-**A/B rule (keep or drop) [author's call]:** old and new binaries run alternately in one container for 10 rounds on every workload (`h1_parse_bench`). A change is kept only if `pairedRatioCi(new, old)` has its CI upper bound < 1.0 on at least one timed workload and a point estimate ≤ 1.02 on every other workload. A dropped change is recorded in the journal with its numbers.
+**A/B rule (keep or drop) [author's call: 10 rounds, the gate statistic's count, so that one function judges a change and a gate]:** old and new binaries run alternately in one container for 10 rounds on every workload (`h1_parse_bench`). A change is kept only if `pairedRatioCi(new, old)` has its CI upper bound < 1.0 on at least one timed workload and a point estimate ≤ 1.02 on every other workload. A dropped change is recorded in the journal with its numbers.
 
 - [ ] **Step 1: Profile plain Design G** on `1k-h20` (sampling profiler on the x64 VM, or Instruments on arm64) and replace the guessed per-field cost split in the research note §5.0 with the measured one.
-- [ ] **Step 2: Add `pairedRatioCi` and the `varied-256` ring** (names shuffled, value lengths 0.5–1.5×) before any candidate is judged. Tests: `paired_ci_is_deterministic_for_seed_and_brackets_point`, `paired_ci_rejects_unequal_round_counts`, `paired_ci_narrows_with_less_noise`. The runner prints the CI for every rival and workload.
-- [ ] **Step 3: Write the failing span tests:** spans of the whole input equal the spans of every split point and of the 1-byte feed, for every vector and fixture; `fields` after an interim head; the OWS edges (SP, HTAB, empty value, a value of only OWS, obs-text at both ends); the race's differential gate compares our spans with every rival's fields.
-- [ ] **Step 4: Build P-A** (spans written in the scan). Apply the A/B rule against today's scan followed by `split_fields`.
+- [ ] **Step 2: Add `pairedRatioCi` and the `varied-256` ring** (names shuffled, value lengths 0.5–1.5×) before any candidate is judged. Tests: `paired_ci_is_deterministic_for_seed_and_brackets_point`, `paired_ci_rejects_unequal_round_counts`, `paired_ci_narrows_with_less_noise`. The runner prints the CI for every rival and workload. In the same step the runner's cyclic start rotation (`run.ts`) is replaced by a seeded shuffle of the row order for every round and workload, with the seed in the results file, so that no row always runs after the same neighbour (design §16.4); test `row_order_is_seeded_and_differs_between_rounds`.
+- [ ] **Step 3: Write the failing span tests:** spans of the whole input equal the spans of every split point and of the 1-byte feed, for every vector and fixture; `fields` after an interim head; the OWS edges (SP, HTAB, empty value, a value of only OWS, obs-text at both ends); the race's differential gate compares our spans with every rival's fields. `tests/h1_response_alloc.rs` counts allocations with a counting global allocator (as the writer's `tests/h1_writer_alloc.rs` does, PR #18) and expects 0 per `parse` call on every fixture, whole and fed 1 byte at a time.
+- [ ] **Step 4: Build P-A** (spans written in the scan). `h1_parse_bench` has no equal-work baseline for it, so P-A is judged by the race rows of acceptance line 2, in a dev run of 10 rounds, with the A/B rule's thresholds.
 - [ ] **Step 5: Build P-B one change at a time**, each with its own A/B: locals and one loop body per line; the STOP-set name search against the table loop; the masked `u64` prefix; the shared known-name classifier. Design G stays in the tests as the reference, and the fuzz target gains a differential oracle: the candidate's result and spans equal the reference's on every input. The padded read window is built here only if a measurement supports it; otherwise it moves to P1a.
-- [ ] **Step 6: Add the fasthttp and nginx rows** to the race. Survey the Jetty `HttpParser`, JDK `Http1HeaderParser` and .NET `HttpConnection` response parsers in the research note; one gets a race row only if it is plausibly faster than httparse.
+- [ ] **Step 6: Add the fasthttp and nginx rows** to the race. Survey the Jetty `HttpParser`, JDK `Http1HeaderParser` and .NET `HttpConnection` response parsers in the research note; one gets a race row only if it is plausibly faster than httparse. Add a Clang build of every C and C++ row as a row of its own (the runner's `--cc` option gains a Clang value; the compiler version is pinned in the Dockerfile): the rivals were built with GCC only, and each must be raced at its best **[author's call]**. Every row is gated.
 - [ ] **Step 7: Run the race on both architectures** (quiet-machine rule): arm64, and x64 with every row built for `x86-64-v3` **[author's call]**; 10 rounds in the nightly window if it exists. Our row is the scalar parser; every rival runs as shipped with its own SIMD. Record every cell in the journal and in the parser note.
 - [ ] **Step 8: Mutation run and 300 s of fuzzing** in the capped container, as in Task 4d. Update the notes, commit `Record field spans during the response head scan` and open the first PR. It merges when acceptance lines 1–5 hold, so that Task 6 can build on the new `parse`.
 - [ ] **Step 9: Close every open cell (research loop).** While any cell of the race has a CI upper bound ≥ 1.0: profile that cell for our parser and for the rival that wins it; study how the rival wins it; design our own scalar change (own-algorithm rule: study, rewrite, never copy); apply the A/B rule; re-run the race on both architectures; record the cycle in the journal and in the research note. Each cycle is its own PR under the per-task definition of done. After every race run the owner gets a progress report: the open cells with their numbers, what was tried, and what is next. A cell is never closed with SIMD (acceptance line 6).
 
 **Acceptance** (each line can fail and is computed inside the task):
 1. The span tests of Step 3 pass, and the differential fuzz oracle ran 300 s without a finding.
-2. With equal work, the new parser is faster than today's: `pairedRatioCi(new with spans, today's blazehttp+fields)` has its CI upper bound < 1.0 on every timed workload, and no 1-byte feed is slower (point estimate ≤ 1.02).
+2. With equal work, the new parser is faster than the parser Task 4d leaves. The race keeps one extra row for this comparison, `blazehttp+fields@4d`: `split_fields` after the scan, built against `engine-core` at Task 4d's merge commit (a `rev`-pinned git dependency in `bench/parsers/rust`). In the Step 7 race on arm64 and on x64, `pairedRatioCi(ours, blazehttp+fields@4d)` has its CI upper bound < 1.0 on every timed workload, and no 1-byte feed is slower (point estimate ≤ 1.02). The row is deleted, in the same PR, once that results file is committed.
 3. Every kept P-B change passed the A/B rule.
-4. Zero allocations, `#![forbid(unsafe_code)]` unchanged, and every surviving mutant is killed or listed as equivalent with a one-line proof.
+4. Zero allocations (`tests/h1_response_alloc.rs`), `#![forbid(unsafe_code)]` unchanged, and every surviving mutant is killed or listed as equivalent with a one-line proof.
 5. The race ran on arm64 and x64 with the fasthttp and nginx rows, and the journal holds the paired ratio and CI of every cell.
-6. **The scalar parser beats every rival in every cell (owner decision 2026-11-13).** In a 10-round race in the nightly window on arm64 and a 10-round race on the x64 VM, `pairedRatioCi(ours, theirs)` has its CI upper bound < 1.0 for every rival row and every workload of the race (`1k`, `1k-h20`, the 64-variant rings, `varied-256`, `mixed` and the 1-byte feeds), with equal work. Ours is the scalar parser: `engine-core` only, `#![forbid(unsafe_code)]`, no `engine-simd` kernel and no `std::arch` intrinsic. **[author's call]** Word-at-a-time (SWAR) code on `u64` values counts as scalar, and so does whatever the compiler vectorises by itself in safe code. Every rival runs as shipped with its own SIMD (httparse NEON on arm64 and AVX2 on x64, picohttpparser SSE4.2 on x64, and whatever the other rows ship); on x64 the `x86-64-v3` build of Step 7 is what turns those paths on.
+6. **The scalar parser beats every rival in every cell (owner decision 2026-11-13).** In a 10-round race in the nightly window on arm64 and a 10-round race on the x64 VM, `pairedRatioCi(ours, theirs)` has its CI upper bound < 1.0 for every rival row and every timed and feed workload of `bench/parsers/workloads.ts` (`varied-256` included), with equal work. Ours is the scalar parser: `engine-core` only, `#![forbid(unsafe_code)]`, no `engine-simd` kernel and no `std::arch` intrinsic. **[author's call]** Word-at-a-time (SWAR) code on `u64` values counts as scalar, and so does whatever the compiler vectorises by itself in safe code. Every rival runs as shipped with its own SIMD (httparse NEON on arm64 and AVX2 on x64, picohttpparser SSE4.2 on x64, and whatever the other rows ship); on x64 the `x86-64-v3` build of Step 7 is what turns those paths on.
 
 **The task passes only when line 6 holds.** Lines 1–5 let the first PR merge; they do not close the task. While a cell loses, the task is not closed: it continues as research (Step 9) and is reported to the owner as open, and the gate is never relaxed. SIMD (P-D, `engine-simd`, P1a) is an extra layer on top of a scalar parser that already wins. It is never the way to pass this task. The arm64 run of line 6 needs the nightly window, which the owner has not chosen yet; until then arm64 results are dev runs and cannot close the task. The research note's estimates (P-A and P-B alone may leave cells open against httparse, and possibly against picohttpparser on x64) are unmeasured: they say where Step 9 is likely to start, and they change nothing in line 6.
 
@@ -577,14 +580,31 @@ It runs before Tasks 4c and 6, which build on the parser's exact limit behaviour
   - The same file, `:181-184` against `:248`: the validity check and the head writer disagree on how many fields count.
   - `tools/vectors/notices.ts`: `licenceText` indexes an object literal with `source.licence`.
   - `docs/perf/journal.md`: the unexplained +9% in round 1 of the synthetic 20-field run.
-- The parser, test and fuzz findings of the 2026-11-13 review: every limit is tested at its exact boundary on every input shape; the fuzz oracle can see an over-strict limit; and each place where the parser is stricter than an RFC SHOULD or MUST (design §5.2 lists them) gets a recorded decision and a test.
+- The parser, test and fuzz findings of the 2026-11-13 review (parser-core report, by its ids):
+  - C1: the fuzz oracle cannot see an over-strict limit, or a spurious `TooLarge` or `Malformed`, on the `Boundary` input shape.
+  - C2: "fail as soon as the buffer reaches the limit" has no test. Every limit is tested at its exact boundary on every input shape.
+  - C3: status codes 000–099 and 600–999 are rejected; RFC 9110 §15 says a client SHOULD process a response with an invalid status code as a 5xx.
+  - C6: obs-fold is rejected; RFC 9112 §5.2 says a user agent MUST replace it with SP.
+  - C7: a 304 with `Transfer-Encoding: chunked` or a `Content-Length` above 0 closes the connection; RFC 9112 §6.1 and RFC 9110 §8.6 allow both.
+  - C8: `Transfer-Encoding: chunked,` and `,chunked` are `smuggling-risk`; RFC 9110 §5.6.1.2 says a recipient MUST accept empty list elements.
+  - C9: `HTTP/1.2` to `HTTP/1.9` are rejected; RFC 9110 §2.5 says a recipient SHOULD process a higher minor version as its highest supported one.
+  - C10: `Content-Length: 5, 6` is `malformed-response` and the same values on two lines are `smuggling-risk`; RFC 9110 §5.3 treats them as one field value, so both get one class.
+  - C11: the fuzz target asserts nothing about our result when httparse rejects or wants more.
+  - C12: tests that assert the test helper instead of the product (the EOF rule, which Task 6 implements), and the other gaps of the corpus the report lists.
+
+  C3 and C6–C9 are places where the parser is stricter than an RFC SHOULD or MUST. Each gets a decision (keep the stricter rule, with its reason, or follow the RFC) recorded in `docs/notes/response-parser.md` with the RFC section, and a vector; design §5.2 is updated to the decision in the same PR. C13 (per-field costs on the hot path) is answered by Task 4c Step 1's profile.
 
 - [ ] **Step 1:** For each finding, write a test that fails (or tighten the fuzz oracle so that it fails), then fix the cause.
-- [ ] **Step 2:** Run cargo-mutants in the capped container (`docker run --rm --memory=2g --memory-swap=2g --cpus=1`, source mounted read-only and copied inside) with one job, 2 test threads and a test timeout of about 20 s. Take the flag names from the cargo-mutants documentation for the version used.
+- [ ] **Step 2:** Run cargo-mutants in the capped container (`docker run --rm --memory=2g --memory-swap=2g --cpus=1`, source mounted read-only and copied inside) with one job, 2 test threads and a test timeout of about 20 s. Take the flag names from the cargo-mutants documentation for the version used. The container is `--rm`, so the output directory (`mutants.out/`) is written to a mounted folder and its `missed.txt` and `timeout.txt` are quoted in the PR.
 - [ ] **Step 3:** Kill every surviving mutant with a new test, or list it as equivalent with a one-line proof in `docs/notes/response-parser.md`.
 - [ ] **Step 4:** Fuzz `h1_response` for 300 s in the container. Commit `Fix parser review findings and kill surviving mutants` and open a PR.
 
-**Acceptance:** the mutation report has no missed mutant outside the equivalent list; every listed finding has a test that fails without its fix; the fuzz run is clean.
+**Acceptance:**
+1. `mutants.out/missed.txt` and `mutants.out/timeout.txt` hold no mutant outside the equivalent list in `docs/notes/response-parser.md`.
+2. Every code finding listed above has a test, or a tightened fuzz oracle, that fails without its fix.
+3. The journal item is closed by a journal entry that either reproduces the +9% and names its cause, or shows 10 further rounds without it.
+4. Every decision on C3 and C6–C9 is in `docs/notes/response-parser.md` and in design §5.2.
+5. The 300 s fuzz run is clean.
 
 ---
 
