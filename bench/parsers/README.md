@@ -56,7 +56,9 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
   between cores, so pinning removes in-VM migration, not host placement noise. The runner refuses to start while any
   other container is running (it never stops one).
 - Same CPU baseline everywhere: generic Armv8-A on arm64 (Rust `-C target-cpu=generic`, C/C++ `-march=armv8-a`, Zig
-  `-mcpu=baseline`, Go `GOARM64=v8.0`). Nobody gets `native`. x64 (x86-64-v2 or v3) is decided with the x64 host.
+  `-mcpu=baseline`, Go `GOARM64=v8.0`). Nobody gets `native`. On x64 every row, ours and every rival, is built for
+  `x86-64-v3` (design §16.4, "Component micro-gates"); the x64 build flags are added with the first x64 run (plan
+  Task 4c).
 - Release flags per design §16.2: Rust release, fat LTO, `codegen-units = 1`; C/C++ `-O3 -DNDEBUG -flto=auto`; Zig
   `ReleaseFast`; Go default.
 - C/C++ compiler: GCC 14.2 (Debian 13) by default, pulled through the ECR mirror of Docker Hub's official Debian
@@ -74,11 +76,16 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
   view must give the same field count and name/value bytes. Go's map is compared as a case-insensitive name multiset
   (values in order per name) without the `Connection` and `Transfer-Encoding` fields it consumes into
   `resp.Close`/`resp.TransferEncoding` (checked through the facts instead). Any mismatch aborts the run.
-- Statistic: each round runs every parser once per workload, starting at a different parser each round; per
-  invocation 100 ms warm-up, then blocks of 1,000 parses until `--run-ms` (default 300, at most 60,000) elapses; ns/head per round. Reported: median
-  and min–max ns over rounds, and the median and min–max of the per-round ratios **ours+fields / theirs** and **ours /
-  theirs** (below 1: ours is faster). At least 5 rounds (default 7). Gate runs need design §16.4 (10 rounds,
-  bootstrap 95% CI), which this dev bench does not implement.
+- Statistic: each round runs every parser once per workload. The start position rotates by one parser per round: the
+  order is cyclic, not random, so each parser always runs right after the same neighbour, and with fewer rounds than
+  parsers some parsers never start a round. Per invocation 100 ms warm-up, then blocks of 1,000 parses until
+  `--run-ms` (default 300, at most 60,000) elapses; ns/head per round. Reported: median and min–max ns over rounds,
+  and the median and min–max of the per-round ratios **ours+fields / theirs** and **ours / theirs** (below 1: ours is
+  faster). At least 5 rounds (default 7).
+- No confidence interval yet: the runner prints medians and ranges only, so no result of this bench is gate evidence.
+  The gate statistic is the paired one of design §16.4 ("Component micro-gates": 10 rounds, bootstrap 95% CI over the
+  per-round ratios, pass when the upper bound is below 1.0). Its one implementation, `pairedRatioCi` in `stats.ts`, is
+  added by plan Task 4c.
 - Feed inputs (a)–(d) are fed 1 byte per call (`docs/notes/response-parser.md` §8.1); each parser in its native
   partial-input mode: `incremental` (resumes at any byte), `line-restart` (keeps complete lines; a partial line is
   re-parsed from its start on every call), `restart` (re-parses from byte 0), `restart-skip` (re-parses once
@@ -91,8 +98,10 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
 
 - timed: `1k-3-headers` (109 B) and `1k-20-headers` (779 B), each one head repeated; `1k-3-headers-ring64` and
   `1k-20-headers-ring64`, the 64 same-length variants of each that `crates/engine-core/examples/h1_parse_bench.rs` times
-  (digits varied so no single head trains the branch predictor); `mixed-64` (64 heads cycling over the three
-  fixtures, digits varied the same way);
+  (only digit values differ: every length and field boundary is the same in all 64, so a span-scanning parser takes
+  the same branches on each); `mixed-64` (64 heads cycling over the three fixtures with period 3, digits varied the
+  same way). Neither is a varied workload: a branch predictor can learn both. The `varied-256` ring (names shuffled,
+  value lengths 0.5–1.5×) is added by plan Task 4c;
 - feed: the four 1-byte feed inputs;
 - gate only: `gate-framing` (chunked, `Connection: close`, trailing OWS, an empty value, mixed-case names).
 
