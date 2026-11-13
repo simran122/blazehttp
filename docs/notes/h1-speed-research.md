@@ -6,8 +6,10 @@ race), `docs/notes/simd-scanning-research.md` (SIMD survey; referred to, not rep
 `docs/notes/request-writer.md` and `docs/perf/journal.md`. Access date for every link: **2026-11-08**. **Verified** =
 checked against the pinned source, the primary text of a paper, an official doc page, or a run recorded in this note
 with its command, seed and output (the two runs are the compile-only asm check and the executable model in
-`tools/h1-research/`, §4.1 and §5.0); **unverified** = everything else (unverified ideas go only to
-`docs/perf/ideas.md`). No benchmark was run for this note; every speed figure for a candidate is an estimate.
+`tools/h1-research/`, §4.1 and §5.0; the model verifies only what its checks cover, §4.1 "Coverage limits");
+**unverified** = everything else (unverified ideas go only to `docs/perf/ideas.md`). No benchmark was run for this
+note: every speed figure for a candidate is an **estimate (unmeasured)** that only orders what is measured first
+(§7, §8); it is never evidence that a gate is reachable. Measured figures name their source.
 
 ## 0. Summary and decision
 
@@ -17,20 +19,20 @@ Dev run of 2026-11-08 at commit `8ff4b87` (`bench/results/2026-11-08-arm64-dev-p
 generic Armv8-A; median per-round ratio ours / theirs (> 1 = theirs faster) for `1k`, `1k-h20`, `1k` ring64,
 `1k-h20` ring64, mixed 64. Dev numbers (rounds 1–4 loaded), not gate results:
 
-| Rival | ours **with fields** / theirs | ours plain / theirs | Projection after P-A (plain × 1.05, §5.0) |
+| Rival | ours **with fields** / theirs | ours plain / theirs | P-A projection (plain × 1.075–1.10, §5.0; estimate) |
 |---|---|---|---|
-| httparse 1.10.1 | 1.23, 1.74, 1.39, 1.95, 1.78 | 0.80, 0.93, 0.79, 0.94, 0.93 | 0.84, **0.98**, 0.83, **0.99**, **0.98** |
-| picohttpparser `dd573d8` | 1.19, 1.30, 1.42, 1.42, 1.33 | 0.72, 0.68, 0.80, 0.71, 0.68 | 0.76, 0.71, 0.84, 0.75, 0.71 |
-| llhttp 9.4.3 (strict) | 0.81, **1.09**, 0.85, **1.18**, **1.11** | 0.51, 0.55, 0.49, 0.56, 0.57 | 0.54, 0.58, 0.51, 0.59, 0.60 |
-| Beast `basic_parser` | 0.72, 0.81, 0.82, 0.97, 0.90 | 0.46, 0.45, 0.45, 0.46, 0.46 | ≈ 0.48 |
+| httparse 1.10.1 | 1.23, 1.74, 1.39, 1.95, 1.78 | 0.80, 0.93, 0.79, 0.94, 0.93 | 0.86–0.88, **1.00–1.02**, 0.85–0.87, **1.01–1.03**, **1.00–1.02** |
+| picohttpparser `dd573d8` | 1.19, 1.30, 1.42, 1.42, 1.33 | 0.72, 0.68, 0.80, 0.71, 0.68 | 0.77–0.79, 0.73–0.75, 0.86–0.88, 0.76–0.78, 0.73–0.75 |
+| llhttp 9.4.3 (strict) | 0.81, **1.09**, 0.85, **1.18**, **1.11** | 0.51, 0.55, 0.49, 0.56, 0.57 | 0.55–0.56, 0.59–0.61, 0.53–0.54, 0.60–0.62, 0.61–0.63 |
+| Beast `basic_parser` | 0.72, 0.81, 0.82, 0.97, 0.90 | 0.46, 0.45, 0.45, 0.46, 0.46 | ≈ 0.48–0.51 |
 | Beast `response_parser`, Zig, Go | 0.08–0.53 | 0.06–0.30 | — |
 
 1-byte feeds: we are the fastest of all nine parsers (0.03–0.20 ms; httparse 48–90 ms; Beast 9–878 ms).
 
-| Component | Gate (owner, progress log 2026-11-07) | Today | Gap |
+| Component | Gate (owner; statistic defined once in design §16.4 (component micro-gates)) | Today | Gap |
 |---|---|---|---|
-| `ResponseParser` with per-field spans | **CI upper bound of the median per-round ratio ours/theirs < 1.0 against every rival** (httparse, picohttpparser, llhttp, Beast, Zig, Go and any row added), 10 rounds, bootstrap 95%, every workload (1k, 1k-h20, ring64, mixed, trickle), arm64 reference host **and** x64 VM; checked at the end of P1a | loses to httparse (1.23–1.95×), picohttpparser (1.19–1.42×), and llhttp on 20-field and mixed heads (1.09–1.18×) | 1.1–2.0× |
-| `write_request` | the same statistic against every writer of the Task 5c race (§3.13) at equal work (§3.12); `post1k` ≤ 2.3× copy floor (provisional) | `post1k` 2.51–2.58× floor (committed bench, journal 2026-11-08); 1.16–1.22× hyper encode-only | ≈ 10% on the floor ratio |
+| `ResponseParser` with per-field spans | **#1 against every rival** (httparse, picohttpparser, llhttp, Beast, Zig, Go and any row added): the cell passes when the design §16.4 CI upper bound is < 1.0; every workload (1k, 1k-h20, ring64, mixed, trickle), arm64 reference host **and** x64 VM; checked at the end of P1a | loses to httparse (1.23–1.95×), picohttpparser (1.19–1.42×), and llhttp on 20-field and mixed heads (1.09–1.18×) | 1.1–2.0× |
+| `write_request` | the same statistic against every writer of the Task 5c race (§3.13) at equal work (§3.12); `post1k` ≤ 2.3× copy floor (provisional) | `post1k` 3.01–3.07× floor, `varied` 2.58–2.63×, `get` 2.43–2.51× (measured: journal "Request writer after review fix round 1", branch `p0/writer`, PR #18, head `786d341`, dev run, not a gate run); 1.16–1.22× hyper encode-only (earlier journal entry of 2026-11-08) | ≈ 25% on the floor ratio, on a floor that is not yet a stable measure (§6) |
 
 Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-core`, `unsafe` SIMD only in
 `engine-simd`.
@@ -38,21 +40,26 @@ Constraints that stay: the §5.2 checks, `#![forbid(unsafe_code)]` in `engine-co
 ### 0.2 Decision **[author's call]**
 
 - **P-A alone is not a win.** Emitting spans in the scan removes the second pass and wins clearly against
-  picohttpparser and llhttp (projected 0.51–0.84) but is only at parity with httparse on the three 20-field cells
-  (0.98–0.99, inside the noise). It is the necessary first step, not the answer.
-- **Task 4c builds P-A + P-B** (§5.2–§5.3): spans in the scan, one loop body per line on locals, the STOP-set name
-  search with an off-critical-path tchar fold, caller-owned spans. The cycle budget in §5.3 derives P-B at ≈ 0.4–0.6×
-  httparse on 20-field heads on arm64; we plan with ≈ 0.6–0.8× as the margin for an unprofiled breakdown. On x64 we
-  have **no data**: the estimate is ≈ 0.6–0.9× against httparse and picohttpparser and ≈ 0.4–0.6× against llhttp
-  (§5.3). **Honest position:** a scalar parser may still not beat
-  httparse's NEON name scan on arm64, or picohttpparser's `pcmpestri` on x64 if the x64 baseline enables SSE4.2, with
-  a CI upper bound < 1.0 on every cell. Task 4c's acceptance is therefore stated per cell (§5.7); any cell that misses is reported to
-  the owner with data, and **P1a's P-D (bit-stream validator over `engine-simd` bitmaps, §5.5) is the step that
-  closes the gap** (estimated ≈ 0.4–0.6 cycles per byte against ≈ 1 for today's scalar parser). The final gate is checked at the end
-  of P1a, as the owner set it.
-- **Task 5b builds W-A** (shared known-name classifier, STOP search; §6.2), and W-B (layout hints) only if the P2
-  contract change is accepted. **Task 5c** builds the writer race (§3.13). **P1a** builds `classify_block`, P-D and
-  W-D.
+  picohttpparser and llhttp (projected 0.53–0.88) but is projected to **lose to httparse by 0–3%** on the three
+  20-field cells (1.00–1.03, estimate, §5.0). It is the necessary first step, not the answer.
+- **Task 4c builds P-A + P-B** (§5.2–§5.3; steps, order and acceptance: plan "Task 4c"): spans in the scan, one loop
+  body per line on locals, the STOP-set name search with an off-critical-path tchar fold, caller-owned spans. P-B's
+  gain is **unmeasured**: the §5.3 arithmetic gives ≈ 0.4–0.85× httparse on 20-field heads on arm64 depending on
+  whether the name search saves anything (the SIMD note measured a SWAR name path as slower in the chain, §5.3), and
+  x64 has **no data**. The first step of 4c is a profile of plain G that replaces the guessed split. **Honest
+  position:** a scalar parser may not beat httparse's NEON name scan on arm64, or picohttpparser's `pcmpestri` on x64
+  (the race builds every row for `x86-64-v3`, so pico's SSE4.2 path is on), with a CI upper bound < 1.0 on every
+  cell. **Task 4c is expected to end with open cells against httparse (and possibly picohttpparser on x64); that is
+  not a failure of the task**, whose pass/fail is the plan's (A/B keep-or-drop, span equality, no cell slower than
+  today). Open cells are reported to the owner with data and carried to P1a. **P1a's P-D** (bit-stream validator over
+  `engine-simd` bitmaps, §5.5) is the next candidate, not a proven closer: its speed is unknown until prototyped (the
+  only stage-1 measurement, SIMD note §4.2, was not faster than scalar on a fixed head), and P1a chooses its lead from
+  a prototype comparison (plan "P1a entry conditions recorded in P0"; §5.5). What follows if P-D also misses: §5.7.
+  The final gate is checked at the end of P1a, as the owner set it.
+- **Task 5b builds W-A** (shared known-name classifier, STOP search; §6.2) without the authority-id item, whose
+  `TemplateId` binding belongs to Task 6 (it owns the connection). **W-B** (layout hints) moves to **P2** (it needs the
+  P2 wire contract). **Task 5c** builds the writer race (§3.13). **P1a** builds `classify_block` and P-D; W-D is
+  optional in P1a, behind a measurement (§6.5).
 - Expected x64 position of every candidate: §5.2–§5.5 (parser) and §6.7 (writer).
 
 ### 0.3 Design changes proposed by this note **[author's call]**
@@ -66,11 +73,13 @@ Each is applied by the task that builds it, in the same PR as the code:
    straddles the head end; they are masked and never interpreted (§5.5). The semantic rule is unchanged.
 4. P2 wire format: optional per-line layout hints next to the delta (W-B, §6.3); interned name ids in
    `policy/spec.json` (W-C, §6.4).
-5. Design §16: a parser micro-gate row and a writer micro-gate row with the statistic of §0.1 (Task 4c / 5c docs PR).
+5. Design §16.4 (component micro-gates): the parser and writer micro-gate statistic, defined there once and computed
+   by one function, `pairedRatioCi` in `bench/parsers/stats.ts` (added by Task 4c, reused by Task 5c).
 6. The `[bool; 256]` class tables move from `engine-core`'s `grammar.rs` into `engine-simd` (the lower crate), and
    `engine-core` re-exports them, so the scalar and SIMD kernels share one source of truth (§5.5; P1a).
-7. Plan: Tasks 4c, 5b and 5c are tracked in the controller's progress log; `bench/writer/` is replaced by the Task 5c
-   harness; W-D moves from 5b to P1a.
+7. Plan: the plan sections "Task 4c", "Task 4d", "Task 5b", "Task 5c" and "P1a entry conditions recorded in P0"
+   hold the steps, order and acceptance of the work this note researches; this note keeps the research.
+   `bench/writer/` is replaced by the Task 5c harness; W-B moves to P2; W-D is P1a (optional, measured).
 
 ## 1. References (pinned)
 
@@ -217,7 +226,8 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   instruction); (4) no EOF checks inside the up-front-checked status prefix; (5) four stores per field.
 - **To be faster than picohttpparser with equal work.** Its per-field path on arm64: scalar name loop (`:`, table,
   EOF check per byte), OWS loop, 2–4 trips of the unrolled value loop plus a scalar tail, four stores. On x86: two
-  `pcmpestri` per field whose ~11-cycle latency dominates short tokens. **It skips:** bare-LF and obs-fold
+  `pcmpestri` per field, three when the value is longer than 16 B (the common case on `1k-h20`), whose ~11-cycle
+  latency dominates short tokens. **It skips:** bare-LF and obs-fold
   rejection, version 1.0/1.1 only, framing facts and keep-alive, limits, resumability (Bun's wrapper rejects
   obs-fold; the bench adds the facts pass). We must: keep SWAR `value_len` (already ≥ the 8× byte loop above ≈ 8 B)
   and its exact `trailing_zeros` stop; make the name scan no costlier than its scalar loop (a padded buffer removes
@@ -267,9 +277,9 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   beats us today with fields on 20-field and mixed heads (1.09–1.18, §0.1) only because of our second pass — plain we
   are at 0.49–0.57. We must: store spans directly (P-A) instead of its four indirect calls; scan names faster than its
   one byte with two branches on arm64; save resume state only at exits; keep one length match per field for the
-  framing names. After P-A the projection is 0.51–0.60 (§0.1). On x64 llhttp scans names with two `pcmpestri` per 16
-  B (blob8 + blob9) and values with `pcmpestri` plus a second one at each value end; our P-B is expected to stay
-  ahead (≈ 0.6–0.8, estimate).
+  framing names. After P-A the projection is 0.53–0.63 (§0.1, estimate). On x64 llhttp scans names with two
+  `pcmpestri` per 16 B (blob8 + blob9) and values with `pcmpestri` plus a second one at each value end; our P-B is
+  expected to stay ahead (≈ 0.6–0.8, estimate).
 - **Issues (suspected, by reading):** under wasm `simd128` with `HEADER_VALUE_RELAXED`, the range `[0x0e, 0xff]` is
   emitted with signed `wasm_i8x16_ge/le` (0xff = −1), so no byte matches (L2374–2377) and the
   `header_value_relaxed` → `test_lenient_flags_19/_20` → `header_value_relaxed` path can loop without advancing for
@@ -480,8 +490,8 @@ verified against the pinned source unless marked otherwise. Gains are not; they 
   the next call (9–878 ms on the 1-byte feeds in the quiet re-run, §0.1).
 - **To be faster than Beast with equal work:** it is a scalar byte loop with an end check per byte plus a name
   lookup and an indirect call per field; we already beat it with the second pass (with fields 0.72–0.97 against
-  `basic_parser`, 0.30–0.53 against `response_parser`, §0.1), and P-A widens the margin (≈ 0.48). Nothing to copy
-  except the explicit enum for known names, which the shared classifier (§6.1) provides.
+  `basic_parser`, 0.30–0.53 against `response_parser`, §0.1), and P-A widens the margin (≈ 0.48–0.51, estimate).
+  Nothing to copy except the explicit enum for known names, which the shared classifier (§6.1) provides.
 
 ### 2.13 Parsers not yet in the race
 
@@ -530,13 +540,17 @@ vectored vs copied output, word-at-a-time validation; then **what it takes to be
 work** (equal work is defined in §3.12 and used by the race in §3.13).
 
 **Our baseline, from two different benches (journal 2026-11-08; do not mix their ratios):**
-- *Committed bench* (`h1_write_bench`, writer vs copy floor, the gated ratio): `post1k` writer 91.3–99.6 ns, floor
-  35.8–39.6 ns, ratio **2.51–2.58×** (gate ≤ 2.3×).
+- *Committed bench* (`h1_write_bench`, writer vs copy floor, the gated ratio), measured after Task 5's review fix
+  round 1 (journal entry "Request writer after review fix round 1", branch `p0/writer`, PR #18, head `786d341`; dev
+  run on a loaded host, not a gate run): `post1k` writer 135.5–166.6 ns, floor 45.2–54.5 ns, ratio **3.01–3.07×**
+  (gate ≤ 2.3×); `varied` 2.58–2.63×; `get` 2.43–2.51×. (The earlier entry's 2.51–2.58× is superseded.) The floor's
+  time moved 13–21% between two binaries although its code is unchanged (review docs-review-4, M1/M2), so a ratio to
+  that floor is not yet a stable measure (§6).
 - *Scratch ablation* (writer source copied per variant into one crate, so absolute numbers differ): `post1k` full
   74–79 ns; without name classification 58–65 ns (classification ≈ 15 ns); without any delta scan 44–46 ns
   (`token_len` + `value_len` ≈ 14–19 ns). The ablation gives the *shares* of the cost; the committed bench gives the
   gate ratio. The remaining ≈ 8–10 ns are the target check, limits, the authority compare, framing, the checked sum
-  and `try_reserve_exact`.
+  and `try_reserve_exact`. These shares predate fix round 1 (which added rules, e.g. the `_`-folding name compare).
 
 **One correction to `request-writer.md` §2** (verified at the pin; it lives on branch `p0/writer`, so it is handed to
 the Task 5 fix list rather than edited here, §10): curl does **not** cut a custom header at the first newline.
@@ -796,8 +810,8 @@ Fields that cannot be turned off are added to **our** template for that row, so 
 **Harness shape — reuse `bench/parsers`:** one image per language (Rust, C/C++, Go, Zig, Node, Java), base images by
 digest, rival sources by SHA-256 and tag commit, `docker run --cpus=1 --cpuset-cpus=<n> --memory=2g --memory-swap=2g
 --network=none`, the runner refuses to start while another container runs, the same CPU baseline everywhere
-(generic Armv8-A; the x64 baseline is decided with the x64 host and recorded), release flags per design §16.2 (Java:
-JMH after warm-up), rounds rotated by start position, JSONL with provenance
+(generic Armv8-A; on x64 every row, ours and every rival, is built for `x86-64-v3`, as in §5.7), release flags per
+design §16.2 (Java: JMH after warm-up), rounds rotated by start position, JSONL with provenance
 (`bench/results/<date>-<arch>-dev-writers.jsonl`), and `check`/`time` modes with the same protocol (`harness
 <writer> <mode> <workload> [run ms]`).
 
@@ -818,10 +832,11 @@ construction-time validators run per request.
 
 **Metrics and statistic:** ns per request (median, min–max over rounds), ratios to our copy floor and to ours,
 allocations per op (Go `-benchmem`, JMH `gc.alloc.rate.norm`, Rust counting allocator, C `--wrap=malloc`).
-**Gate (5c):** for every rival row marked "yes" and every workload, the **bootstrap 95% CI upper bound of the median
-per-round ratio ours@EW2 / theirs@EW1 is < 1.0**, 10 rounds, on the arm64 reference host (nightly window) **and**
-the x64 VM; `post1k` ≤ 2.3× floor. The bootstrap is added to the shared runner (`bench/parsers/stats.ts`, used by
-both races) in Task 4c, because the dev runner computes only medians today (its README says so).
+**Gate (5c):** for every rival row marked "yes" and every workload, ours@EW2 / theirs@EW1 passes the design §16.4
+(component micro-gates) statistic, on the arm64 reference host (nightly window) **and** the x64 VM; `post1k` ≤ 2.3×
+floor. The statistic is computed by `pairedRatioCi` in `bench/parsers/stats.ts`, added by Task 4c (the dev runner
+computes only medians today, its README says so) and reused here, never re-implemented. Task 5c evaluates "every
+rival@EW1 beaten" for Task 5b's W-A.
 
 ## 4. Papers and algorithms
 
@@ -837,13 +852,17 @@ our design. Status per source in §9.
   whose carries move every marker through its run at once: `MatchStar(M, C) = (((M ∧ C) + C) ⊕ C) ∨ M` (§3), which
   "differs from ScanThru of the Parabix tool chain in that it finds all matches, not just the longest". Carries
   between 64-bit words are kept per addition by the Pablo compiler; the paper adds long-stream addition for blocks
-  ≥ 256 bits. Reported: 1–4 CPU cycles per byte for full regex matching on SSE2/AVX2.
-- **ScanThru** (the longest-match form we need): `ScanThru(M, C) = (M + C) ∧ ¬C` moves each marker in `M` to the
+  ≥ 256 bits. Reported: 0.95, 1.22 and 1.6 CPU cycles per byte for its test expressions on SSE2, and 0.63 on AVX2
+  for the simplest expression (the 0–4 axis beside the results is instructions per cycle).
+- **ScanThru** (the longest-match form we need; source: Cameron et al., *Parallel Scanning with Bitstream Addition:
+  An XML Case Study*, Euro-Par 2011, pp. 2–13, cited by the PACT paper, which names ScanThru but does not define it;
+  the Euro-Par text was not fetched): `ScanThru(M, C) = (M + C) ∧ ¬C` moves each marker in `M` to the
   first byte after the run of class `C` that starts at it. For a field line: markers at line starts, `C` = tchar →
   lands on the byte after the name, which must be `:`; markers after the colon, `C` = field-content → lands on the
   value's end, which must be CR, followed by LF. **All lines of a 64-byte block are validated with two additions and
   a handful of AND/OR/XOR, with no per-line branch.**
-- **Verified for HTTP by an executable model (run 2026-11-08):** `tools/h1-research/scanthru_model.py` implements
+- **Checked for HTTP by an executable model (runs 2026-11-08 and 2026-11-09; what it does not test: "Coverage
+  limits" below):** `tools/h1-research/scanthru_model.py` implements
   exactly the P-D pseudocode of §5.5 (six carry bits including the pending empty-line CR, the head-end limit
   `bits ≤ h + 1`, flatten inputs masked by the limit and the received length) and the W-D writer form of §6.5, and
   checks them against scalar references that emit **spans**:
@@ -868,9 +887,22 @@ our design. Status per source in §9.
   - Scope: the model does not cover the 64 KiB head limit or the status line (both unchanged scalar code). The
     first version of the model (an earlier survey script) checked only accept/reject and error offsets in one call;
     it is superseded.
-- **Cost:** ≈ 32 `u64` operations per 64-byte block on top of the five class bitmaps; 6 carry bits between blocks
-  (parser form).
-- **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` is stable since 1.91.0 and
+  - **Coverage limits (mutation pass on the model, review docs-review-1 F-04, 2026-11-13; 30 mutants):** the
+    model's checks genuinely test the core error equations, the carries and the line-ownership rule (21 mutants
+    killed). They do **not** test: W-B's tiling end `pos == block.len()` and W-B's CRLF check (both survive, so the
+    tiled-smuggle rejection above rests on other checks); that the P-D fast path is ever taken on valid input (a P-D
+    that always re-runs the scalar parser passes); the 2-bit colon carry of W-D at bits 61–63 (no deterministic
+    boundary sweep; killed in 2 of 11 seeds); `& received` against non-zero padding (the model zero-pads). Its
+    "error offsets equal the reference" is not independent evidence: on error the same scalar function is re-run.
+    These cases are **required tests of the Rust implementation**, not additions to the model, which is deleted in
+    P1a (issue #24: port the bit-stream model to `engine-core` tests and remove `tools/h1-research`): P-D and W-D in
+    P1a (plus "fast path taken, zero scalar fallbacks on valid heads ≥ 64 B" and the §5.5 four-cursor regression
+    input), W-B in P2.
+- **Cost:** ≈ 32 `u64` operations per 64-byte block on top of the class bitmaps (P-D's validator reads five: LF, CR,
+  colon, T, V; `BlockMasks` has seven, adding `sp` for W-D and `ows` for the trims; the SIMD note's prototype built
+  two); 6 carry bits between blocks (parser form).
+- **Rust fit:** the bit-stream arithmetic is plain `u64` code: `u64::carrying_add` is stable since 1.91.0 (const:
+  unstable, so not in a `const fn`) and
   compiles on 1.99.1 under `#![forbid(unsafe_code)]` (compile-only check, `tools/h1-research/asmcheck`, function
   `scan_thru`; [std docs](https://doc.rust-lang.org/1.99.1/std/primitive.u64.html#method.carrying_add)). Only the
   **classification** (bytes → bitmaps) needs SIMD: rustc 1.99.1 does not auto-vectorise a safe 64-byte
@@ -913,9 +945,9 @@ differential risk (SIMD note §3.9) shrinks to "the fast path accepts only what 
 - Hyperscan/Vectorscan SHENG (`src/nfa/sheng_impl.h` at `vectorscan/5.4.13`, L55–94): a ≤ 16-state DFA whose
   transition is `cur_state = pshufb(shuffle_mask[c], cur_state)` per byte — a **dependent** shuffle chain, ≈ 1–2
   cycles per byte of latency.
-- Our scalar parser already runs ≈ 1 cycle per byte; P-D is estimated at ≈ 0.4–0.6 (§5.5). Neither FSM form wins for a
-  grammar this regular. (Teddy/shufti/truffle match literal sets and byte classes — the classification side, already
-  covered by the nibble LUT.)
+- Our scalar parser already runs ≈ 1 cycle per byte; P-D's speed is unknown until prototyped (§5.5). Neither FSM
+  form wins for a grammar this regular. (Teddy/shufti/truffle match literal sets and byte classes — the
+  classification side, already covered by the nibble LUT.)
 
 ### 4.5 SIMD CSV and line scanning
 
@@ -945,17 +977,22 @@ by search and are dropped.
   0.48–0.65 in the quiet re-run, §0.1): the bench's `split_fields` re-reads every field byte (`memchr` CR,
   `position` `:`, OWS trim; `bench/parsers/rust/src/engines.rs` L78–103) although `value()` already held all four
   boundaries (§2.14).
-- **Projection once spans are fused** (plain ratios × an assumed 1.05 for four stores per field; not a
-  measurement), from §0.1: vs httparse 0.84 / **0.98** / 0.83 / **0.99** / **0.98**; vs picohttpparser 0.71–0.84;
-  vs llhttp 0.51–0.60; vs Beast `basic_parser` ≈ 0.48. **P-A wins against everything except httparse on the three
-  20-field cells, where it is within noise — not a win.** The ×1.05 also assumes caller-owned spans (§5.1); a
-  parser-owned 800-byte array re-initialised by `reset` on every head would cost more.
+- **Projection once spans are fused** (estimate, unmeasured): plain ratios × 1.075–1.10, i.e. ≈ 3–4 cycles per
+  field of the ≈ 40 below for the four span stores plus the two OWS checks (one compare each in the common case) —
+  the same figure §5.3 uses **[author's call: one span-cost figure for both sections]**. From §0.1: vs httparse
+  0.86–0.88 / **1.00–1.02** / 0.85–0.87 / **1.01–1.03** / **1.00–1.02**; vs picohttpparser 0.73–0.88; vs llhttp
+  0.53–0.63; vs Beast `basic_parser` ≈ 0.48–0.51. **P-A wins against everything except httparse, to which it is
+  projected to lose by 0–3% on the three 20-field cells** (break-even for the 0.94 cell is × 1.064). This also
+  assumes caller-owned spans (§5.1); a parser-owned 800-byte array re-initialised by `reset` on every head would cost
+  more.
 - **Where a 20-field head's time goes in plain G** (arm64; plain `1k-h20` ≈ 227–250 ns for 20 fields, journal
   2026-11-07, ≈ 40 cycles per field at ≈ 3.5 GHz; the split is an estimate from reading the code, not a profile):
   three phase-loop trips per field, each returning a large `Result<Option<ParseStatus>>` and writing
   `self.phase/pos/line_start/colon` (≈ 10–15 cycles); the name as a byte loop with one table load and branch per
   byte (≈ 14 cycles for 14 bytes); the value as 2–3 SWAR words (≈ 6–8); CRLF checks, field count and the facts
   length switch (≈ 5); ≈ 8 `checked_add`/`ok_or` branches (≈ 2–4). §5.3 attacks the first, second and last items.
+  The first step of Task 4c measures this split (a profile of plain G on `1k-h20`: `perf stat`/sampling on the x64
+  VM, Instruments on arm64); until then every per-item figure here is a guess.
 - **Safe-Rust bitmaps do not pay** (compile-only check, run 2026-11-08: `tools/h1-research/asmcheck`, rustc 1.99.1,
   fat LTO, `codegen-units = 1`, commands in its `Cargo.toml`, targets `aarch64-apple-darwin -C target-cpu=generic`
   and `x86_64-unknown-linux-gnu` baseline and `x86-64-v3`): a 64-byte `fold(|m, (i, &b)| m | (u64::from(b == c) <<
@@ -1001,12 +1038,11 @@ OWS trims) and increment `fields`.
   trim_ows_back(vs, e); spans[fields-1] = (line_start, colon, vs, ve); facts.field(...)`.
 - **Time:** O(head bytes); per field + 4 stores + two OWS checks (usually 1 byte each). **Space:** the caller's 800 B.
   **Branches per byte:** unchanged ≈ 0.6.
-- **Expected position (estimate):** arm64 — §5.0 (wins except httparse on 20-field cells, within noise). x64 — vs
-  httparse ≈ 0.85–1.0 (its x86 names are a table loop like ours, values SSE2/AVX2); vs picohttpparser on an SSE4.2
-  baseline ≈ 0.9–1.1 (two `pcmpestri` per field; on an x86-64-v1 baseline it is scalar, as on arm64); vs llhttp
-  ≈ 0.5–0.7.
+- **Expected position (estimate, unmeasured):** arm64 — §5.0 (wins except httparse on 20-field cells, a projected
+  0–3% loss). x64 (every row built for `x86-64-v3`, §5.7) — vs httparse ≈ 0.85–1.0 (its x86 names are a table loop
+  like ours, values AVX2); vs picohttpparser ≈ 0.9–1.1 (two to three `pcmpestri` per field); vs llhttp ≈ 0.5–0.7.
 - **Risks:** none new for security (spans come from bytes already validated); partial input unaffected. **Not a win
-  on its own** against httparse on 20-field heads.
+  on its own** against httparse on 20-field heads (projected 1.00–1.03).
 
 ### 5.3 Candidate P-B — "line kernel" (scalar, safe Rust; our own design)
 
@@ -1066,16 +1102,31 @@ fn scan_lines(window, st) -> Outcome {           // locals in the loop; written 
   `TooLarge` at the budget, as in G); the sentinel CR is never
   followed by LF, so stale slack can never complete a line; a CR at the last received byte is `More`, a CR followed
   by a received non-LF byte is `Malformed` (uWS stalls instead; we reject).
-- **Cycle budget (arm64, estimate from §5.0):** ≈ 40 cycles per field − dispatch (10–15) − name locate (6–8) −
-  checked arithmetic (2–4) + span stores (3–4) = **≈ 16–26 cycles per field**. Scaling the plain ratio (0.93× httparse
-  on `1k-h20`) by 16–26/40 gives **≈ 0.4–0.6× httparse** on 20-field heads. Because the breakdown is read from the
-  code, not profiled, we **plan with ≈ 0.6–0.8×** on arm64 (vs picohttpparser ≈ 0.5–0.7, vs llhttp ≈ 0.35–0.5).
-- **x64 (no x64 data; estimate):** httparse's x86 names are a table loop like ours and its values stop with SSE2/AVX2
-  `tzcnt`, so P-B's position against it should be no worse than on arm64; picohttpparser on an SSE4.2 baseline spends
-  two `pcmpestri` per field (≈ 25+ cycles of latency) against P-B's ≈ 16–26 cycles; llhttp adds a second `pcmpestri`
-  per value end and indirect callbacks. **x64 figures: ≈ 0.6–0.9× httparse and picohttpparser** (the upper end for
-  picohttpparser with SSE4.2) **and ≈ 0.4–0.6× llhttp** (it does strictly more per field than picohttpparser). The
-  decision is made on the §5.7 measurements.
+- **STOP search formula (SWAR, per `u64` word `x`):** `hasless(x, 0x21) | (x & 0x8080…80) | haszero(x ^ 0x7F7F…7F)
+  | haszero(x ^ 0x3A3A…3A)`. Only the **lowest** flag is exact (borrows propagate upward; higher flags can be false,
+  70 seen in 4,032 byte pairs, review docs-review-1 F-13), so the code uses `trailing_zeros` of the flags and nothing
+  else (no popcount, no highest flag, no backward scan).
+- **What we know about the name search (measured, dev):** the SIMD note measured a SWAR name path in this dependent
+  chain as **slower**: "SWAR names + SWAR+tz" 321.2 ns vs 185.8 ns for the table on the repeated head and 425.3 vs
+  395.0 ns on varied heads (SIMD note §4.2–§4.3; its §7 item 4 keeps the table in P0). A related seam was also
+  measured and dropped: phrasing the scans as `token_end`/`value_end(window, pos)` was ≈ 3% slower on `1k-h20`
+  (journal 2026-11-07 "Scan seam"). P-B's STOP search differs in its test (four SWAR tests for a small stop set
+  instead of exact per-lane alphabet ranges with a table fallback) and moves the per-byte table work off the exit
+  branch, but it is the same shape — a word test in the dependent chain — and the fold still loads, looks up and ANDs
+  every name byte. So the name search is an **independent A/B inside P-B** (table loop vs STOP search), not part of
+  the kernel's definition.
+- **Cycle budget (arm64, estimate, unmeasured):** ≈ 40 cycles per field − dispatch (10–15) − name locate (6–8) −
+  checked arithmetic (2–4) + span stores and OWS checks (3–4, as §5.0) = ≈ 16–26 cycles per field, i.e. ≈ 0.4–0.6×
+  httparse on `1k-h20` (scaling the plain 0.93×) **if every subtraction holds**. If the name search saves nothing (as
+  measured above) and half the dispatch remains (resume state, the field-count check), the same arithmetic gives
+  ≈ 32–37 cycles, ≈ 0.75–0.85×. So P-B's position is ≈ 0.4–0.85× httparse, **unmeasured**; the Task 4c profile and the
+  A/B decide (vs picohttpparser and llhttp the same scaling keeps P-B ahead).
+- **x64 (no x64 data; estimate, unmeasured):** httparse's x86 names are a table loop like ours and its values stop
+  with AVX2 `tzcnt` (on the `x86-64-v3` race build), so P-B's position against it should be no worse than on arm64;
+  picohttpparser spends three `pcmpestri` per field in the common `1k-h20` case (name, and two for a value longer
+  than 16 B; ≈ 30+ cycles of latency); llhttp adds a second `pcmpestri` per value end and indirect callbacks. The
+  arm64 range applies with more doubt; against llhttp P-B should stay well ahead (it does strictly more per field
+  than picohttpparser). The decision is made on the §5.7 measurements.
 - **Time:** O(head bytes). **Space:** as G (+ nothing). **Branches per byte:** names ≈ 1 per 8 bytes + 1 exit,
   values ≈ 1 per 8 bytes + 1 exit, ≈ 5 per line fixed → ≈ 0.25–0.3 (from ≈ 0.6).
 - **Risks:** (1) security: STOP must contain every byte that can end a line or hide a separator (CR, LF, SP, HTAB,
@@ -1086,7 +1137,8 @@ fn scan_lines(window, st) -> Outcome {           // locals in the loop; written 
 
 ### 5.4 Candidate P-C — stage-1 bitmaps + per-line `tzcnt` walk (P1a, `engine-simd`)
 
-The SIMD note's lead candidate (its §3.6, §6.1), now with spans; now the A/B baseline for P-D.
+The SIMD note's lead candidate (its §3.6, §6.1), now with spans; one of the three P1a prototypes (P-C, P-D, scalar)
+from which the lead is chosen by measurement (§5.5).
 - **Stage 1** (`engine-simd`, `unsafe` inside, safe API): `classify_block` → `BlockMasks` (the seam, §5.5).
 - **Stage 2** (safe, `engine-core`), per line: if the line's first byte is CR → end-of-head check (LF next, else
   Malformed); else `name_end = next_set(not_tchar, line_start)`, require **`name_end > line_start`** (an empty name
@@ -1120,9 +1172,11 @@ impl Classifier { pub fn detect() -> Self; pub fn classify(&self, block: &[u8; 6
 - **Observability:** each parser counts scalar re-runs (errors and fallbacks) per kernel; the bench records
   `kernel()` and the counter in its provenance, so a silent fallback to scalar is visible in every result file.
 
-**Validator (`engine-core`, safe `u64` code; exactly what `tools/h1-research/scanthru_model.py` executes):**
+**Validator (`engine-core`, safe `u64` code; the algorithm `tools/h1-research/scanthru_model.py` executes, which keeps
+four independent span lists):**
 ```text
 state: lf_in, cr_in, name_c, colon_c, value_c, head_end_pending        // 6 bits
+cursors: c_ns, c_col, c_vs, c_ve = fields                               // one write cursor per stream (F-07)
 for each 64-B block (base), received = mask of bytes actually received in this block:
     if head_end_pending: require LF at bit 0 (else scalar re-run → Malformed); head ends at base + 1; stop
     S  = (LF << 1) | lf_in                                  // line starts (lf_in = 1 at the hand-off line start)
@@ -1135,15 +1189,24 @@ for each 64-B block (base), received = mask of bytes actually received in this b
     limit = if H == 0 { all } else { bits ≤ lowest(H) + 1 } // keeps the LF check at h + 1
     err &= limit & received
     if err != 0 → re-run the scalar parser from p, the P-D run's start (it reports the exact first error)
-    if fields + flattened + popcount(S & T & limit & received) > 100 → re-run the scalar parser from p   // before flatten
+    if c_ns + popcount(S & T & limit & received) > 100 → re-run the scalar parser from p   // before flatten
     stage[0..16] ← flatten(S & T & limit & received);  stage[16..32] ← flatten(N & limit & received)   // 4 × 16-entry
     stage[32..48] ← flatten(P & limit & received);     stage[48..64] ← flatten(E & limit & received)   // stack buffers
-    copy `count` entries of each stage into FieldSpans at fields + flattened; flattened += count
+    write each stage's own count of entries into its stream of FieldSpans at that stream's cursor (name_start at
+    c_ns, name_end at c_col, value start at c_vs, value end at c_ve) and advance that cursor by that count
+    complete = min(c_ns, c_col, c_vs, c_ve)    // fields with all four entries; a line crossing the block keeps its
+                                               // earlier entries at index `complete` until the rest arrive
     if H != 0: h = lowest(H); if h == 63 { head_end_pending = 1; continue }
                if h + 1 < received length { head ends at base + h + 2; stop } else hand off at line start base + h
     lf_in = LF >> 63; cr_in = CR >> 63; colon_c = N >> 63
-spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end[k])); facts per field (scalar)
+spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end[k])) for k < complete at the
+commit (line start L, below); facts per field (scalar)
 ```
+- **Four cursors, not one (review docs-review-1 F-07):** the four streams do not advance by the same count in a block
+  when a line straddles a block boundary, so one shared cursor puts later entries into the wrong field. Required
+  regression test of the Rust implementation (P1a): from a line start, `"N" × 70 + ":v\r\n" + "a:b\r\n" × 14 +
+  "\r\n"` must give spans `(0, 70, 71, 72), (74, 75, 76, 77), …` (a single cursor gives `(0, −, −, −), (74, 70, 71,
+  72), …`).
 - **Head end (review R1-1, now enforced):** the sixth bit carries an empty-line CR at bit 63 into the next block,
   where only its LF is checked before stopping; `limit` keeps bit `h + 1` so a bare CR after the last CRLF fails
   `A ⊕ LF`; `H` and every flatten input are masked by `limit & received`. The review's counterexamples are in the
@@ -1152,31 +1215,49 @@ spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end
 - **Resume = hand-off at line starts (review R1-2):** P-D runs from a line start `p` over the complete 64-byte blocks
   of the window and **commits only complete lines** (spans, facts, field count) up to the last line start `L` inside
   the processed blocks; it never commits a line it has not seen end. The scalar parser (P-B or G) continues from `L` in
-  its `LineStart` phase and commits lines one by one; on a later call control returns to P-D only at a line start
-  with ≥ 64 received bytes after it. Each line is committed by exactly one of the two, so no fact is folded twice and
-  the field count is exact. Trickles and short tails stay scalar (linear, cheap). The model checks this hand-off
-  with 0–3 random splits on 100,000 heads and **every single split point** in the boundary sweep: spans, head end and
-  error offsets equal the whole-input reference.
+  its `LineStart` phase and commits lines one by one; **in the same call**, once the scalar parser has committed the
+  line it owns and is back at a line start with ≥ 64 received bytes after it, P-D runs again (the model's `pd_split`;
+  this covers far more of a multi-read head than waiting for a later call, e.g. 60% vs 16% of the bytes of a 99 × 600
+  B head in 700 B reads, review docs-review-1 F-11). Each line is committed by exactly one of the two, so no fact is
+  folded twice and the field count is exact. **[author's call]** P-D processes complete 64-byte blocks only; the last
+  partial block of the received data is left to the scalar parser (`received` is all-ones in the first version; the
+  mask stays for the padded-window variant, §0.3 item 2, measured in P1a). Trickles and short tails stay scalar
+  (linear, cheap). The model checks this hand-off with 0–3 random splits on 100,000 heads and **every single split
+  point** in the boundary sweep: spans and head end equal the whole-input reference (error offsets too, but those are
+  not independent evidence, §4.1 "Coverage limits").
 - **When P-D runs:** only when the scalar parser is in its `LineStart` phase and does not own a partial line.
   Once the scalar parser has returned `More` inside a line it keeps that line until its CRLF, so P-D never
   re-classifies a partial line and a 1-byte trickle stays linear (model: 0 bytes classified by P-D).
 - **Scalar re-run after an error:** from the P-D run's start `p` (a line start), with every uncommitted index
   discarded; it reports the first error exactly, with G's semantics.
 - **Field limit (review R2-2):** before the flatten of each block,
-  `fields + flattened + popcount(S & T & limit & received) > 100` → scalar re-run from `p` (Malformed at the 101st
-  line's first byte, as G). `fields` counts committed lines, `flattened` the lines of this run not yet committed.
-  The flatten writes into four 16-entry stack buffers per block (≤ 16 lines fit in 64 bytes) and copies `count`
-  entries into `FieldSpans`, so no stepped write can ever touch slot 100 or beyond.
+  `c_ns + popcount(S & T & limit & received) > 100` → scalar re-run from `p` (Malformed at the 101st line's first
+  byte, as G). `c_ns` (the name-start cursor, which leads the other three) counts committed lines plus the lines of
+  this run not yet committed. The flatten writes into four 16-entry stack buffers per block (≤ 16 lines fit in 64
+  bytes) and copies each stream's count into `FieldSpans` at that stream's cursor, so no stepped write can ever touch
+  slot 100 or beyond.
 - **What it validates:** token names ending at `:` (an empty name fails `S & !T`), field-content values ending at
   CR, CR always followed by LF and LF always preceded by CR (`A ⊕ LF`), no line starting with SP/HTAB (obs-fold), end
   of head at `CRLF CRLF`. The status line stays scalar.
-- **Time:** stage 1 ≈ 90–100 vector ops per 64 B; validator ≈ 32 `u64` ops per 64 B; flatten ≈ 4 × (popcount + a
-  step-of-4 unrolled write) per block; per field ≈ 6 scalar ops for OWS and the span; facts by length switch.
-  Estimate ≈ 0.4–0.6 cycles per byte (unverified) against plain G's ≈ 1. **Branches per byte:** ≈ 0.05. **No
-  dependent chain between lines.** **Space:** 6 carry bits; four 16-entry stack buffers per block, copied by count into the
-  caller's `FieldSpans` (≤ 100 entries per stream, checked before the flatten).
-- **Expected position (estimate):** ≈ 0.4–0.6× httparse on 20-field heads on both arches; it is the step that
-  closes any cell P-B leaves open.
+- **Time:** stage 1 ≈ 90–100 vector ops per 64 B for the five masks the validator reads (≈ 127 for all seven of
+  `BlockMasks`; recount in review docs-review-1 F-02); validator ≈ 32 `u64` ops per 64 B; flatten ≈ 4 × (popcount +
+  a step-of-4 unrolled write) per block; per field ≈ 6 scalar ops for OWS and the span; facts by length switch.
+  **Branches per byte:** ≈ 0.05. **No dependent chain between lines.** **Space:** 6 carry bits; four 16-entry stack
+  buffers per block, copied by count into the caller's `FieldSpans` (≤ 100 entries per stream, checked before the
+  flatten).
+- **Speed: unknown until prototyped.** The only measurement of a stage-1 design in the repo (SIMD note §4.2, dev,
+  two masks only) was **not faster than scalar on a fixed head**: whole-head stage 1 194.4 ns vs 185.8 ns (1.04×),
+  lazy per block 162.9 ns (0.88×), ≈ 0.86 and ≈ 0.72 cycles per byte at ≈ 3.5 GHz; its 0.42× win is on varied heads,
+  where the scalar parser mispredicts. The gate cells `1k`, `1k-h20` and `ring64` are fixed-shape heads. ≈ 100 vector
+  ops per block on a four-pipe vector back end is ≥ 25 cycles, ≥ 0.39 cycles per byte for stage 1 alone with every
+  pipe busy (≥ 0.78 on a two-pipe core); with the validator, flatten and per-field work (≈ 200 instructions per 64
+  B) a realistic derived range is **≈ 0.6–1.0 cycles per byte on arm64 (estimate, unmeasured)**, i.e. parity to a
+  modest gain on fixed heads. simdjson's stage 1 alone costs 0.5–1 cycle per byte on AVX2 (32-byte vectors). x64: no
+  data.
+- **Expected position:** unknown; P-D is the next candidate for cells P-B leaves open, not a proven closer. P1a
+  starts by prototyping P-D stage 1 + validator, P-C and scalar on the fixed `1k-h20` head and the `varied-256` ring
+  on both arches and chooses the lead from the data (plan "P1a entry conditions recorded in P0"). If a cell is still
+  open after that: §5.7.
 - **Our own additions** beyond Parabix/simdjson: error handling by scalar re-run (§4.3), so the fast path is only an
   acceptance filter and the scalar parser keeps all error semantics; the line-start hand-off; `u16` spans for JS.
 - **Risks:** (1) security — the filter must never accept what the scalar parser rejects: classes from the single
@@ -1202,24 +1283,42 @@ spans[k] = (name_start[k], colon[k], skip_ows(value_from[k]), trim_ows(value_end
   plain row stays as "facts only" for Zig.
 - **Workloads:** `1k`, `1k-h20`, `ring64` (both), `mixed`, `trickle` (feeds (a)–(d), ≤ 1 ms each), **plus a
   `varied-256` ring** (names shuffled, value lengths 0.5–1.5×) because `ring64` varies only digits.
-- **Statistic (owner gate, §0.1):** per rival and workload, the bootstrap 95% CI upper bound of the median per-round
-  ratio ours/theirs < 1.0, 10 rounds, arm64 reference host (nightly window) and x64 VM (baseline decided with the x64
-  host and recorded; every rival built for it). The bootstrap is added to `bench/parsers/stats.ts` in Task 4c.
-- **Task 4c acceptance:** P-A then P-B are each kept only if faster in the same-container A/B
-  (`crates/engine-core/examples/h1_parse_bench.rs`, ≥ 4 alternated rounds). The race is then run on both arches; 4c
-  **passes** if every cell meets the statistic against httparse, picohttpparser, llhttp, Beast, Zig, Go, fasthttp and
-  nginx. A cell that misses is reported to the owner with its numbers and moves to P1a; it is not relaxed. **Final
-  gate:** every cell, every rival, both arches, at the end of P1a (P-D, with P-C as its A/B baseline).
+- **Statistic (owner gate, §0.1):** design §16.4 (component micro-gates), per rival and workload, computed by
+  `pairedRatioCi` in `bench/parsers/stats.ts` (added by Task 4c before any candidate is judged); arm64 reference
+  host (nightly window) and x64 VM. **x64 build baseline [author's call]:** every row, ours and every rival, is built
+  for `x86-64-v3` (Task 4b's same-baseline rule); this turns on each rival's best path the host has (SSE4.2
+  `pcmpestri` in picohttpparser and llhttp at compile time, AVX2 in httparse). Whether ours is gated from P1a on as
+  the v3 build or as the shipped build (baseline `x86-64` + runtime dispatch) is decided in P1a with the dispatch
+  design; until `engine-simd` exists both are the same scalar code. Superseded: the unpaired ratio-of-medians
+  statistic and `response-parser.md`'s "≤ 0.85× httparse on 1k-h20" line.
+- **Task 4c acceptance (plan "Task 4c" is the source):** its first step profiles plain G on `1k-h20`; the paired CI
+  and the `varied-256` ring are added before any candidate is judged; P-A, then each P-B change (locals / one loop per
+  line; the STOP search as its own A/B against the table loop; the masked `u64` prefix; the shared classifier) is
+  kept only if it passes the plan's A/B rule in the same container (`crates/engine-core/examples/h1_parse_bench.rs`,
+  10 alternated rounds, `pairedRatioCi(new, old)`) and dropped otherwise; spans equal the reference; no cell slower
+  than today. The race on both arches then
+  records every cell against httparse, picohttpparser, llhttp, Beast, Zig, Go, fasthttp and nginx. **4c is expected
+  to end with open cells against httparse (and possibly picohttpparser on x64); that is not a failure of 4c.** Open
+  cells are reported to the owner with their numbers and carried to P1a; the gate is not relaxed. **Final gate:**
+  every cell, every rival, both arches, at the end of P1a.
+- **If a cell is still open after P-D (ranked; each an estimate until measured):** (1) on x64, wider stage-1 kernels
+  — AVX2 32-byte, then AVX-512 64-byte only after AVX2 is measured (SIMD note §1.1); (2) lazy per-block stage 1, the
+  only stage-1 variant measured faster than scalar on a fixed head (0.88×, SIMD note §4.2, dev); (3) specialised
+  short-name paths (a known-name word compare, §6.1, that locates and validates common names in one step). Any cell
+  still open after these is reported to the owner with data; the task does not relax the gate.
 - **Secondary metrics** (x64 VM): `perf stat -e instructions,branches,branch-misses` per head to check the
   branches-per-byte claims; `--emit asm` audit of each kernel (no panic paths; parser note §8.5).
-- **Design §16 rows:** a parser micro-gate row and a writer micro-gate row with this statistic (§0.3 item 5).
+- **Design §16.4 (component micro-gates)** holds the parser and writer micro-gate statistic (§0.3 item 5).
 
 ## 6. Our writer: candidates
 
-Target: on the committed bench, `post1k` from 2.51–2.58× to ≤ 2.3× the copy floor with margin, and every rival@EW1
-beaten (§3.12–3.13). The scratch ablation (§3 intro) gives the shares: name classification ≈ 20% of the writer's
-time, the delta scan ≈ 20–25%, the other checks ≈ 10%. Estimates below apply those shares to the committed numbers
-(writer ≈ 91–100 ns, floor ≈ 36–40 ns).
+Target: on the committed bench, `post1k` from 3.01–3.07× (measured, §3 intro) to ≤ 2.3× the copy floor, and every
+rival@EW1 beaten (§3.12–3.13; evaluated by the Task 5c race). The scratch ablation (§3 intro) gives the shares: name
+classification ≈ 20% of the writer's time, the delta scan ≈ 20–25%, the other checks ≈ 10%. Every effect below is
+an **estimate (unmeasured)**. **First step of Task 5b:** fix the floor measurement (same binary, alternated order,
+the design §16.4 CI, a varied-delta workload), because the floor moved 13–21% between two binaries with unchanged
+code; a ratio to it is not yet a stable measure. Replacing the ratio-to-floor line by a more stable measure is a
+proposal with the owner (not decided here); until then the `post1k` ≤ 2.3× line stands as set.
 
 ### 6.1 Building block: one known-name classifier, shared by parser and writer
 
@@ -1233,11 +1332,18 @@ pub fn classify(name: &[u8], has_underscore: bool) -> Option<(KnownName, Spellin
 - **Algorithm:** `match name.len()` (jump table) → for lengths with several candidates, one discriminating byte
   (the last byte, h2o: at length 10 `n`/`e`/`t`; at 6 `e`/`t`) → **compare 1–3 overlapping little-endian `u64`
   words OR-ed with `0x2020…20`** against `const` canonical words (`u64::from_le_bytes` of `name.first_chunk::<8>()`
-  and `name.last_chunk::<8>()`; names under 8 bytes zero-extended). No indexing, no panic path.
+  and `name.last_chunk::<8>()`; names under 8 bytes zero-extended). No indexing, no panic path. The `const`
+  canonical words are built the same way — zero-extended, **then OR-ed with `0x2020…20`** — because the OR turns the
+  input's zero padding into `0x20`; without it `te` and `host` would never match and a forbidden name would pass. The
+  last-byte discriminator is case-folded too (`last | 0x20`, so `TE` and `te` take the same branch).
 - **Exactness:** names are validated tokens before classification; canonical names contain only `a–z` and `-`;
   among tchar bytes, `|0x20` maps only `A–Z`/`a–z` into `a–z` (`^`→`~` and `_`→DEL land outside the canonical
-  bytes), so the folded compare ⇔ ASCII case-insensitive equality. The underscore spellings (writer note W10/X9)
-  are tried only when the name scan saw a `_` (a flag folded during the scan, as nginx hashes during its scan).
+  bytes), so the folded compare ⇔ ASCII case-insensitive equality. Over all 256 bytes the only false fold onto a
+  canonical byte is CR (`0x0D | 0x20` = `-`), which is not a tchar: **validation before classification is
+  load-bearing**, so P-B and W-A classify a name only after its tchar fold has passed. **Underscore spellings**
+  (writer note W10/X9) **[author's call]:** a second set of `const` canonical words with `_` in place of `-`, built by
+  the same OR fold (`_ | 0x20` = `0x7F`, which no validated tchar other than `_` produces), compared only when the
+  name scan saw a `_` (a flag folded during the scan, as nginx hashes during its scan); the input is never rewritten.
 - **Users:** the writer uses every variant (an `Underscore` match is always forbidden). **The parser matches only
   `Spelling::Exact`** for its three framing names (an underscore name is an ordinary field on the response side,
   as today), replacing `facts.rs`'s length switch + `eq_ignore_ascii_case`.
@@ -1251,24 +1357,31 @@ pub fn classify(name: &[u8], has_underscore: bool) -> Option<(KnownName, Spellin
    with the `_` flag folded into a `[u8; 256]` flags table (tchar bit, underscore bit) so the fold yields both.
 2. **Classification:** §6.1.
 3. **Values:** today's SWAR `value_len`, then `": "` before and CRLF after checked with slice patterns.
-4. **Authority binding by id (Task 6 hand-off):** instead of a 10–30-byte compare per request, the connection
+4. **Authority binding by id — not part of Task 5b; Task 6 (which owns the connection) builds it:** instead of a
+   10–30-byte compare per request, the connection
    stores the `TemplateId` it was checked out for; ids are `(slot, generation)` pairs whose generation increments on
    every slot reuse and never wraps within the process (`u64`), so a stale or recycled id can never match a template
    built for another authority (the credential-leak case). −2–4 ns (estimate).
 5. Limits checked once on the summed length.
 - **Time:** O(target + delta) validation + O(head + body) copy. **Space:** 0 extra. **Branches per delta byte:**
   ≈ 0.25 (from ≈ 0.6). **Allocations:** 0.
-- **Expected (estimate):** `post1k` ≈ 70–78 ns on the committed bench ≈ 1.9–2.1× floor (gate ≤ 2.3×). x64: the same
-  shares (no SIMD involved).
+- **Expected (estimate, unmeasured):** the ablation's ≈ 21–22 ns saving (classification share applied as if it all
+  disappears; the new classifier and STOP search still cost something; it includes item 4's 2–4 ns, now Task 6)
+  gives `post1k` ≈ 2.15–2.7× floor, depending on which baseline it is applied to: ≈ 2.35–2.4× as a ≈ 22% share of
+  the fix-round-1 ratio; ≈ 2.5–2.7× as 21–22 ns on the fix-round-1 rounds (writer 135.5–166.6 ns, floor 45.2–54.5
+  ns, loaded host); ≈ 2.15–2.7× on the review's derived figures (docs-review-1 F-05). **W-A alone straddles the 2.3×
+  line at best.** x64: the same shares (no SIMD involved).
 - **Better than hyper/Go because:** EW1's validation plus our EW2 checks with no allocation, map, `fmt` or second
   pass; one word compare per name where hyper pays a map entry and Go a map hash.
 - **Risks:** classification must equal today's (tests above); the X3 line count stays.
 
-### 6.3 Candidate W-B — validate against the writer's own layout (scalar; our design from the hint idea)
+### 6.3 Candidate W-B — validate against the writer's own layout (scalar; our design from the hint idea; P2)
 
-The JS layer knows each line's name and value length. It passes them as **untrusted hints** (`[u16; 2]` per line
-next to `header_lines`; ≤ 13,107 lines, the `u16` `header_lines` bound for 64 KiB of 5-byte lines, so ≤ 52 KiB of
-hints in the worst case and 4 B per line normally). Rust then needs no search:
+Built in **P2**, not in P0: it needs the P2 wire contract. The JS layer knows each line's name and value length. It
+passes them as **untrusted hints** (`[u16; 2]` per line next to `header_lines`; ≤ 13,107 lines, the `u16`
+`header_lines` bound for 64 KiB of 5-byte lines, so ≤ 52 KiB of hints in the worst case and 4 B per line normally;
+the writer at `786d341` enforces no field-count limit — the 100-field limit of design §5.2 is the parser's — so
+13,107 stays the bound unless P2 adds one, which would make it 100 lines / 400 B). Rust then needs no search:
 ```text
 pos = 0
 for (name_len, value_len) in hints:                                   // O(lines); every range via get(), never [..]
@@ -1287,10 +1400,15 @@ require pos == block.len()  &&  hints.len() == header_lines
   (tchar only), a checked `": "`, a value range (field-content: no CR, LF, NUL, CTLs except HTAB, DEL), or a checked
   CRLF; the ranges tile the block. So a value carrying `\r\nx-forwarded-for: 1.2.3.4` fails its field-content fold,
   whatever the hints say, and no counter can wrap. (A whole-block fold with CR/LF *counts* would also be exact, but
-  only with `usize` counters; it is not used.)
+  only with `usize` counters; it is not used.) The model does **not** test the tiling end `pos == block.len()` or the
+  CRLF check (§4.1 "Coverage limits"); required P2 Rust tests: correct hints for a prefix followed by trailing bytes
+  (e.g. a smuggled line after the last hinted line), hints whose value range ends before or after the CRLF, and
+  wrong separators.
 - **Time:** O(delta) with no data-dependent loop exits: the folds have hint-given lengths (SWAR, 8 B per step) +
   O(lines) constant-time checks. **Branches per byte:** ≈ 1 per 8 bytes; ≈ 6 per line.
-- **Expected (estimate):** with W-A's classifier, `post1k` ≈ 60–68 ns ≈ 1.6–1.8× floor.
+- **Expected (estimate, unmeasured):** W-B still folds every byte; it only removes data-dependent loop exits, which a
+  fixed `post1k` delta lets the predictor learn (SIMD note §1), so any saving shows on varied deltas, not on `post1k`.
+  No `post1k` figure is claimed.
 - **Precondition:** measure the JS-side cost of producing the hints in P2 before adopting (the lengths are known
   while serialising, so it should be ≈ 0, unverified).
 - **Risks:** a P2 wire-format change (§0.3 item 4); fuzz target: random hints × random blocks vs today's
@@ -1311,7 +1429,9 @@ The **writer form** of the P-D validator (review R1-3, R1-4), exactly what `tool
 `wd()` executes:
 ```text
 state: lf_in = 1 (the block starts at a line start), cr_in, name_c, value_c, colon_hi (2 bits: colons at 62, 63)
-for each 64-B block, received = bytes of the delta in this block (padding past the delta length is masked):
+for each 64-B block, received = bytes of the delta in this block; the class masks LF, CR, COLON, SP, T, V are
+    AND-ed with `received` before use, so stale padding never feeds a carry (else `a: b\r\n` + padding `a…` is
+    falsely rejected; required Rust test, P1a):
     S = (LF << 1) | lf_in;  A = (CR << 1) | cr_in
     (s1, name_c)  = (S & T).carrying_add(T, name_c);   N = s1 & !T                 // byte after each name
     N1 = (N << 1) | (colon_hi >> 1)                     // byte after the colon: must be SP (exact ": ")
@@ -1336,6 +1456,8 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
   marker, so `a: b\r\n\r\nGET /admin HTTP/1.1\r\nhost: internal\r\n` is rejected; the end condition (last byte LF,
   no run in flight) rejects `a: ` + 61 × `v` (64 bytes, no CRLF); empty names (`: x\r\n`) fail `S & !T`; the X3 line
   count stays. All are in the model's checks and pass; 100,000 mutated deltas agree with the scalar W-A reference.
+  The 2-bit colon carry has no deterministic boundary sweep in the model (§4.1 "Coverage limits"); required P1a Rust
+  test: a colon at bits 61, 62 and 63 followed by an invalid byte in the next block.
 - **Engine tests (review suggestion 5):** the smuggle, unterminated, empty-name, forbidden-name and duplicate-
   singleton deltas go into `tests/vectors/h1-request/blazehttp-rules.json` (run by `crates/engine-core/tests/
   h1_writer.rs` `injection_vectors` on every writer path), and the writer fuzz target
@@ -1349,10 +1471,13 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
   that `dst` was reserved for `src.len()` before the loop. Because this reverses today's check-then-append, the
   writer calls `out.clear()` on every error path, so rejected bytes never stay in the buffer. Measured, not assumed:
   at 100–400 B the delta is in L1 after a plain copy anyway.
-- **Cost (re-derived from the P-D model, estimate):** ≈ 150 ops per 64-byte block → ≈ 7 ns per block, plus the
-  §6.1 classification at ≈ 1–2 ns per line; a 100-byte `post1k` delta (2 blocks, 3 lines) ≈ 17–20 ns, a 400-byte
-  delta (7 blocks, ≈ 10 lines) ≈ 55–70 ns. That is no better than W-A/W-B's scalar folds on small deltas; W-D pays
-  only on large deltas (`h20`), so P1a keeps it only where it measures faster (likely above ≈ 256 B).
+- **Cost (re-derived from the P-D model, estimate, unmeasured):** ≈ 150 ops per 64-byte block (stage 1 for six
+  masks ≈ 115 — P-D's five ≈ 101 plus SP — and a validator ≈ 35, against P-D's ≈ 101 + 32); at a sustained 6 ops
+  per cycle that is ≈ 7 ns per block, optimistic for a four-wide vector back end (§5.5), and ≈ 11–14 ns at 3–4. Plus
+  the §6.1 classification at ≈ 1–2 ns per line: a 100-byte `post1k` delta (2 blocks, 3 lines) ≈ 17–35 ns, a 400-byte
+  delta (7 blocks, ≈ 10 lines) ≈ 55–120 ns. That is no better than W-A's scalar folds on small deltas; W-D can pay
+  only on large deltas (`h20`), so it is **optional in P1a, behind a measurement**, kept only where it measures faster
+  (if anywhere, above ≈ 256 B).
 
 ### 6.6 Rejected
 
@@ -1366,54 +1491,66 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
 
 - **Workloads:** `get`, `post1k`, `varied` (256-ring), plus `h20` (20 per-request fields); arm64 and x64.
 - **A/B:** `crates/engine-core/examples/h1_write_bench.rs` (writer vs copy floor, same container, alternated
-  binaries, ≥ 4 rounds); ablations per check (classification off, delta scan off, authority off).
-- **Task 5b acceptance:** `post1k` ≤ 2.3× floor on both arches; 0 allocations (`tests/h1_writer_alloc.rs`); each of
-  W-A and W-B kept only if faster in the A/B.
-- **Task 5c acceptance:** the race statistic of §3.13 (CI upper bound < 1.0 against every runnable rival@EW1, every
-  workload, both arches). **Expected x64 position:** the writer has no SIMD in P0, so its position against Go,
+  binaries, 10 rounds, the A/B rule of plan "Task 4c"); ablations per check (classification off, delta scan off,
+  authority off).
+- **Task 5b acceptance (plan "Task 5b" is the source):** first the floor measurement is fixed (§6 intro); W-A is
+  kept only if faster in that A/B and dropped otherwise; `post1k` ≤ 2.3× floor on both arches (the owner's line,
+  unchanged; W-A alone is projected to straddle it, §6.2); 0 allocations (`tests/h1_writer_alloc.rs`). "Every
+  rival@EW1 beaten" is evaluated by Task 5c, not inside 5b.
+- **Task 5c acceptance:** the design §16.4 statistic for ours@EW2 / theirs@EW1 against every runnable rival, every
+  workload, both arches (§3.13). **Expected x64 position:** the writer has no SIMD in P0, so its position against Go,
   hyper, fasthttp and the C/C++ writers should match arm64's; a rival with SSE-specific write paths was not found.
 
 ## 7. Measurement plan (the single summary; details in §5.7, §6.7, §3.13)
 
 | What | Where | Workloads | Arches | Statistic / acceptance |
 |---|---|---|---|---|
-| P-A, P-B (keep or drop) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | faster in ≥ 4 alternated rounds |
-| Parser race (4c, then P1a) | `bench/parsers` + fasthttp, nginx rows + bootstrap CI | same | arm64 ref + x64 VM | CI upper bound of ours/theirs < 1.0 per rival and cell, 10 rounds |
-| P-C, P-D | P1a criterion, then the race | same | both | as above (final gate) |
-| W-A, W-B (keep or drop) | `h1_write_bench` A/B + ablations | get, post1k, varied, h20 | both | faster; `post1k` ≤ 2.3× floor; 0 allocations |
-| Writer race (5c) | §3.13 harness | get, post1k, varied, h20 | both | CI upper bound of ours@EW2/theirs@EW1 < 1.0 per runnable rival |
-| W-D | P1a criterion | post1k, h20 | both | kept only where faster than W-A/W-B |
+| P-A, P-B (keep or drop) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | the A/B rule of plan "Task 4c" (10 alternated rounds, `pairedRatioCi`) |
+| Plain G profile (4c step 1) | `perf stat`/sampling (x64 VM) or Instruments (arm64) | 1k-h20 | either | measured per-field split replaces §5.0's guess |
+| Parser race (4c, then P1a) | `bench/parsers` + fasthttp, nginx rows + `pairedRatioCi` | same | arm64 ref + x64 VM (`x86-64-v3`) | design §16.4 statistic per rival and cell |
+| P-C, P-D, scalar | P1a prototypes (lead chosen from data), then the race | 1k-h20, varied-256, then all | both | as above (final gate) |
+| W-A (keep or drop) | fixed floor measurement first, then `h1_write_bench` A/B + ablations | get, post1k, varied, h20, varied-delta | both | faster; `post1k` ≤ 2.3× floor; 0 allocations |
+| Writer race (5c) | §3.13 harness | get, post1k, varied, h20 | both | design §16.4 statistic, ours@EW2/theirs@EW1, per runnable rival |
+| W-D (optional) | P1a criterion | post1k, h20 | both | kept only where faster than W-A |
+| W-B | P2 A/B | varied-delta, h20 | both | kept only if faster |
 | Branch claims | `perf stat` | 1k-h20, varied-256, post1k | x64 VM | instructions, branches, branch-misses per op |
 
 Every kept change goes to `docs/perf/journal.md` with numbers; anything not measured stays in `ideas.md`.
 
 ## 8. Decision table
 
-Ranked within each component by expected gain per risk. Every effect is an estimate until §7 runs.
+Ranked within each component by expected gain per risk. Correctness and gain are separate columns: correctness is
+verified as stated; **every gain is an unmeasured estimate** (only P-C's has a dev measurement) until §7 runs, and
+each task's first step is the measurement that turns it into a measured figure, with a drop rule.
 
-| Rank | Candidate | Component | Expected effect (estimate) | Risk | Build in |
-|---|---|---|---|---|---|
-| 1 | **P-A spans in the scan** (caller-owned `FieldSpans`) | parser | removes the second pass: vs httparse 0.83–0.99 (parity on 20-field cells), vs pico 0.71–0.84, vs llhttp 0.51–0.60 | none new | **Task 4c**, step 1 |
-| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | arm64: derived ≈ 0.4–0.6×, planned ≈ 0.6–0.8× httparse; x64 (no data): ≈ 0.6–0.9× httparse and pico, ≈ 0.4–0.6× llhttp | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, step 2 (kept only if faster) |
-| 3 | P-B padded window (fence) | parser | removes scalar tails; small | API change; fence rules (§5.3) | Task 4c option, measured; else P1a |
-| 4 | **P-D bit-stream validator** (6-bit state, line-start hand-off, scalar error re-run) | parser | ≈ 0.4–0.6× httparse, predictor-independent; closes any cell P-B leaves | `unsafe` only in `engine-simd` kernels; acceptance-only fast path | **P1a** (lead) |
-| 5 | P-C stage-1 + `tzcnt` walk | parser | measured 0.42–0.55× on varied heads (dev) | simpler than P-D | P1a (A/B baseline for P-D) |
-| 1 | **W-A shared classifier + STOP search + authority id** | writer | `post1k` ≈ 1.9–2.1× floor | low | **Task 5b** |
-| 2 | **W-B layout hints, tiled folds** | writer | `post1k` ≈ 1.6–1.8× floor | P2 wire-format change; hints untrusted | **Task 5b** if the P2 change is accepted; else P2 |
-| 3 | W-C interned name ids | writer | known names cost ≈ 0 | generated table; JS/Rust drift | P2 |
-| 4 | W-D SIMD writer-form validator with per-line classification (+ optional fused copy) | writer | ≈ 17–20 ns at 100 B, ≈ 55–70 ns at 400 B: pays only on large deltas | `unsafe` only in `engine-simd`; `out.clear()` on errors | **P1a**, kept only where faster |
-| — | Task 5c cross-language writer race (+ bootstrap CI in the shared runner) | writer | the "every writer" evidence | curl micro row time-boxed | **Task 5c** (after 5b) |
-| — | fasthttp + nginx parser rows; bootstrap CI in `bench/parsers` | parser race | the "every parser" evidence | none | **Task 4c** |
+| Rank | Candidate | Component | Correctness: verified by … | Gain (unmeasured estimate unless marked) | Risk | Build in |
+|---|---|---|---|---|---|---|
+| 1 | **P-A spans in the scan** (caller-owned `FieldSpans`) | parser | spans come from bytes G already validates; span tests (§5.1) | removes the second pass: vs httparse 0.85–1.03 (a 0–3% loss on 20-field cells), vs pico 0.73–0.88, vs llhttp 0.53–0.63 | none new | **Task 4c** |
+| 2 | **P-B line kernel** (locals, resumable mid-line, STOP search + tchar fold, masked `u64` prefix, shared classifier) | parser | review docs-review-1: exhaustive and mutated inputs vs an RFC reference (no Rust yet); differential fuzz vs G planned | arm64 ≈ 0.4–0.85× httparse (§5.3); x64 no data | equivalence with G (fuzz), clippy rule 9 | **Task 4c**, each change kept only if faster |
+| 3 | P-B padded window (fence) | parser | rules in §5.3; not tested yet | removes scalar tails; small | API change; fence rules (§5.3) | Task 4c option, measured; else P1a |
+| 4 | **P-D bit-stream validator** (6-bit state, line-start hand-off, scalar error re-run) | parser | the model (core equations, carries, line ownership; limits in §4.1) and the review's independent tests | unknown until prototyped; derived ≈ 0.6–1.0 cycles per byte on arm64 (§5.5) | `unsafe` only in `engine-simd` kernels; acceptance-only fast path | **P1a** prototype; lead chosen from data |
+| 5 | P-C stage-1 + `tzcnt` walk | parser | prototype differential + Miri (SIMD note §5) | **measured** (dev, SIMD note §4): 0.42–0.55× on varied heads, 0.88–1.04× on a repeated head | simpler than P-D | **P1a** prototype |
+| 1 | **W-A shared classifier + STOP search** | writer | classification tests vs today's `classify` (§6.1) | `post1k` ≈ 2.15–2.7× floor (straddles 2.3×, §6.2) | low | **Task 5b** |
+| 2 | **W-B layout hints, tiled folds** | writer | the review's tests; the model misses two checks (§4.1) | on varied deltas only; no `post1k` figure | P2 wire-format change; hints untrusted | **P2** |
+| 3 | W-C interned name ids | writer | — | known names cost ≈ 0 | generated table; JS/Rust drift | P2 |
+| 4 | W-D SIMD writer-form validator with per-line classification (+ optional fused copy) | writer | the model and the review's tests (colon-carry sweep owed, §6.5) | ≈ 17–35 ns at 100 B, ≈ 55–120 ns at 400 B: can pay only on large deltas | `unsafe` only in `engine-simd`; `out.clear()` on errors | **P1a**, optional, behind a measurement |
+| — | Task 5c cross-language writer race (reuses `pairedRatioCi`) | writer | check mode + injection table (§3.13) | the "every writer" evidence | curl micro row time-boxed | **Task 5c** |
+| — | fasthttp + nginx parser rows; `pairedRatioCi` in `bench/parsers` | parser race | differential gate of the bench | the "every parser" evidence | none | **Task 4c** |
 
-**What each task builds:**
-- **Task 4c (parser, scalar, P0):** P-A, then P-B, each kept only if faster in the A/B; the bootstrap CI in
-  `bench/parsers/stats.ts`; the `varied-256` ring; the fasthttp and nginx rows; the survey of the Jetty/JDK/.NET
-  response parsers (§10); span tests (§5.1). Acceptance: §5.7 (misses reported with data, closed in P1a).
-- **Task 5b (writer, P0):** W-A (with Task 6 for the authority id), and W-B if the P2 contract change is accepted;
-  `post1k` ≤ 2.3× floor. W-D is not part of 5b.
-- **Task 5c:** the writer race (§3.13), replacing `bench/writer/`.
-- **P1a (SIMD):** `engine-simd` `Classifier`/`BlockMasks` (NEON; SSSE3/AVX2; scalar), the class tables moved into
-  `engine-simd`, P-D for the parser (P-C as its A/B baseline), W-D where it pays.
+**What each task builds** (steps, order and acceptance: the plan sections "Task 4c", "Task 4d", "Task 5b", "Task 5c"
+and "P1a entry conditions recorded in P0"; this note does not repeat them):
+- **Task 4c (parser, scalar, P0; runs before Task 6 because it changes `parse`):** first the profile of plain G and
+  `pairedRatioCi` + the `varied-256` ring; then P-A and each P-B change, each dropped unless faster in the A/B; the
+  fasthttp and nginx rows; the survey of the Jetty/JDK/.NET response parsers (§10); span tests (§5.1). Acceptance:
+  §5.7 (open cells expected and reported with data; not a failure of 4c). Task 4d runs mutation testing on the merged
+  parser.
+- **Task 5b (writer, P0):** first the fixed floor measurement (§6 intro); then W-A without the authority id (Task 6),
+  dropped unless faster; `post1k` ≤ 2.3× floor. W-B is P2; W-D is P1a.
+- **Task 5c:** the writer race (§3.13), replacing `bench/writer/`; it evaluates "every rival@EW1 beaten".
+- **P1a (SIMD):** first the prototype comparison (P-D stage 1 + validator, P-C, scalar; fixed `1k-h20` and the
+  varied ring; both arches) that chooses the lead, the x64 runtime-dispatch design, Miri for the kernels, the
+  padded-window API; then `engine-simd` `Classifier`/`BlockMasks` (NEON; SSSE3/AVX2; scalar), the class tables moved
+  into `engine-simd`, the chosen parser path, W-D only if measured faster, and the §4.1 required tests (issue #24).
 
 ## 9. Sources
 
@@ -1422,7 +1559,8 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
 
 | # | Source | Link | Status |
 |---|---|---|---|
-| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 | https://doi.org/10.1145/2628071.2628079 ; https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf | verified (primary text: MatchStar, ScanThru, long-stream addition, 1–4 cycles per byte) |
+| 1 | Cameron, Shermer, Shriraman, Herdy, Lin, Hull, Lin, *Bitwise Data Parallelism in Regular Expression Matching*, PACT 2014, pp. 139–150 | https://doi.org/10.1145/2628071.2628079 ; https://www2.cs.sfu.ca/~ashriram/papers/2014_PACT_GREP.pdf | verified (primary text: MatchStar, the MatchStar-vs-ScanThru sentence, long-stream addition, 0.95/1.22/1.6 cycles per byte on SSE2 and 0.63 on AVX2); the ScanThru formula is not in it (#1a) |
+| 1a | Cameron et al., *Parallel Scanning with Bitstream Addition: An XML Case Study*, Euro-Par 2011, pp. 2–13 (source of `ScanThru(M, C) = (M + C) ∧ ¬C`) | cited in #1's reference list | unverified (text not fetched); the formula is exercised by the model and the review's independent tests |
 | 2 | Mytkowicz, Musuvathi, Schulte, *Data-Parallel Finite-State Machines*, ASPLOS 2014, pp. 529–542 | https://doi.org/10.1145/2541940.2541988 (cited as [11] in #1; PDF read by the papers survey) | verified (primary text: abstract and shuffle mechanism) |
 | 3 | Langdale, Lemire, *Parsing Gigabytes of JSON per Second*, VLDB Journal 28(6), 2019 | https://arxiv.org/abs/1902.08318 | verified (SIMD note) |
 | 4 | simdjson `v5.1.1`: `include/simdjson/haswell/bitmask.h`, `include/simdjson/arm64/bitmask.h`, `src/generic/stage1/json_structural_indexer.h` | https://github.com/simdjson/simdjson/tree/40a686ab89dc5ee58ec10d0514dd5c99abbc472b | verified (source) |
@@ -1434,8 +1572,8 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
 | 10 | uops.info `PCMPESTRI`, `PSHUFB`, `PMOVMSKB` | https://uops.info/html-instr/PCMPESTRI_XMM_XMM_I8.html | verified (SIMD note) |
 | 11 | Rust 1.99.1: `u64::carrying_add` (stable since 1.91.0), `slice::as_chunks`, `Vec::set_len` (`unsafe`), `Vec::spare_capacity_mut` | https://doc.rust-lang.org/1.99.1/std/primitive.u64.html#method.carrying_add ; https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.as_chunks ; https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.set_len ; https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.spare_capacity_mut | verified (docs; `carrying_add` also by compile under `forbid(unsafe_code)`) |
 | 12 | Rust Reference 1.99.1, code generation attributes (`target_feature`) | https://doc.rust-lang.org/1.99.1/reference/attributes/codegen.html | verified (SIMD note) |
-| 13 | Compile-only asm check | `tools/h1-research/asmcheck` (commands in its `Cargo.toml`) | verified (run 2026-11-08) |
-| 14 | Executable model of P-D and W-D | `tools/h1-research/scanthru_model.py` (seed 9112; output in §4.1) | verified (run 2026-11-08) |
+| 13 | Compile-only asm check | `tools/h1-research/asmcheck` (commands in its `Cargo.toml`) | run 2026-11-08 (compile-only, not re-run by the review; scope in §5.0) |
+| 14 | Executable model of P-D and W-D | `tools/h1-research/scanthru_model.py` (seed 9112; output in §4.1) | run 2026-11-08/09; tests the core equations, carries and line ownership; coverage limits in §4.1; removed in P1a (issue #24) |
 | 15 | Quiet parser race, 2026-11-08 | branch `p0/parser-bench-rerun` (PR #21), `docs/notes/response-parser.md` §8.6, `bench/results/2026-11-08-arm64-dev-parsers-gcc14.jsonl` | verified (recorded run; dev numbers) |
 | 16 | Prior art: Kourier, hparse, xocomil, simdzone | https://kourier-server.github.io ; https://github.com/floatdrop/hparse ; https://docs.rs/crate/xocomil/0.3.0 ; https://github.com/NLnetLabs/simdzone | unverified (not read) |
 | 17 | Every parser and writer of §1 | §1 link bases | verified (source at the pins) |
@@ -1447,14 +1585,15 @@ All accessed 2026-11-08. Source code: verified at the commits of §1 (file and l
   by PR #20) — Task 4c research step; race rows only if one is plausibly faster than httparse.
 - The writer EW1 hyper row and the Netty/Jetty JMH rows — Task 5c.
 - JS-side cost of W-B hints and the `Uint16Array` span hand-off — P2.
-- Design §16 parser and writer micro-gate rows (§0.3 item 5) — the Task 4c / 5c docs PRs.
+- The micro-gate statistic now lives in design §16.4 (component micro-gates); `pairedRatioCi` — Task 4c.
 
 **Hand-offs to other branches (not editable here):**
 - `request-writer.md` L77, L94, L119 (branch `p0/writer`): curl does not cut custom headers at a newline (§3 intro)
   — Task 5 fix list.
-- `docs/superpowers/plans/2026-11-06-p0-foundations.md` L344 and `response-parser.md` L320 — owner **Task 4c**
-  (updated when §5.1's caller-owned spans land); `request-writer.md` §8.4 — owner **Task 5c** (updated when the
-  writer race replaces `bench/writer/`).
+- The plan's Task 4 `parse` signature and `response-parser.md` L320 — owner plan section **"Task 4c"** (updated when
+  §5.1's caller-owned spans land); `request-writer.md` §8.4 — owner plan section **"Task 5c"** (updated when the
+  writer race replaces `bench/writer/`); `response-parser.md`'s ≤ 0.85× httparse line — superseded by design §16.4
+  (fixed in a later PR).
 - `response-parser.md` §8.6 on `milestone/p0` still shows the noisy 2026-11-07 table; PR #21 replaces it.
 
 **Pre-existing issues found by the review, fixed on this branch:** `bench/parsers/README.md` and

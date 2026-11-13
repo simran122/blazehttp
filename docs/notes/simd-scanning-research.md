@@ -27,7 +27,8 @@ What wins is the **simdjson / Cloudflare two-stage shape**: classify the head in
 `trailing_zeros` (stage 2, a 1–3-cycle scalar chain per span). Prototype: **222 ns vs 527 ns (0.42×) on varied
 heads, 194 vs 186 ns (1.04×) on one repeated head; a lazy per-block variant is 163 ns (0.88×) on the repeated head
 and 288 ns on varied heads.** Cloudflare reached the same conclusion for picohttpparser in 2014: a single-match AVX2
-scan "gave no gain because HTTP fields are short"; 128-byte bitmaps walked with `tzcnt` gave 1.68–1.79× (§3.6).
+scan gave no gain because HTTP fields are short (paraphrase); 128-byte bitmaps walked with `tzcnt` gave 1.68–1.79×
+(§3.6).
 
 A second finding changes how we benchmark: a micro-benchmark that parses **one head over and over** lets the
 branch predictor memorise every loop exit. The same scalar parser takes 186 ns on a repeated head and 436–585 ns
@@ -106,7 +107,8 @@ Each entry: source → mechanism → cost → fit for short HTTP spans → safe 
   x86 but needs SSSE3; range compares are preferred.
 
 ### 3.3 Bitmask extraction on NEON ("movemask" emulation)
-- **Sources:** Kutenin, *Porting x86 vector bitmask optimizations to Arm NEON*, Arm community blog, 2022-08-29
+- **Sources:** Kutenin, *Bit twiddling with Arm Neon: beating SSE movemasks, counting bits and more*, Arm community
+  blog, 2022-08-29 (the URL slug reads "porting x86 vector bitmask optimizations to arm neon")
   ([link](https://developer.arm.com/community/arm-community-blogs/b/servers-and-cloud-computing-blog/posts/porting-x86-vector-bitmask-optimizations-to-arm-neon));
   `memchr` 2.8.3 `src/vector.rs` (`NeonMoveMask`, verified); Lemire, *Scanning HTML at Tens of Gigabytes per Second
   on ARM Processors*, arXiv 2503.01662, 2025 ([HTML](https://arxiv.org/html/2503.01662)).
@@ -151,8 +153,9 @@ Each entry: source → mechanism → cost → fit for short HTTP spans → safe 
   ([basics.md](https://raw.githubusercontent.com/simdjson/simdjson/40a686ab89dc5ee58ec10d0514dd5c99abbc472b/doc/basics.md), verified).
 - **Cloudflare, *Improving PicoHTTPParser further with AVX2*, V. Krasnov, 2014-12-18 (verified text,
   [link](https://blog.cloudflare.com/improving-picohttpparser-further-with-avx2/)):** a single-match AVX2 version
-  "gave no throughput gain because HTTP fields are short"; the fix built **bitmaps for 128 bytes at a time** for
-  the name/value delimiter and newline together and walked them with `tzcnt`: 1.79× / 1.68× over `pcmpestri` on
+  gave no throughput gain because the fields of an HTTP request are usually short (paraphrase); the fix built
+  **bitmaps for 128 bytes at a time** for the name/value delimiter and newline together and walked them with
+  `tzcnt`: 1.79× / 1.68× over `pcmpestri` on
   Haswell (unverified for us; their workload, 2014 hardware).
 - **For us:** stage 1 = per 64-byte block, two masks: `not_tchar` and `not_field_content` (the latter also marks
   CR, LF, NUL, DEL; LF is in it, so chunk-size line ends come for free). Stage 2 = the existing parser loop with
@@ -378,7 +381,7 @@ None of this is required for P0; the P0 design is sound. Each item is cheap and 
 | 5 | Wang et al., *Hyperscan*, NSDI 2019 | https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf | 2026-11-06 | verified (text §4–5); Teddy/shufti names from source, not paper |
 | 6 | Lemire, *Scanning HTML at Tens of Gigabytes per Second on ARM Processors*, 2025 | https://arxiv.org/html/2503.01662 | 2026-11-06 | verified (text); speed numbers unverified for us |
 | 7 | Nizipli, Lemire, *Parsing Millions of URLs per Second*, SPE 54(5), 2024 | https://arxiv.org/abs/2311.10533 | 2026-11-06 | abstract only |
-| 8 | Kutenin, *Porting x86 vector bitmask optimizations to Arm NEON*, 2022-08-29 | https://developer.arm.com/community/arm-community-blogs/b/servers-and-cloud-computing-blog/posts/porting-x86-vector-bitmask-optimizations-to-arm-neon | 2026-11-06 | verified (text); % gains unverified for us |
+| 8 | Kutenin, *Bit twiddling with Arm Neon: beating SSE movemasks, counting bits and more*, 2022-08-29 | https://developer.arm.com/community/arm-community-blogs/b/servers-and-cloud-computing-blog/posts/porting-x86-vector-bitmask-optimizations-to-arm-neon | 2026-11-06 | verified (text); % gains unverified for us |
 | 9 | Krasnov (Cloudflare), *Improving PicoHTTPParser further with AVX2*, 2014-12-18 | https://blog.cloudflare.com/improving-picohttpparser-further-with-avx2/ | 2026-11-06 | verified (text); 1.68–1.79× unverified for us |
 | 10 | httparse 1.10.1 `src/simd/{neon,avx2,sse42,swar,runtime,mod}.rs` | https://github.com/seanmonstar/httparse/tree/9f29e79f9832dbd0ae5220acb17c1866745bdecd/src/simd | 2026-11-06 | verified (source) |
 | 11 | memchr 2.8.3 `src/vector.rs`, `src/arch/x86_64/memchr.rs`, `src/arch/generic/memchr.rs` | https://docs.rs/crate/memchr/2.8.3/source/ | 2026-11-06 | verified (source) |
