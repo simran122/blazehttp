@@ -86,8 +86,8 @@ These apply to every task from Task 4 on and override anything above that confli
   1. Research note: reviewed before code for engine tasks, committed before code for infrastructure tasks.
   2. TDD, with coverage ≥ 90% for Rust and ≥ 95% for TypeScript.
   3. Test cases ported from other libraries at their latest published release, with notices.
-  4. Fuzzing plus a differential check against another library, for anything that parses or builds bytes.
-  5. Mutation testing (`cargo-mutants`; Stryker for TypeScript where useful): every surviving mutant is killed by a new test or listed as equivalent with a one-line proof.
+  4. Fuzzing plus a differential check against another library, for anything that parses or builds bytes. The run is in CI ("Resource limits").
+  5. Mutation testing (`cargo-mutants`; Stryker for TypeScript where useful), run in CI ("Resource limits"): every surviving mutant is killed by a new test or listed as equivalent with a one-line proof.
   6. For anything speed-related: a benchmark against the best existing libraries, recorded in `docs/perf/journal.md`, with no regression against the previous version.
   7. The reviewers of "Review setup", one fix round, and verification passes until one is clean.
   8. CI green.
@@ -106,6 +106,7 @@ These apply to every task from Task 4 on and override anything above that confli
   - Fuzzing, mutation testing, load tests, benchmarks and any test over about 30 s or 10,000 cases run **one at a time in a capped container**: `docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, with the source mounted read-only and copied inside. Check `docker ps` first: never two such jobs at once. One benchmark run's own containers (its server and its clients, labelled `blazehttp-bench`) count as one job; this reading of the owner's rule is listed under "Owner decisions needed". cargo-mutants runs with `--jobs 1`, at most 2 test threads and a timeout of about 20 s. libFuzzer gets `-rss_limit_mb=1536` **[author's call: below the container's 2 GiB, so libFuzzer stops by itself and writes the reproducer before the kernel kills the container; 2048 is libFuzzer's default and equals the container limit]**. Without Docker the job is skipped and reported as "not run (resource policy)".
   - Test stubs, buffers and collectors have a size cap (for example 64 MiB) and fail fast, so a runaway mutant fails in milliseconds.
   - A step in this plan that runs such a job "locally" or on the host runs it in the capped container. That covers Task 4 Step 7 (fuzzing), Task 6 `each_key_completes_exactly_once` (10,000 requests) and Task 18 `pending-cost.ts` (100,000 pending requests).
+  - **Mutation testing and fuzzing run in GitHub Actions CI (owner decision 2026-11-13).** A separate PR adds the workflow. From its merge on, a step of this plan that runs cargo-mutants or a fuzz target "in the capped container" is done by the CI run, and the evidence the step asks for (for cargo-mutants the `mutants.out/` files, for a fuzz run its log and any reproducer) comes from that run's artefacts. The capped container stays as the local fallback, under the rules above: before the workflow exists, to reproduce a CI finding, and when CI is not available.
   - Every benchmark container carries `--memory` and `--memory-swap`: 2 GiB for a server or a client, 128 MiB for the G2 memory cells (the design's G2 container size, §16.3). The G0 server's 4 CPUs (Task 10) are the one exception to `--cpus=1`. It follows from the owner's benchmark-host decision (§16.1, §21) and is used only on a quiet machine; the owner's confirmation of this exception is listed under "Owner decisions needed".
   - **Quiet machine for every benchmark (owner, 2026-11-13).** An agent never starts a benchmark, dev runs included, while other agents may be running. It commits, pushes, writes its checkpoint and replies "ready for benchmark". The controller stops the other agents, checks the load, `docker ps` and peer sessions, runs the benchmark alone, and resumes them.
 - **Upstream test vectors** come from the latest published, non-prerelease release **source** tag, and the exact commit is recorded in each vector file.
@@ -168,7 +169,7 @@ docs/notes/  docs/perf/ideas.md  docs/perf/journal.md  docs/reports/p0.md
 | Research notes: SIMD scanning, H1 speed | merged | #11, #22 |
 | Process and design changes | merged | #8, #9, #12, #17, #19, #20 |
 | 5 `RequestWriter` | open, in review | #18 |
-| 9 bench-server | open, in review | #13 |
+| 9 bench-server | merged | #13 |
 | Documentation review fixes | open. #25 (plan, design) and #26 (research notes) merge together: this plan cites note text that #26 adds (§4.1 "Coverage limits", §5.7, the W-A estimate of §6.2) | #25, #26 |
 | 4c, 4d, 5b, 5c, 6–8, 10–20, 15a | not started | — |
 

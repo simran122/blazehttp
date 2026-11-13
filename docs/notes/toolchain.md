@@ -13,6 +13,8 @@
   gets `-rss_limit_mb=1536`, below the container's 2 GiB, so that it stops by itself and writes the reproducer before
   the kernel kills the container (2048 is libFuzzer's default and equals the container limit); cargo-mutants runs
   with one job, at most 2 test threads and a test timeout of about 20 s.
-  The fuzz command above is the command inside that container.
+  The fuzz command above is the command inside that container. By owner decision (2026-11-13) mutation testing and
+  fuzzing move to GitHub Actions CI; a separate PR adds the workflow, and the capped container then stays as the
+  local fallback (plan "Process rules", resource limits).
 - **cargo-mutants:** no version is pinned yet. P0 Task 4d records the version it uses here when it first runs the
   mutation pass.
