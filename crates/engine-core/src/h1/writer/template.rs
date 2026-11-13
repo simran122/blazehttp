@@ -2,17 +2,14 @@
 //! pre-encoded and validated once on the control plane, bound to the authority they were built for.
 
 use core::fmt;
-use core::net::Ipv6Addr;
 
 use super::fields::scan_fields;
-use crate::generated::spec::{EngineDetail, ErrorCode, H1_LIMITS};
-use crate::h1::{HEADERS_TOO_LARGE, INTERNAL};
+use super::host::validate_host;
+use super::{CRLF, RESOURCE_EXHAUSTED};
+use crate::generated::spec::{ErrorCode, H1_LIMITS};
+use crate::h1::HEADERS_TOO_LARGE;
 
-const RESOURCE_EXHAUSTED: ErrorCode = ErrorCode::Engine(EngineDetail::ResourceExhausted);
 const HOST_PREFIX: &[u8] = b"host: ";
-const CRLF: &[u8] = b"\r\n";
-const MAX_PORT: u32 = 65_535;
-const MAX_PORT_DIGITS: usize = 5;
 
 /// Pre-encoded `host: <authority>\r\n` + default fields, validated once on the control plane (note §6.2).
 ///
@@ -109,61 +106,4 @@ impl fmt::Debug for HeaderTemplate {
             .field("sensitive", &self.sensitive)
             .finish_non_exhaustive()
     }
-}
-
-/// `host = ( "[" IPv6address "]" / reg-name ) [ ":" port ]` as WHATWG serialises it (note §6.2): the IPv6 literal
-/// must parse as an [`Ipv6Addr`] (no zone id, no IPv4 literal in brackets); a reg-name or IPv4 address is lowercase
-/// `unreserved` / `sub-delims` without `%`, with no empty label (a trailing dot is allowed); the port is 1–65535
-/// without a leading zero (WHATWG omits default ports and never pads).
-fn validate_host(host: &[u8]) -> Result<(), ErrorCode> {
-    let name_len = host_name_len(host).ok_or(INTERNAL)?;
-    let (_, port) = host.split_at_checked(name_len).ok_or(INTERNAL)?;
-    if port.is_empty() || is_port(port) {
-        Ok(())
-    } else {
-        Err(INTERNAL)
-    }
-}
-
-/// Length of the valid bracketed IPv6 literal or reg-name at the start of `host`; `None` when there is none.
-fn host_name_len(host: &[u8]) -> Option<usize> {
-    if let Some(rest) = host.strip_prefix(b"[") {
-        let close = rest.iter().position(|&b| b == b']')?;
-        let literal = core::str::from_utf8(rest.get(..close)?).ok()?;
-        // `[` + literal + `]`; close < host.len().
-        return literal
-            .parse::<Ipv6Addr>()
-            .is_ok()
-            .then(|| close.wrapping_add(2));
-    }
-    let len = host.iter().take_while(|&&b| is_reg_name_byte(b)).count();
-    let name = host.get(..len)?;
-    // One trailing dot (a fully qualified name) is allowed; no other label may be empty.
-    let labels = name
-        .strip_suffix(b".")
-        .filter(|rest| !rest.is_empty())
-        .unwrap_or(name);
-    let labels_ok = labels.split(|&b| b == b'.').all(|label| !label.is_empty());
-    labels_ok.then_some(len)
-}
-
-/// RFC 3986 `unreserved` and `sub-delims` without `%`, lowercase only.
-fn is_reg_name_byte(b: u8) -> bool {
-    b.is_ascii_lowercase() || b.is_ascii_digit() || b"-._~!$&'()*+,;=".contains(&b)
-}
-
-/// `":" 1*5DIGIT`, no leading zero, value ≤ 65535.
-fn is_port(port: &[u8]) -> bool {
-    let Some(digits) = port.strip_prefix(b":") else {
-        return false;
-    };
-    let value = digits.iter().try_fold(0_u32, |n, &b| {
-        let digit = char::from(b).to_digit(10)?;
-        n.checked_mul(10)?.checked_add(digit)
-    });
-    let leading_zero = digits.first() == Some(&b'0');
-    !leading_zero
-        && !digits.is_empty()
-        && digits.len() <= MAX_PORT_DIGITS
-        && value.is_some_and(|v| v <= MAX_PORT)
 }

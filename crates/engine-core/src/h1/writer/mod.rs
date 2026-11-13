@@ -8,12 +8,15 @@
 //! per request is then a no-op.
 
 mod fields;
+mod host;
+mod target;
 mod template;
 
 use core::fmt;
 use std::fmt::NumBuffer;
 
 use fields::{CONTENT_TYPE, scan_fields};
+use target::validate_target;
 pub use template::HeaderTemplate;
 
 use crate::generated::spec::{EngineDetail, ErrorCode, H1_LIMITS, Method, TooLargeDetail};
@@ -22,6 +25,7 @@ use crate::h1::{HEADERS_TOO_LARGE, INTERNAL};
 const RESOURCE_EXHAUSTED: ErrorCode = ErrorCode::Engine(EngineDetail::ResourceExhausted);
 const URL_TOO_LARGE: ErrorCode = ErrorCode::TooLarge(TooLargeDetail::Url);
 
+/// Shared with `fields.rs` and `template.rs`.
 const CRLF: &[u8] = b"\r\n";
 const SP: &[u8] = b" ";
 const VERSION_SUFFIX: &[u8] = b" HTTP/1.1\r\n";
@@ -56,7 +60,7 @@ pub const MAX_P0_REQUEST_BYTES: usize = LONGEST_METHOD
 /// 1); [`write_request`] validates every field.
 pub struct RequestParts<'a> {
     pub method: Method,
-    /// Origin-form target: `/` first, visible ASCII except `#`, `"`, `<`, `>`, and no `\` before the query.
+    /// Origin-form target: `/` first, then only bytes WHATWG emits in that component (note §6.3, `target.rs`).
     pub target: &'a [u8],
     /// Per-request fields `("name: value\r\n")*`, latin1 bytes.
     pub headers: &'a [u8],
@@ -108,7 +112,8 @@ pub enum Reuse {
 /// 7. `Engine(Internal)`: a malformed header line, a forbidden name, a repeated singleton (template included), a
 ///    line count other than `header_lines`, or `OPTIONS` content without a `content-type`;
 /// 8. `Engine(ResourceExhausted)`: the buffer cannot grow to the request's length.
-// Measured: inlining into the caller's loop takes 16–50% less time (docs/perf/journal.md, 2026-11-08).
+// Measured: inlining into the caller's loop takes ≈ 35% (`get`), ≈ 9% (`post1k`) and ≈ 5–12% (`varied`) less time,
+// by writer/floor ratio (docs/perf/journal.md, 2026-11-08).
 #[inline]
 pub fn write_request(
     out: &mut Vec<u8>,
@@ -242,36 +247,6 @@ fn framing(method: Method, body_len: usize) -> Result<RequestFraming, ErrorCode>
             content_length: false,
             close: false,
         }),
-    }
-}
-
-/// Origin-form (note §6.3): `/` first, then only visible ASCII (0x21–0x7E) other than `#` (a fragment), `"`, `<`
-/// and `>` (WHATWG always percent-encodes them), and no `\` before the first `?` (some servers read `/\x` as `//x`).
-/// The byte check is one branch-free fold with no loop-carried state, so it vectorises; the backslash rule is a
-/// separate search, only done when the target holds a backslash.
-#[expect(
-    clippy::needless_bitwise_bool,
-    reason = "`&` keeps the fold branch-free so it vectorises (note §6.3); every operand is a cheap comparison"
-)]
-fn validate_target(target: &[u8]) -> Result<(), ErrorCode> {
-    let origin_form = target.first() == Some(&b'/');
-    let visible = target.iter().fold(true, |ok, &b| {
-        ok & b.is_ascii_graphic() & (b != b'#') & (b != b'"') & (b != b'<') & (b != b'>')
-    });
-    // `contains` is a fast search; the path is located only when a backslash exists at all (rare).
-    let path_backslash = target.contains(&b'\\') && {
-        let path_end = target
-            .iter()
-            .position(|&b| b == b'?')
-            .unwrap_or(target.len());
-        target
-            .get(..path_end)
-            .is_some_and(|path| path.contains(&b'\\'))
-    };
-    if origin_form & visible & !path_backslash {
-        Ok(())
-    } else {
-        Err(INTERNAL)
     }
 }
 

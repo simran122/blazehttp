@@ -3,11 +3,11 @@
 //! names and compares the line count with the count the JS layer serialised. Used for the template's default fields
 //! (once) and for every request's delta.
 
+use super::CRLF;
 use crate::generated::spec::ErrorCode;
 use crate::h1::INTERNAL;
 use crate::h1::grammar::{token_len, value_len};
 
-const CRLF: &[u8] = b"\r\n";
 const FIELD_SEPARATOR: &[u8] = b": ";
 /// Every `proxy-` field is forbidden (Fetch's forbidden prefix): proxy credentials and hop-by-hop proxy fields only
 /// ever come from the proxy configuration (P1b).

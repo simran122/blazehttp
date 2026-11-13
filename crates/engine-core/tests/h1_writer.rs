@@ -371,7 +371,7 @@ fn rejects_template_for_other_authority() {
     assert!(write_request(&mut out, &request, &template, b"example.com:8080").is_ok());
 }
 
-const INVALID_HOSTS: [&[u8]; 35] = [
+const INVALID_HOSTS: [&[u8]; 41] = [
     b"",
     b"a b",
     b"a/b",
@@ -407,6 +407,14 @@ const INVALID_HOSTS: [&[u8]; 35] = [
     b"a:00080",
     b"a:0",
     b"a:080",
+    // IPv6 literals WHATWG never serialises this way (note §6.2): upper-case hex, leading zeros, no compression, a
+    // dotted IPv4 tail, a run of one zero compressed, and a shorter run compressed before the longest.
+    b"[2001:DB8::A]",
+    b"[0001:0db8::0001]",
+    b"[0:0:0:0:0:0:0:1]",
+    b"[::ffff:1.2.3.4]",
+    b"[1::2:3:4:5:6:7]",
+    b"[1::2:0:0:0:3]",
 ];
 
 #[test]
@@ -421,11 +429,15 @@ fn template_rejects_invalid_host() {
     }
 }
 
-const VALID_HOSTS: [&[u8]; 9] = [
+const VALID_HOSTS: [&[u8]; 13] = [
     b"example.com",
     b"127.0.0.1:3999",
     b"[::1]:8080",
-    b"[::ffff:1.2.3.4]",
+    b"[::ffff:102:304]",
+    b"[2001:db8::a]",
+    b"[1:0:2:3:4:5:6:7]",
+    b"[1:0:0:2::3]",
+    b"[::]",
     b"xn--bcher-kva.example",
     b"a,b.example",
     b"a:1",
@@ -696,8 +708,8 @@ fn accepts_obs_text_htab_ows_and_empty_values() {
 
 // ---------------------------------------------------------------- target (§6.3)
 
-/// Targets that are not origin-form as note §6.3 defines it.
-const INVALID_TARGETS: [&[u8]; 15] = [
+/// Targets that are not origin-form as note §6.3 defines it: bytes WHATWG never emits in the component they sit in.
+const INVALID_TARGETS: [&[u8]; 21] = [
     b"http://evil/",
     b"*",
     b"?x",
@@ -710,18 +722,29 @@ const INVALID_TARGETS: [&[u8]; 15] = [
     b"/a\"b",
     b"/a<b",
     b"/a>b",
+    b"/a?q=\"",
+    // Path only: WHATWG turns `\` into `/` and percent-encodes `^`, `` ` ``, `{` and `}`.
     b"/a\\b",
     b"/\\evil.example",
-    b"/a?q=\"",
+    b"/a^b",
+    b"/a`b",
+    b"/a{b",
+    b"/a}b?c",
+    // Query only: WHATWG percent-encodes `'` in the query of special URLs.
+    b"/a?b'c",
+    b"/a?b=c&d='",
 ];
-/// Origin-form targets, including `//` (note §6.3 decision), percent-encoded data and raw query bytes WHATWG keeps.
-const VALID_TARGETS: [&[u8]; 5] = [
+/// Origin-form targets: `//`, dot segments and `%` sequences are the caller's (note §6.3); the bytes WHATWG keeps raw
+/// in each component.
+const VALID_TARGETS: [&[u8]; 7] = [
     b"//evil.example/x",
     b"/",
-    b"/a%0d%0a?b=c&d=~!$'()*+,;=:@",
+    b"/../a/%zz",
+    b"/a%0d%0a'|[]?b=c&d=~!$()*+,;=:@/",
     b"/a?q=\\^`{|}",
-    // A second `?` stays inside the query, so the backslash after it is query data.
-    b"/a?x?\\y",
+    // A second `?` stays inside the query, so the bytes after it are query data.
+    b"/a?x?\\y{",
+    b"/~!$&'()*+,;=:@|[]%",
 ];
 
 #[test]

@@ -447,13 +447,27 @@ fn spec_reg_name(name: &[u8]) -> bool {
     !name.is_empty() && bytes_ok && labels_ok
 }
 
+/// The WHATWG serialisation of an IPv6 address, modelled on `Ipv6Addr`'s RFC 5952 `Display`, which equals it except
+/// for the dotted tail of IPv4-mapped addresses.
+fn whatwg_ipv6(address: std::net::Ipv6Addr) -> String {
+    match address.to_ipv4_mapped() {
+        Some(_) => {
+            let [.., high, low] = address.segments();
+            format!("::ffff:{high:x}:{low:x}")
+        }
+        None => address.to_string(),
+    }
+}
+
 fn spec_host(host: &[u8]) -> bool {
     let (name_ok, rest) = if host.first() == Some(&b'[') {
         match host.iter().position(|&b| b == b']') {
             Some(close) => {
                 let inner = std::str::from_utf8(&host[1..close]).unwrap_or("");
                 (
-                    inner.parse::<std::net::Ipv6Addr>().is_ok(),
+                    inner
+                        .parse::<std::net::Ipv6Addr>()
+                        .is_ok_and(|address| whatwg_ipv6(address) == inner),
                     &host[close + 1..],
                 )
             }
@@ -516,11 +530,13 @@ fn spec_target(target: &[u8]) -> bool {
         .iter()
         .position(|&b| b == b'?')
         .unwrap_or(target.len());
+    let (path, query) = target.split_at(path_end);
     target.first() == Some(&b'/')
         && target
             .iter()
             .all(|&b| (0x21..=0x7E).contains(&b) && !b"#\"<>".contains(&b))
-        && !target[..path_end].contains(&b'\\')
+        && !path.iter().any(|b| b"\\^`{}".contains(b))
+        && !query.contains(&b'\'')
 }
 
 /// `write_request`'s outcome per note §7 checks 1–7, given the template's singleton names.
@@ -695,15 +711,30 @@ fn check_field_counts(out: &[u8], head_len: usize, r: &Request) {
         }
     }
     for (name, _) in &fields[1..] {
-        let (canon, _) = canonical(name);
+        let (canon, underscore) = canonical(name);
         let generated = name == b"content-length" || name == b"connection";
         assert!(
             generated || !spec_forbidden(&canon),
             "forbidden field {}",
             name.escape_ascii()
         );
+        assert!(
+            !(underscore && SINGLETONS.contains(&canon.as_str())),
+            "underscore spelling of a singleton {}",
+            name.escape_ascii()
+        );
     }
-    assert!(SINGLETONS.iter().all(|s| count(s) <= 1));
+    // Every spelling counts towards its singleton: `Content-Type` and `content_type` are one field.
+    let spellings = |s: &str| {
+        fields
+            .iter()
+            .filter(|(name, _)| canonical(name).0 == s)
+            .count()
+    };
+    assert!(
+        SINGLETONS.iter().all(|s| spellings(s) <= 1),
+        "a singleton repeated"
+    );
 }
 
 fn check_accepted(out: &[u8], reuse: Reuse, r: &Request) {
