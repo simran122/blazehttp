@@ -543,7 +543,7 @@ pub fn parse(&mut self, buf: &[u8], spans: &mut FieldSpans) -> Result<ParseStatu
 ```
 
 ```ts
-// design §16.4 "Component micro-gates"; the only implementation, reused by Task 5c and the Task 10 harness
+// design §16.4 "Component micro-gates"; the only implementation, reused by Task 5c. The Task 10 harness does not use it
 export function pairedRatioCi(ours: readonly number[], theirs: readonly number[], o: { resamples: number; seed: number; confidence: number }): { point: number; lo: number; hi: number };
 ```
 
@@ -965,7 +965,7 @@ export function g0Verdict(blazeCpu: readonly number[], rivalCpu: readonly number
 // ratio = rival CPU µs / blaze CPU µs (higher = we are cheaper). engine-bound passes when ci.lo ≥ 1.0;
 // shared-limit passes when the ratio of medians is > 1.0 and ci.lo ≥ 0.97 (§16.4).
 export function g0CellVerdict(blazeCpu: readonly number[], rivals: ReadonlyMap<string, readonly number[]>, kind: 'engine-bound' | 'shared-limit'): { pass: boolean; failing: readonly string[] };
-// a cell passes only when g0Verdict passes against every rival; `pairedRatioCi` (Task 4c) is imported for component races, never re-implemented
+// a cell passes only when g0Verdict passes against every rival. `pairedRatioCi` (Task 4c) belongs to the component races: this harness neither imports nor re-implements it
 ```
 
 **Validity (decided here; defaults in `config.ts`, tuned by benchmark):**
