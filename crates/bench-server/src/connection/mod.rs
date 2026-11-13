@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::cells::{Refusal, Served, refusal, response_for};
-use crate::request::{Scan, scan};
+use crate::request::{Scan, Wants, scan};
 
 /// Read buffer per connection, which also bounds a request head (G6).
 const BUFFER_BYTES: usize = 16 * 1024;
@@ -28,8 +28,9 @@ const LINGER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Mode {
-    /// Answer requests. A request (head and declared body) must arrive, and each batch must be written, within
-    /// `request_timeout`; an idle connection with nothing buffered is not timed.
+    /// Answer requests. A request (head and declared body) must arrive within `request_timeout`, and each write or
+    /// flush call that does not complete at once must complete within it; an idle connection with nothing buffered is
+    /// not timed.
     Answer { request_timeout: Duration },
     /// Read everything, never write (the G2 stalled-server cell).
     Stall,
@@ -244,12 +245,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
     fn next_step(&mut self) -> Step {
         match scan(&self.buf[self.start..self.end], self.resume) {
             Scan::Complete(r) => {
-                let served = match r.refusal {
-                    Some(kind) => Served {
-                        bytes: refusal(kind),
+                let served = match r.wants {
+                    Wants::Target(line) => response_for(line.target, line.head_only, line.http10),
+                    // Answered at once; the connection closes once the declared body has been skipped.
+                    Wants::UnsupportedVersion => Served {
+                        bytes: refusal(Refusal::VersionNotSupported),
                         close: true,
                     },
-                    None => response_for(r.target, r.head_only, r.http10),
                 };
                 Step::Respond(Answer {
                     response: served.bytes,

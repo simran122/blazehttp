@@ -35,8 +35,9 @@ pub struct ServerConfig {
     pub stall: bool,
     /// Open connections per port; further clients wait in the listen backlog (G6).
     pub max_connections: usize,
-    /// Time allowed for a request (head and declared body) once its first byte arrived, for writing each batch of
-    /// responses, and for a TLS handshake. Not applied in stall mode, nor to an idle connection with nothing buffered.
+    /// Time allowed for a request (head and declared body) once its first byte arrived, for each write or flush call
+    /// that does not complete at once (a slow reader that keeps making progress is served), and for a TLS handshake.
+    /// Not applied in stall mode, nor to an idle connection with nothing buffered.
     pub request_timeout: Duration,
 }
 

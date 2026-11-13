@@ -10,21 +10,23 @@ const MAX_LEADING_EMPTY_LINES: usize = 8;
 /// A complete request head at the start of the scanned bytes.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Request<'a> {
-    /// The request target: the bytes between the first two spaces of the request line.
-    pub(crate) target: &'a [u8],
-    /// `HEAD`: answer with the response head only.
-    pub(crate) head_only: bool,
+    pub(crate) wants: Wants<'a>,
     /// Head bytes including leading empty lines and the blank line.
     pub(crate) head_len: usize,
     /// Request body bytes that follow the head (from `content-length`).
     pub(crate) body_len: u64,
     /// The client asked to close after this response (`Connection: close`, or HTTP/1.0 without keep-alive).
     pub(crate) close: bool,
-    /// An HTTP/1.0 request (it cannot receive a chunked response, RFC 9112 §6.1).
-    pub(crate) http10: bool,
-    /// The head parsed, but the request is refused (an unsupported HTTP major version): answer with this refusal
-    /// once the declared body is read, then close.
-    pub(crate) refusal: Option<Refusal>,
+}
+
+/// What a complete request asks for.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Wants<'a> {
+    /// The response for a request target.
+    Target(RequestLine<'a>),
+    /// Another HTTP major version: refused with 505. The head is still framed, so the body it declares is skipped
+    /// before the connection closes.
+    UnsupportedVersion,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,19 +41,14 @@ pub(crate) enum Scan<'a> {
 }
 
 /// The request line's parts this fixture uses.
-struct RequestLine<'a> {
-    target: &'a [u8],
-    head_only: bool,
-    http10: bool,
-}
-
-impl RequestLine<'_> {
-    /// Stands in for a request line whose version is refused: no target is looked up.
-    const REFUSED: RequestLine<'static> = RequestLine {
-        target: b"",
-        head_only: false,
-        http10: false,
-    };
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RequestLine<'a> {
+    /// The request target: the bytes between the first two spaces of the request line.
+    pub(crate) target: &'a [u8],
+    /// `HEAD`: answer with the response head only.
+    pub(crate) head_only: bool,
+    /// An HTTP/1.0 request (it cannot receive a chunked response, RFC 9112 §6.1).
+    pub(crate) http10: bool,
 }
 
 /// What the field lines say about framing and persistence.
@@ -84,21 +81,17 @@ pub(crate) fn scan(input: &[u8], resume: usize) -> Scan<'_> {
     let Some(fields) = fields(lines) else {
         return Scan::Refused(Refusal::BadRequest);
     };
-    let (line, refusal) = match line {
-        Ok(line) => (line, None),
-        Err(Refusal::VersionNotSupported) => {
-            (RequestLine::REFUSED, Some(Refusal::VersionNotSupported))
-        }
+    let wants = match line {
+        Ok(line) => Wants::Target(line),
+        Err(Refusal::VersionNotSupported) => Wants::UnsupportedVersion,
         Err(kind) => return Scan::Refused(kind),
     };
+    let http10 = matches!(wants, Wants::Target(RequestLine { http10: true, .. }));
     Scan::Complete(Request {
-        target: line.target,
-        head_only: line.head_only,
+        close: fields.close || (http10 && !fields.keep_alive),
+        wants,
         head_len: end + HEAD_END.len(),
         body_len: fields.body_len,
-        close: refusal.is_some() || fields.close || (line.http10 && !fields.keep_alive),
-        http10: line.http10,
-        refusal,
     })
 }
 
@@ -193,7 +186,7 @@ fn has_token(list: &[u8], token: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, Scan, scan};
+    use super::{Request, RequestLine, Scan, Wants, scan};
     use crate::cells::Refusal;
 
     /// Heads the scan refuses, one per rule in [`scan`]'s documentation.
@@ -224,13 +217,14 @@ mod tests {
 
     fn request(target: &[u8], head_len: usize) -> Request<'_> {
         Request {
-            target,
-            head_only: false,
+            wants: Wants::Target(RequestLine {
+                target,
+                head_only: false,
+                http10: false,
+            }),
             head_len,
             body_len: 0,
             close: false,
-            http10: false,
-            refusal: None,
         }
     }
 
@@ -270,7 +264,11 @@ mod tests {
     fn skips_leading_empty_lines() {
         let input = b"\r\n\r\nHEAD /1k HTTP/1.1\r\n\r\n";
         let expected = Request {
-            head_only: true,
+            wants: Wants::Target(RequestLine {
+                target: b"/1k",
+                head_only: true,
+                http10: false,
+            }),
             ..request(b"/1k", input.len())
         };
         assert_eq!(scan(input, 0), Scan::Complete(expected));
@@ -319,7 +317,11 @@ mod tests {
         let Scan::Complete(parsed) = scan(&http10, 0) else {
             panic!("HTTP/1.0 is complete")
         };
-        assert!(parsed.http10 && parsed.close);
+        assert!(parsed.close);
+        assert!(matches!(
+            parsed.wants,
+            Wants::Target(RequestLine { http10: true, .. })
+        ));
         let http12 = get("HTTP/1.2");
         assert_eq!(
             scan(&http12, 0),
@@ -330,12 +332,7 @@ mod tests {
             let Scan::Complete(refused) = scan(&input, 0) else {
                 panic!("{version}: the head parses")
             };
-            assert_eq!(
-                refused.refusal,
-                Some(Refusal::VersionNotSupported),
-                "{version}"
-            );
-            assert!(refused.close, "{version}");
+            assert_eq!(refused.wants, Wants::UnsupportedVersion, "{version}");
         }
     }
 }
