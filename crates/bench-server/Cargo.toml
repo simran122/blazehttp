@@ -1,0 +1,26 @@
+[package]
+name = "bench-server"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Crates are justified in docs/notes/bench-server.md §3. TLS is pinned to ring and TLS 1.3 (note §1).
+[dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["pem", "ring"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
+
+[target.'cfg(unix)'.dependencies]
+# errno values for classifying transient accept errors.
+libc = "0.2.191"
+
+[dev-dependencies]
+# Decodes the committed gzip fixture in tests; start-up never compresses.
+flate2 = "1.1.11"
+# `process` runs the binary in the `--cert-out` test; `test-util` pauses the clock so connection tests that wait on a
+# timeout finish at once in virtual time.
+tokio = { version = "1.54.1", features = ["process", "test-util"] }

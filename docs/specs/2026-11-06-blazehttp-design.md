@@ -411,7 +411,7 @@ First of {completion, failure, abort, deadline, close, teardown, poison} wins (o
 | **Abstract factory** | `PlatformKit` → `NodeKit`, `BrowserKit`, `FetchKit`, each creating the family `createTransport()`, `createClock()`, `createStreamAdapter()` (Node `Readable` vs WHATWG `ReadableStream`), `createXsrfProvider()` | A consistent family per runtime |
 | **Factory method** | Creator `TransportComposer.compose(kit)` calls the factory method `PlatformKit.createTransport()`, which each kit implements (GoF: an abstract factory's creation operations are factory methods) | Each kit decides its concrete transport; the composer stays independent of it |
 | **Builder** | `SubmissionBatchBuilder` (`add`, `addCredit`, `addCancel`, `addChunk`, `build`, `reset`) — data commands only; control commands go through `control()` | Incremental, bounded assembly of each batch |
-| **Singleton** | Rust `Engine` root (immutable); JS `NativeSession` and `TimerHeap` per environment | One engine per process; one session/timer per environment (the default `blaze` instance is just a pre-built client, not a pattern use) |
+| **Singleton** | Rust `Engine` root (immutable); JS `NativeSession` and `TimerHeap` per environment; `bench-server` `Catalog` (`LazyLock`) | One engine per process; one session/timer per environment (the default `blaze` instance is just a pre-built client, not a pattern use); the benchmark server's pre-built cells, once per process |
 | **Adapter** | `NativeTransport`, `UndiciTransport`, `FetchTransport`, `XhrTransport` | One contract over four engines |
 | **Decorator** | TS `RetryTransport`, `BodyMaterializer`, `ObservedTransport`; Rust `Exchange` middleware (Redirect → Limits → Decompress → Rate, order from `spec.json`) | Behaviour around an exchange |
 | **Facade** | `Client` | One entry point that orchestrates |
@@ -491,7 +491,7 @@ Every rule here is mandatory. Every review checks them under maintainability, an
 2. **Abstraction through interfaces.** Every seam is a Rust trait or a TS interface, and code depends on the trait, not on the concrete type (dependency inversion).
    - A **seam** is a boundary where the implementation varies per runtime or transport, or where tests substitute a fake.
    - Current seams:
-     - Rust: `CompletionSink` (implemented by `node-binding` and `engine-bench`), `Execute` (commands) and `Exchange` (middleware).
+     - Rust: `CompletionSink` (implemented by `node-binding` and `engine-bench`), `Execute` (commands) and `Exchange` (middleware); in `bench-server`, `Listen` (the accept source, faked to test accept-error retries).
      - TypeScript: `Transport`, `PlatformKit` (with its clock, stream adapter and XSRF provider), interceptors and `DispatchHook`s, `ResponseDecoder`, `BodyEncoder`, `RetryPolicy`/`BackoffStrategy`, `ParamsSerializer` and the `ProxyRules` matcher.
    - Internal helpers inside a component are not seams.
 3. **Polymorphism.**
