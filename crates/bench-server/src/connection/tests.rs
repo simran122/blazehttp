@@ -214,20 +214,38 @@ fn connection_close_waits_for_the_declared_body() {
     assert!(script.shut_down);
 }
 
+/// A 505 is written at once; the connection closes once the declared body is read, without waiting for the client to
+/// close (the script keeps its side open after the body).
 #[test]
 fn a_refused_version_closes_after_its_body() {
     let body_len = BUFFER_BYTES * 20;
     let head = format!("POST /1k HTTP/2.0\r\ncontent-length: {body_len}\r\n\r\n");
     let mut input = head.into_bytes();
-    input.resize(input.len() + body_len, b'x');
+    let head_len = input.len();
+    input.resize(head_len + body_len, b'x');
+
+    let mut mid_body = Script::new(input.clone(), Vec::new());
+    mid_body.stall_reads_at = Some(head_len + BUFFER_BYTES);
+    let still_reading = drive(&mut mid_body, Duration::from_secs(60));
+    assert!(still_reading.is_err(), "{still_reading:?}");
+    assert_eq!(
+        mid_body.output,
+        refusal(Refusal::VersionNotSupported),
+        "sent before the body"
+    );
+    assert!(!mid_body.shut_down, "open until the body is read");
+
     let mut script = Script::new(input.clone(), Vec::new());
-    serve(&mut script);
+    script.stall_reads_at = Some(input.len());
+    let result = drive(&mut script, Duration::from_secs(60)).expect("closed before the test bound");
+    assert!(result.is_ok(), "{result:?}");
     assert_eq!(script.output, refusal(Refusal::VersionNotSupported));
     assert_eq!(
         script.read,
         input.len(),
         "the whole body is read before closing"
     );
+    assert!(script.shut_down);
 }
 
 #[test]
@@ -295,6 +313,19 @@ fn a_slow_body_is_closed_after_the_request_timeout() {
     let result =
         drive(&mut script, Duration::from_secs(1)).expect("finished before the test bound");
     assert!(result.is_ok(), "{result:?}");
+    assert!(script.shut_down);
+}
+
+/// The client's `Connection: close` ends the connection after the response, without waiting for the client to close
+/// first (the script keeps its side open).
+#[test]
+fn a_client_close_ends_the_connection_while_the_client_stays_open() {
+    let input = b"GET /1k HTTP/1.1\r\nconnection: close\r\n\r\n".to_vec();
+    let mut script = Script::new(input.clone(), Vec::new());
+    script.stall_reads_at = Some(input.len());
+    let result = drive(&mut script, Duration::from_secs(60)).expect("closed before the test bound");
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(script.output, wire(b"/1k", false));
     assert!(script.shut_down);
 }
 
