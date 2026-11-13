@@ -82,7 +82,15 @@
     { "code": "ENGINE", "details": ["binary-load", "integrity", "panic", "poisoned", "resource-exhausted", "internal"] }
   ],
   "limits": {
-    "h1": { "maxHeadBytes": 65536, "maxStatusLineBytes": 8192, "maxHeaderFields": 100, "maxInterimResponses": 10 }
+    "h1": {
+      "maxHeadBytes": 65536,
+      "maxStatusLineBytes": 8192,
+      "maxHeaderFields": 100,
+      "maxInterimResponses": 10,
+      "maxRequestTargetBytes": 16384,
+      "maxRequestFieldsBytes": 65536,
+      "maxCopiedBodyBytes": 65536
+    }
   },
   "methods": ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "QUERY"]
 }

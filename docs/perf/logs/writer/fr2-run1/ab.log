@@ -1,0 +1,84 @@
+launch 1 2026-11-13T16:54:31Z
+
+| set | base ns | fr1 ns | new ns | shape ns | appends ns | memcpy ns |
+|---|---|---|---|---|---|---|
+{"set":"get","run":0,"base_ns":41.97,"fr1_ns":24.74,"new_ns":22.71,"shape_ns":34.62,"appends_ns":18.62,"memcpy_ns":4.41}
+{"set":"get","run":1,"base_ns":19.11,"fr1_ns":22.81,"new_ns":22.23,"shape_ns":21.83,"appends_ns":18.99,"memcpy_ns":4.49}
+{"set":"get","run":2,"base_ns":19.77,"fr1_ns":22.86,"new_ns":22.81,"shape_ns":21.69,"appends_ns":19.30,"memcpy_ns":4.47}
+{"set":"get","run":3,"base_ns":19.04,"fr1_ns":22.17,"new_ns":23.42,"shape_ns":20.94,"appends_ns":18.38,"memcpy_ns":4.43}
+{"set":"get","run":4,"base_ns":19.01,"fr1_ns":22.04,"new_ns":22.25,"shape_ns":20.93,"appends_ns":18.24,"memcpy_ns":4.46}
+{"set":"get","run":5,"base_ns":18.96,"fr1_ns":22.08,"new_ns":22.23,"shape_ns":20.92,"appends_ns":18.20,"memcpy_ns":4.53}
+{"set":"get","run":6,"base_ns":22.83,"fr1_ns":32.61,"new_ns":40.10,"shape_ns":65.64,"appends_ns":20.07,"memcpy_ns":5.00}
+| `get` | 19.1 | 22.8 | 22.7 | 21.7 | 18.6 | 4.5 |
+{"set":"post1k","run":0,"base_ns":84.39,"fr1_ns":102.62,"new_ns":99.59,"shape_ns":37.00,"appends_ns":34.34,"memcpy_ns":18.86}
+{"set":"post1k","run":1,"base_ns":85.51,"fr1_ns":101.82,"new_ns":100.78,"shape_ns":37.67,"appends_ns":34.63,"memcpy_ns":18.86}
+{"set":"post1k","run":2,"base_ns":83.31,"fr1_ns":98.85,"new_ns":99.04,"shape_ns":36.25,"appends_ns":33.47,"memcpy_ns":19.01}
+{"set":"post1k","run":3,"base_ns":80.34,"fr1_ns":95.49,"new_ns":95.18,"shape_ns":35.70,"appends_ns":32.55,"memcpy_ns":18.18}
+{"set":"post1k","run":4,"base_ns":83.34,"fr1_ns":99.08,"new_ns":97.22,"shape_ns":36.54,"appends_ns":33.34,"memcpy_ns":18.52}
+{"set":"post1k","run":5,"base_ns":81.75,"fr1_ns":96.08,"new_ns":95.27,"shape_ns":35.90,"appends_ns":32.82,"memcpy_ns":18.42}
+{"set":"post1k","run":6,"base_ns":81.10,"fr1_ns":95.44,"new_ns":95.69,"shape_ns":35.73,"appends_ns":32.81,"memcpy_ns":18.20}
+| `post1k` | 83.3 | 98.9 | 97.2 | 36.2 | 33.3 | 18.5 |
+{"set":"varied","run":0,"base_ns":110.20,"fr1_ns":156.30,"new_ns":146.79,"shape_ns":49.11,"appends_ns":43.58,"memcpy_ns":29.67}
+{"set":"varied","run":1,"base_ns":104.86,"fr1_ns":110.60,"new_ns":130.13,"shape_ns":45.67,"appends_ns":42.62,"memcpy_ns":27.86}
+{"set":"varied","run":2,"base_ns":102.41,"fr1_ns":100.50,"new_ns":127.72,"shape_ns":44.48,"appends_ns":41.14,"memcpy_ns":27.07}
+{"set":"varied","run":3,"base_ns":102.32,"fr1_ns":103.72,"new_ns":128.63,"shape_ns":45.89,"appends_ns":42.53,"memcpy_ns":27.41}
+{"set":"varied","run":4,"base_ns":107.54,"fr1_ns":133.71,"new_ns":129.99,"shape_ns":46.91,"appends_ns":47.23,"memcpy_ns":29.22}
+{"set":"varied","run":5,"base_ns":102.88,"fr1_ns":106.66,"new_ns":121.80,"shape_ns":44.30,"appends_ns":41.01,"memcpy_ns":27.34}
+{"set":"varied","run":6,"base_ns":103.82,"fr1_ns":105.67,"new_ns":127.91,"shape_ns":44.59,"appends_ns":41.00,"memcpy_ns":26.85}
+| `varied` | 103.8 | 106.7 | 128.6 | 45.7 | 42.5 | 27.4 |
+launch 2 2026-11-13T16:54:34Z
+
+| set | base ns | fr1 ns | new ns | shape ns | appends ns | memcpy ns |
+|---|---|---|---|---|---|---|
+{"set":"get","run":0,"base_ns":18.89,"fr1_ns":21.92,"new_ns":21.44,"shape_ns":21.04,"appends_ns":18.41,"memcpy_ns":4.45}
+{"set":"get","run":1,"base_ns":18.47,"fr1_ns":21.67,"new_ns":21.68,"shape_ns":20.79,"appends_ns":17.75,"memcpy_ns":4.29}
+{"set":"get","run":2,"base_ns":18.65,"fr1_ns":22.19,"new_ns":22.08,"shape_ns":20.74,"appends_ns":19.03,"memcpy_ns":4.41}
+{"set":"get","run":3,"base_ns":18.73,"fr1_ns":21.44,"new_ns":21.44,"shape_ns":21.22,"appends_ns":18.66,"memcpy_ns":4.36}
+{"set":"get","run":4,"base_ns":18.33,"fr1_ns":21.30,"new_ns":20.95,"shape_ns":20.92,"appends_ns":18.02,"memcpy_ns":4.29}
+{"set":"get","run":5,"base_ns":17.72,"fr1_ns":20.73,"new_ns":20.31,"shape_ns":20.85,"appends_ns":17.27,"memcpy_ns":4.15}
+{"set":"get","run":6,"base_ns":17.74,"fr1_ns":20.56,"new_ns":20.23,"shape_ns":20.78,"appends_ns":17.47,"memcpy_ns":4.10}
+| `get` | 18.5 | 21.4 | 21.4 | 20.9 | 18.0 | 4.3 |
+{"set":"post1k","run":0,"base_ns":79.36,"fr1_ns":93.40,"new_ns":91.61,"shape_ns":34.56,"appends_ns":32.01,"memcpy_ns":18.05}
+{"set":"post1k","run":1,"base_ns":79.66,"fr1_ns":92.93,"new_ns":92.05,"shape_ns":35.20,"appends_ns":31.78,"memcpy_ns":17.74}
+{"set":"post1k","run":2,"base_ns":82.42,"fr1_ns":95.73,"new_ns":94.58,"shape_ns":36.57,"appends_ns":32.89,"memcpy_ns":18.81}
+{"set":"post1k","run":3,"base_ns":79.50,"fr1_ns":93.47,"new_ns":91.71,"shape_ns":34.69,"appends_ns":31.83,"memcpy_ns":17.69}
+{"set":"post1k","run":4,"base_ns":79.53,"fr1_ns":93.40,"new_ns":91.47,"shape_ns":34.74,"appends_ns":31.86,"memcpy_ns":17.79}
+{"set":"post1k","run":5,"base_ns":79.93,"fr1_ns":93.49,"new_ns":91.67,"shape_ns":34.77,"appends_ns":31.91,"memcpy_ns":17.81}
+{"set":"post1k","run":6,"base_ns":79.11,"fr1_ns":93.17,"new_ns":94.60,"shape_ns":35.73,"appends_ns":32.86,"memcpy_ns":18.07}
+| `post1k` | 79.5 | 93.4 | 91.7 | 34.8 | 31.9 | 17.8 |
+{"set":"varied","run":0,"base_ns":104.53,"fr1_ns":102.92,"new_ns":138.63,"shape_ns":44.95,"appends_ns":41.64,"memcpy_ns":27.52}
+{"set":"varied","run":1,"base_ns":104.11,"fr1_ns":114.41,"new_ns":129.10,"shape_ns":44.67,"appends_ns":41.51,"memcpy_ns":27.61}
+{"set":"varied","run":2,"base_ns":102.95,"fr1_ns":104.04,"new_ns":129.64,"shape_ns":44.64,"appends_ns":41.00,"memcpy_ns":27.02}
+{"set":"varied","run":3,"base_ns":101.50,"fr1_ns":101.15,"new_ns":132.33,"shape_ns":44.42,"appends_ns":40.91,"memcpy_ns":26.72}
+{"set":"varied","run":4,"base_ns":101.36,"fr1_ns":113.10,"new_ns":130.04,"shape_ns":44.58,"appends_ns":40.76,"memcpy_ns":26.81}
+{"set":"varied","run":5,"base_ns":112.08,"fr1_ns":111.78,"new_ns":132.03,"shape_ns":48.42,"appends_ns":43.09,"memcpy_ns":28.64}
+{"set":"varied","run":6,"base_ns":109.29,"fr1_ns":107.43,"new_ns":139.60,"shape_ns":46.25,"appends_ns":42.36,"memcpy_ns":28.35}
+| `varied` | 104.1 | 107.4 | 132.0 | 44.7 | 41.5 | 27.5 |
+launch 3 2026-11-13T16:54:37Z
+
+| set | base ns | fr1 ns | new ns | shape ns | appends ns | memcpy ns |
+|---|---|---|---|---|---|---|
+{"set":"get","run":0,"base_ns":18.61,"fr1_ns":21.52,"new_ns":21.59,"shape_ns":20.85,"appends_ns":19.05,"memcpy_ns":4.51}
+{"set":"get","run":1,"base_ns":18.58,"fr1_ns":21.56,"new_ns":21.58,"shape_ns":21.19,"appends_ns":18.04,"memcpy_ns":4.34}
+{"set":"get","run":2,"base_ns":18.94,"fr1_ns":22.13,"new_ns":21.76,"shape_ns":20.57,"appends_ns":18.72,"memcpy_ns":4.41}
+{"set":"get","run":3,"base_ns":18.35,"fr1_ns":21.21,"new_ns":21.03,"shape_ns":20.21,"appends_ns":17.77,"memcpy_ns":4.22}
+{"set":"get","run":4,"base_ns":17.55,"fr1_ns":20.56,"new_ns":20.31,"shape_ns":19.51,"appends_ns":17.70,"memcpy_ns":4.26}
+{"set":"get","run":5,"base_ns":17.69,"fr1_ns":20.68,"new_ns":20.37,"shape_ns":19.76,"appends_ns":16.97,"memcpy_ns":4.08}
+{"set":"get","run":6,"base_ns":17.61,"fr1_ns":20.46,"new_ns":20.27,"shape_ns":20.31,"appends_ns":17.28,"memcpy_ns":4.11}
+| `get` | 18.3 | 21.2 | 21.0 | 20.3 | 17.8 | 4.3 |
+{"set":"post1k","run":0,"base_ns":82.72,"fr1_ns":96.88,"new_ns":96.54,"shape_ns":35.95,"appends_ns":32.91,"memcpy_ns":18.06}
+{"set":"post1k","run":1,"base_ns":83.87,"fr1_ns":98.77,"new_ns":96.44,"shape_ns":36.92,"appends_ns":33.50,"memcpy_ns":18.65}
+{"set":"post1k","run":2,"base_ns":79.67,"fr1_ns":93.52,"new_ns":91.92,"shape_ns":34.63,"appends_ns":31.73,"memcpy_ns":17.89}
+{"set":"post1k","run":3,"base_ns":79.81,"fr1_ns":93.13,"new_ns":92.17,"shape_ns":34.99,"appends_ns":31.74,"memcpy_ns":17.75}
+{"set":"post1k","run":4,"base_ns":79.75,"fr1_ns":93.43,"new_ns":91.96,"shape_ns":35.03,"appends_ns":32.04,"memcpy_ns":17.76}
+{"set":"post1k","run":5,"base_ns":79.46,"fr1_ns":93.46,"new_ns":91.88,"shape_ns":34.70,"appends_ns":31.88,"memcpy_ns":17.78}
+{"set":"post1k","run":6,"base_ns":78.98,"fr1_ns":93.03,"new_ns":91.60,"shape_ns":34.42,"appends_ns":32.14,"memcpy_ns":17.87}
+| `post1k` | 79.7 | 93.5 | 92.0 | 35.0 | 32.0 | 17.9 |
+{"set":"varied","run":0,"base_ns":100.27,"fr1_ns":100.52,"new_ns":133.35,"shape_ns":44.38,"appends_ns":40.92,"memcpy_ns":26.83}
+{"set":"varied","run":1,"base_ns":101.22,"fr1_ns":101.54,"new_ns":127.51,"shape_ns":44.57,"appends_ns":40.80,"memcpy_ns":26.85}
+{"set":"varied","run":2,"base_ns":118.07,"fr1_ns":121.26,"new_ns":131.35,"shape_ns":49.33,"appends_ns":46.73,"memcpy_ns":27.95}
+{"set":"varied","run":3,"base_ns":113.42,"fr1_ns":117.84,"new_ns":135.55,"shape_ns":49.55,"appends_ns":43.97,"memcpy_ns":29.21}
+{"set":"varied","run":4,"base_ns":100.89,"fr1_ns":103.64,"new_ns":129.16,"shape_ns":45.41,"appends_ns":41.07,"memcpy_ns":27.42}
+{"set":"varied","run":5,"base_ns":103.21,"fr1_ns":107.19,"new_ns":127.09,"shape_ns":44.83,"appends_ns":41.50,"memcpy_ns":27.26}
+{"set":"varied","run":6,"base_ns":99.41,"fr1_ns":101.08,"new_ns":135.07,"shape_ns":44.30,"appends_ns":40.87,"memcpy_ns":26.78}
+| `varied` | 101.2 | 103.6 | 131.3 | 44.8 | 41.1 | 27.3 |

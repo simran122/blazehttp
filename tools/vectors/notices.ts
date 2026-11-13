@@ -52,15 +52,10 @@ in this Software without prior written authorization of the copyright holder.`,
   }),
 );
 
-/**
- * Licence texts that name an organisation (e.g. BSD-3-Clause's "Neither the name of …" clause), keyed by project and
- * used only when the source's licence matches. Taken verbatim from the licence file at the recorded commit.
- */
-const PROJECT_LICENCE_TEXTS: ReadonlyMap<string, { readonly licence: string; readonly text: string }> = new Map(
-  Object.entries({
-    go: {
-      licence: 'BSD-3-Clause',
-      text: `Redistribution and use in source and binary forms, with or without
+/** The Go project's BSD-3-Clause text after its copyright line, verbatim from `LICENSE` at the recorded commit. */
+const GO_BSD_3_CLAUSE = {
+  licence: 'BSD-3-Clause',
+  text: `Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
 
@@ -85,7 +80,17 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`,
-    },
+} as const;
+
+/**
+ * Licence texts that name an organisation (e.g. BSD-3-Clause's "Neither the name of …" clause), keyed by project and
+ * used only when the source's licence matches. Taken verbatim from the licence file at the recorded commit; Go and
+ * golang.org/x/net ship byte-identical licence files.
+ */
+const PROJECT_LICENCE_TEXTS: ReadonlyMap<string, { readonly licence: string; readonly text: string }> = new Map(
+  Object.entries({
+    go: GO_BSD_3_CLAUSE,
+    'golang.org/x/net': GO_BSD_3_CLAUSE,
   }),
 );
 
@@ -144,7 +149,7 @@ if (import.meta.main) {
   const root = join(REPO_ROOT, VECTORS_DIR);
   const files = listVectorFiles(root).map((path) => ({
     path,
-    source: loadVectorFile(join(root, path)).source,
+    source: loadVectorFile(root, path).source,
   }));
   const text = renderNotices(files);
   if (process.argv.includes('--check')) {

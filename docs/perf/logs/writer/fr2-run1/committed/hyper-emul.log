@@ -1,0 +1,28 @@
+{"set":"get","run":0,"ours_ns":20.27,"ours_join_ns":21.38,"appends_ns":8.46,"hyper_construct_encode_ns":102.73,"hyper_clone_encode_ns":77.13,"hyper_encode_ns":36.40}
+{"set":"get","run":1,"ours_ns":20.24,"ours_join_ns":21.40,"appends_ns":8.48,"hyper_construct_encode_ns":103.24,"hyper_clone_encode_ns":76.67,"hyper_encode_ns":36.29}
+{"set":"get","run":2,"ours_ns":20.11,"ours_join_ns":21.25,"appends_ns":8.40,"hyper_construct_encode_ns":105.74,"hyper_clone_encode_ns":76.63,"hyper_encode_ns":36.35}
+{"set":"get","run":3,"ours_ns":20.26,"ours_join_ns":21.45,"appends_ns":8.54,"hyper_construct_encode_ns":102.68,"hyper_clone_encode_ns":77.05,"hyper_encode_ns":36.34}
+{"set":"get","run":4,"ours_ns":20.12,"ours_join_ns":21.24,"appends_ns":8.64,"hyper_construct_encode_ns":102.81,"hyper_clone_encode_ns":76.43,"hyper_encode_ns":36.45}
+{"set":"get","run":5,"ours_ns":20.19,"ours_join_ns":21.27,"appends_ns":8.43,"hyper_construct_encode_ns":103.09,"hyper_clone_encode_ns":76.84,"hyper_encode_ns":36.31}
+{"set":"get","run":6,"ours_ns":20.03,"ours_join_ns":21.36,"appends_ns":8.48,"hyper_construct_encode_ns":103.23,"hyper_clone_encode_ns":76.66,"hyper_encode_ns":36.34}
+{"set":"post1k","run":0,"ours_ns":91.21,"ours_join_ns":114.75,"appends_ns":39.82,"hyper_construct_encode_ns":381.23,"hyper_clone_encode_ns":220.75,"hyper_encode_ns":76.00}
+{"set":"post1k","run":1,"ours_ns":92.84,"ours_join_ns":115.17,"appends_ns":41.76,"hyper_construct_encode_ns":397.19,"hyper_clone_encode_ns":237.01,"hyper_encode_ns":79.29}
+{"set":"post1k","run":2,"ours_ns":92.08,"ours_join_ns":112.81,"appends_ns":42.14,"hyper_construct_encode_ns":390.69,"hyper_clone_encode_ns":222.46,"hyper_encode_ns":76.52}
+{"set":"post1k","run":3,"ours_ns":91.46,"ours_join_ns":112.73,"appends_ns":40.59,"hyper_construct_encode_ns":385.07,"hyper_clone_encode_ns":231.40,"hyper_encode_ns":76.53}
+{"set":"post1k","run":4,"ours_ns":91.62,"ours_join_ns":112.14,"appends_ns":39.93,"hyper_construct_encode_ns":381.02,"hyper_clone_encode_ns":220.98,"hyper_encode_ns":76.36}
+{"set":"post1k","run":5,"ours_ns":91.11,"ours_join_ns":112.70,"appends_ns":39.91,"hyper_construct_encode_ns":384.41,"hyper_clone_encode_ns":221.25,"hyper_encode_ns":76.29}
+{"set":"post1k","run":6,"ours_ns":93.05,"ours_join_ns":113.81,"appends_ns":40.32,"hyper_construct_encode_ns":388.88,"hyper_clone_encode_ns":221.18,"hyper_encode_ns":80.15}
+{"set":"varied","run":0,"ours_ns":123.30,"ours_join_ns":142.53,"appends_ns":40.91,"hyper_construct_encode_ns":569.42,"hyper_clone_encode_ns":296.33,"hyper_encode_ns":102.33}
+{"set":"varied","run":1,"ours_ns":123.46,"ours_join_ns":144.51,"appends_ns":41.09,"hyper_construct_encode_ns":569.28,"hyper_clone_encode_ns":297.52,"hyper_encode_ns":98.40}
+{"set":"varied","run":2,"ours_ns":122.84,"ours_join_ns":144.97,"appends_ns":41.41,"hyper_construct_encode_ns":781.79,"hyper_clone_encode_ns":384.59,"hyper_encode_ns":99.89}
+{"set":"varied","run":3,"ours_ns":125.12,"ours_join_ns":146.50,"appends_ns":42.10,"hyper_construct_encode_ns":600.93,"hyper_clone_encode_ns":307.39,"hyper_encode_ns":99.89}
+{"set":"varied","run":4,"ours_ns":126.85,"ours_join_ns":152.35,"appends_ns":41.80,"hyper_construct_encode_ns":584.83,"hyper_clone_encode_ns":306.92,"hyper_encode_ns":102.67}
+{"set":"varied","run":5,"ours_ns":122.21,"ours_join_ns":141.45,"appends_ns":41.03,"hyper_construct_encode_ns":556.03,"hyper_clone_encode_ns":298.40,"hyper_encode_ns":98.44}
+{"set":"varied","run":6,"ours_ns":135.62,"ours_join_ns":147.77,"appends_ns":42.70,"hyper_construct_encode_ns":575.50,"hyper_clone_encode_ns":310.25,"hyper_encode_ns":102.01}
+
+write_request vs hyper 1.12 encoder emulation; 7 runs x 4 rotated blocks, medians
+| set | ours ns | ours + join ns | hyper construct+encode ns | ours + join / construct+encode | ours / clone+encode | our appends ns | hyper encode-only ns | our appends / hyper encode-only |
+|---|---|---|---|---|---|---|---|---|
+| `get` | 20.2 | 21.4 | 103.1 | 0.207 | 0.263 | 8.5 | 36.3 | 0.233 |
+| `post1k` | 91.6 | 112.8 | 385.1 | 0.293 | 0.414 | 40.3 | 76.5 | 0.527 |
+| `varied` | 123.5 | 145.0 | 575.5 | 0.252 | 0.402 | 41.4 | 99.9 | 0.414 |

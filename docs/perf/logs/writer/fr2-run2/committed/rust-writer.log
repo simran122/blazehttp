@@ -1,0 +1,28 @@
+{"set":"get","run":0,"writer_ns":46.66,"shape_ns":23.88,"appends_ns":12.87,"memcpy_ns":4.94}
+{"set":"get","run":1,"writer_ns":48.96,"shape_ns":25.98,"appends_ns":9.57,"memcpy_ns":4.43}
+{"set":"get","run":2,"writer_ns":42.67,"shape_ns":23.12,"appends_ns":9.29,"memcpy_ns":4.46}
+{"set":"get","run":3,"writer_ns":44.17,"shape_ns":26.43,"appends_ns":9.54,"memcpy_ns":4.52}
+{"set":"get","run":4,"writer_ns":57.32,"shape_ns":30.19,"appends_ns":10.27,"memcpy_ns":4.81}
+{"set":"get","run":5,"writer_ns":45.47,"shape_ns":23.08,"appends_ns":10.12,"memcpy_ns":4.45}
+{"set":"get","run":6,"writer_ns":60.40,"shape_ns":28.75,"appends_ns":9.14,"memcpy_ns":9.18}
+{"set":"post1k","run":0,"writer_ns":118.69,"shape_ns":44.59,"appends_ns":31.71,"memcpy_ns":18.27}
+{"set":"post1k","run":1,"writer_ns":113.21,"shape_ns":43.18,"appends_ns":30.82,"memcpy_ns":17.82}
+{"set":"post1k","run":2,"writer_ns":112.36,"shape_ns":42.93,"appends_ns":30.83,"memcpy_ns":17.73}
+{"set":"post1k","run":3,"writer_ns":114.52,"shape_ns":43.83,"appends_ns":31.41,"memcpy_ns":18.76}
+{"set":"post1k","run":4,"writer_ns":125.73,"shape_ns":47.20,"appends_ns":34.18,"memcpy_ns":20.19}
+{"set":"post1k","run":5,"writer_ns":112.88,"shape_ns":44.09,"appends_ns":31.90,"memcpy_ns":17.81}
+{"set":"post1k","run":6,"writer_ns":113.00,"shape_ns":43.25,"appends_ns":30.83,"memcpy_ns":17.79}
+{"set":"varied","run":0,"writer_ns":138.88,"shape_ns":55.23,"appends_ns":41.16,"memcpy_ns":27.36}
+{"set":"varied","run":1,"writer_ns":136.94,"shape_ns":54.98,"appends_ns":41.78,"memcpy_ns":28.02}
+{"set":"varied","run":2,"writer_ns":131.78,"shape_ns":58.30,"appends_ns":43.71,"memcpy_ns":28.70}
+{"set":"varied","run":3,"writer_ns":128.77,"shape_ns":54.07,"appends_ns":40.30,"memcpy_ns":27.53}
+{"set":"varied","run":4,"writer_ns":128.23,"shape_ns":53.87,"appends_ns":40.57,"memcpy_ns":27.31}
+{"set":"varied","run":5,"writer_ns":138.99,"shape_ns":56.16,"appends_ns":42.45,"memcpy_ns":29.26}
+{"set":"varied","run":6,"writer_ns":152.72,"shape_ns":54.91,"appends_ns":40.43,"memcpy_ns":27.32}
+
+write_request vs baselines; 7 runs x 4 rotated blocks, medians (ns per request)
+| set | mean head B | writer | shape | appends | memcpy | writer − shape | writer − appends | writer / appends (min–max) |
+|---|---|---|---|---|---|---|---|---|
+| `get` | 146 | 46.7 | 26.0 | 9.6 | 4.5 | 22.8 | 35.3 | 4.63 (3.62–6.61) |
+| `post1k` | 335 | 113.2 | 43.8 | 31.4 | 17.8 | 70.0 | 82.4 | 3.67 (3.54–3.74) |
+| `varied` | 445 | 136.9 | 55.0 | 41.2 | 27.5 | 82.0 | 95.2 | 3.27 (3.01–3.78) |

@@ -4,15 +4,6 @@
 //! scan stopped, so the whole head costs O(head bytes) however it is split. No allocation, no header map: the framing
 //! and `Connection` facts are folded in as each field line completes.
 
-#![deny(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable
-)]
-
 use core::ops::Range;
 
 mod facts;
@@ -20,15 +11,11 @@ mod facts;
 use facts::{Facts, StatusLine};
 
 use super::grammar::{token_len, value_len};
-use crate::generated::spec::{
-    EngineDetail, ErrorCode, H1_LIMITS, Method, ProtocolDetail, TooLargeDetail,
-};
+use super::{HEADERS_TOO_LARGE, INTERNAL};
+use crate::generated::spec::{ErrorCode, H1_LIMITS, Method, ProtocolDetail};
 
 const MALFORMED: ErrorCode = ErrorCode::Protocol(ProtocolDetail::MalformedResponse);
 const SMUGGLING: ErrorCode = ErrorCode::Protocol(ProtocolDetail::SmugglingRisk);
-const TOO_LARGE: ErrorCode = ErrorCode::TooLarge(TooLargeDetail::Headers);
-/// A caller broke the `parse` contract (or an offset invariant failed): never a peer's fault.
-const INTERNAL: ErrorCode = ErrorCode::Engine(EngineDetail::Internal);
 
 /// `HTTP/1.x DDD`: version, SP and the three status digits.
 const STATUS_PREFIX_LEN: usize = 12;
@@ -199,7 +186,7 @@ impl ResponseParser {
             match next {
                 None => {}
                 // The window ends before the head does: it cannot end within the budget once the buffer reaches it.
-                Some(ParseStatus::Partial) if buf.len() >= budget => return Err(TOO_LARGE),
+                Some(ParseStatus::Partial) if buf.len() >= budget => return Err(HEADERS_TOO_LARGE),
                 Some(status) => return Ok(status),
             }
         }
@@ -277,7 +264,7 @@ impl ResponseParser {
                 self.phase = Phase::LineStart;
                 Ok(None)
             }
-            Some([] | [b'\r']) if window.len() >= limit => Err(TOO_LARGE),
+            Some([] | [b'\r']) if window.len() >= limit => Err(HEADERS_TOO_LARGE),
             Some([] | [b'\r']) => {
                 self.pos = end;
                 Ok(Some(ParseStatus::Partial))

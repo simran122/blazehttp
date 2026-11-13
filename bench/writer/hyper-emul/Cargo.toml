@@ -1,0 +1,30 @@
+# Comparison benchmark only (docs/notes/request-writer.md §8.4): an emulation of hyper 1.12's HTTP/1.1 request
+# encoder over `http` 1.5.0 types against blazehttp's `write_request`. Its own workspace, excluded from the main one
+# and never a dependency of the engine (design §14).
+[package]
+name = "writer-hyper-emul"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+engine-core = { path = "../../../crates/engine-core" }
+http = "=1.5.0"
+
+# Mirrors the root [workspace.lints] tables (this crate is its own workspace).
+[lints.rust]
+deprecated = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+await_holding_refcell_ref = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+[workspace]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "unwind"

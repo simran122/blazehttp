@@ -1,0 +1,174 @@
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+6.11.11-linuxkit
+100000 100000
+round 1 2026-11-08T18:03:32Z
+{"set":"get","run":0,"writer_ns":33.23,"floor_ns":12.81,"ratio":2.5947}
+{"set":"get","run":1,"writer_ns":31.14,"floor_ns":12.63,"ratio":2.4649}
+{"set":"get","run":2,"writer_ns":30.96,"floor_ns":12.76,"ratio":2.4254}
+{"set":"get","run":3,"writer_ns":31.11,"floor_ns":12.90,"ratio":2.4116}
+{"set":"get","run":4,"writer_ns":30.96,"floor_ns":12.56,"ratio":2.4653}
+{"set":"get","run":5,"writer_ns":30.87,"floor_ns":14.01,"ratio":2.2031}
+{"set":"get","run":6,"writer_ns":30.94,"floor_ns":12.73,"ratio":2.4305}
+{"set":"post1k","run":0,"writer_ns":135.31,"floor_ns":45.13,"ratio":2.9981}
+{"set":"post1k","run":1,"writer_ns":138.29,"floor_ns":46.54,"ratio":2.9718}
+{"set":"post1k","run":2,"writer_ns":151.09,"floor_ns":48.14,"ratio":3.1383}
+{"set":"post1k","run":3,"writer_ns":160.62,"floor_ns":51.95,"ratio":3.0916}
+{"set":"post1k","run":4,"writer_ns":151.53,"floor_ns":47.70,"ratio":3.1767}
+{"set":"post1k","run":5,"writer_ns":147.93,"floor_ns":55.15,"ratio":2.6822}
+{"set":"post1k","run":6,"writer_ns":160.64,"floor_ns":53.22,"ratio":3.0183}
+{"set":"varied","run":0,"writer_ns":166.01,"floor_ns":64.54,"ratio":2.5722}
+{"set":"varied","run":1,"writer_ns":189.28,"floor_ns":66.46,"ratio":2.8480}
+{"set":"varied","run":2,"writer_ns":156.27,"floor_ns":60.63,"ratio":2.5773}
+{"set":"varied","run":3,"writer_ns":154.59,"floor_ns":60.60,"ratio":2.5512}
+{"set":"varied","run":4,"writer_ns":154.53,"floor_ns":61.40,"ratio":2.5165}
+{"set":"varied","run":5,"writer_ns":313.10,"floor_ns":103.51,"ratio":3.0248}
+{"set":"varied","run":6,"writer_ns":171.87,"floor_ns":62.74,"ratio":2.7393}
+
+write_request vs copy floor; 7 runs x 4 blocks, median of per-run ratios
+| set | mean head B | writer ns (median) | floor ns (median) | ratio median | ratio min | ratio max |
+|---|---|---|---|---|---|---|
+| `get` | 146 | 31.0 | 12.8 | 2.430 | 2.203 | 2.595 |
+| `post1k` | 335 | 151.1 | 48.1 | 3.018 | 2.682 | 3.177 |
+| `varied` | 445 | 166.0 | 62.7 | 2.577 | 2.517 | 3.025 |
+{"set":"get","run":0,"ours_ns":33.65,"floor_ns":13.09,"hyper_construct_encode_ns":159.41,"hyper_clone_encode_ns":118.58,"hyper_encode_ns":62.29}
+{"set":"get","run":1,"ours_ns":34.09,"floor_ns":13.33,"hyper_construct_encode_ns":159.28,"hyper_clone_encode_ns":119.08,"hyper_encode_ns":56.06}
+{"set":"get","run":2,"ours_ns":33.54,"floor_ns":12.80,"hyper_construct_encode_ns":158.09,"hyper_clone_encode_ns":118.18,"hyper_encode_ns":55.62}
+{"set":"get","run":3,"ours_ns":36.29,"floor_ns":12.82,"hyper_construct_encode_ns":158.80,"hyper_clone_encode_ns":115.95,"hyper_encode_ns":55.16}
+{"set":"get","run":4,"ours_ns":32.90,"floor_ns":12.70,"hyper_construct_encode_ns":151.66,"hyper_clone_encode_ns":116.49,"hyper_encode_ns":53.20}
+{"set":"get","run":5,"ours_ns":32.13,"floor_ns":12.47,"hyper_construct_encode_ns":151.25,"hyper_clone_encode_ns":108.74,"hyper_encode_ns":53.92}
+{"set":"get","run":6,"ours_ns":37.29,"floor_ns":12.60,"hyper_construct_encode_ns":158.86,"hyper_clone_encode_ns":112.08,"hyper_encode_ns":52.62}
+{"set":"post1k","run":0,"ours_ns":147.17,"floor_ns":48.35,"hyper_construct_encode_ns":557.53,"hyper_clone_encode_ns":345.71,"hyper_encode_ns":113.18}
+{"set":"post1k","run":1,"ours_ns":158.89,"floor_ns":53.12,"hyper_construct_encode_ns":605.99,"hyper_clone_encode_ns":347.27,"hyper_encode_ns":111.99}
+{"set":"post1k","run":2,"ours_ns":155.20,"floor_ns":55.60,"hyper_construct_encode_ns":602.55,"hyper_clone_encode_ns":372.21,"hyper_encode_ns":122.07}
+{"set":"post1k","run":3,"ours_ns":162.52,"floor_ns":53.91,"hyper_construct_encode_ns":1343.81,"hyper_clone_encode_ns":393.84,"hyper_encode_ns":127.44}
+{"set":"post1k","run":4,"ours_ns":155.10,"floor_ns":50.64,"hyper_construct_encode_ns":624.63,"hyper_clone_encode_ns":365.17,"hyper_encode_ns":114.23}
+{"set":"post1k","run":5,"ours_ns":156.50,"floor_ns":52.90,"hyper_construct_encode_ns":660.23,"hyper_clone_encode_ns":362.30,"hyper_encode_ns":120.73}
+{"set":"post1k","run":6,"ours_ns":146.46,"floor_ns":48.31,"hyper_construct_encode_ns":589.97,"hyper_clone_encode_ns":342.13,"hyper_encode_ns":112.86}
+{"set":"varied","run":0,"ours_ns":194.84,"floor_ns":61.76,"hyper_construct_encode_ns":874.53,"hyper_clone_encode_ns":471.51,"hyper_encode_ns":154.01}
+{"set":"varied","run":1,"ours_ns":190.75,"floor_ns":64.34,"hyper_construct_encode_ns":933.73,"hyper_clone_encode_ns":642.25,"hyper_encode_ns":159.73}
+{"set":"varied","run":2,"ours_ns":201.21,"floor_ns":63.45,"hyper_construct_encode_ns":969.80,"hyper_clone_encode_ns":490.74,"hyper_encode_ns":232.86}
+{"set":"varied","run":3,"ours_ns":187.13,"floor_ns":60.10,"hyper_construct_encode_ns":854.32,"hyper_clone_encode_ns":462.93,"hyper_encode_ns":152.12}
+{"set":"varied","run":4,"ours_ns":187.95,"floor_ns":60.86,"hyper_construct_encode_ns":816.02,"hyper_clone_encode_ns":442.60,"hyper_encode_ns":156.46}
+{"set":"varied","run":5,"ours_ns":197.14,"floor_ns":63.10,"hyper_construct_encode_ns":873.89,"hyper_clone_encode_ns":470.92,"hyper_encode_ns":185.89}
+{"set":"varied","run":6,"ours_ns":208.55,"floor_ns":63.58,"hyper_construct_encode_ns":953.07,"hyper_clone_encode_ns":551.66,"hyper_encode_ns":179.51}
+
+write_request vs hyper 1.12 encoder emulation; 7 runs x 4 blocks, medians
+| set | ours ns | hyper construct+encode ns | ours / construct+encode | ours / clone+encode | our floor ns | hyper encode-only ns | our floor / hyper encode-only |
+|---|---|---|---|---|---|---|---|
+| `get` | 33.6 | 158.8 | 0.212 | 0.289 | 12.8 | 55.2 | 0.232 |
+| `post1k` | 155.2 | 606.0 | 0.256 | 0.428 | 52.9 | 114.2 | 0.463 |
+| `varied` | 194.8 | 874.5 | 0.223 | 0.413 | 63.1 | 159.7 | 0.395 |
+round 2 2026-11-08T18:03:44Z
+{"set":"get","run":0,"writer_ns":33.44,"floor_ns":13.41,"ratio":2.4938}
+{"set":"get","run":1,"writer_ns":33.54,"floor_ns":13.45,"ratio":2.4943}
+{"set":"get","run":2,"writer_ns":33.43,"floor_ns":13.51,"ratio":2.4745}
+{"set":"get","run":3,"writer_ns":34.12,"floor_ns":13.70,"ratio":2.4899}
+{"set":"get","run":4,"writer_ns":33.44,"floor_ns":13.48,"ratio":2.4818}
+{"set":"get","run":5,"writer_ns":33.67,"floor_ns":13.41,"ratio":2.5099}
+{"set":"get","run":6,"writer_ns":31.74,"floor_ns":12.95,"ratio":2.4518}
+{"set":"post1k","run":0,"writer_ns":136.19,"floor_ns":44.94,"ratio":3.0301}
+{"set":"post1k","run":1,"writer_ns":135.53,"floor_ns":45.73,"ratio":2.9639}
+{"set":"post1k","run":2,"writer_ns":134.78,"floor_ns":45.17,"ratio":2.9837}
+{"set":"post1k","run":3,"writer_ns":134.88,"floor_ns":43.57,"ratio":3.0960}
+{"set":"post1k","run":4,"writer_ns":133.93,"floor_ns":48.20,"ratio":2.7784}
+{"set":"post1k","run":5,"writer_ns":137.80,"floor_ns":43.75,"ratio":3.1500}
+{"set":"post1k","run":6,"writer_ns":137.79,"floor_ns":45.79,"ratio":3.0092}
+{"set":"varied","run":0,"writer_ns":157.88,"floor_ns":60.30,"ratio":2.6181}
+{"set":"varied","run":1,"writer_ns":237.36,"floor_ns":66.73,"ratio":3.5573}
+{"set":"varied","run":2,"writer_ns":160.13,"floor_ns":60.90,"ratio":2.6295}
+{"set":"varied","run":3,"writer_ns":157.92,"floor_ns":60.57,"ratio":2.6072}
+{"set":"varied","run":4,"writer_ns":154.37,"floor_ns":61.31,"ratio":2.5179}
+{"set":"varied","run":5,"writer_ns":162.56,"floor_ns":60.54,"ratio":2.6851}
+{"set":"varied","run":6,"writer_ns":154.13,"floor_ns":60.56,"ratio":2.5449}
+
+write_request vs copy floor; 7 runs x 4 blocks, median of per-run ratios
+| set | mean head B | writer ns (median) | floor ns (median) | ratio median | ratio min | ratio max |
+|---|---|---|---|---|---|---|
+| `get` | 146 | 33.4 | 13.4 | 2.490 | 2.452 | 2.510 |
+| `post1k` | 335 | 135.5 | 45.2 | 3.009 | 2.778 | 3.150 |
+| `varied` | 445 | 157.9 | 60.6 | 2.618 | 2.518 | 3.557 |
+{"set":"get","run":0,"ours_ns":32.15,"floor_ns":12.60,"hyper_construct_encode_ns":155.85,"hyper_clone_encode_ns":116.76,"hyper_encode_ns":53.84}
+{"set":"get","run":1,"ours_ns":33.77,"floor_ns":13.16,"hyper_construct_encode_ns":151.60,"hyper_clone_encode_ns":110.97,"hyper_encode_ns":60.84}
+{"set":"get","run":2,"ours_ns":32.33,"floor_ns":12.14,"hyper_construct_encode_ns":152.65,"hyper_clone_encode_ns":117.11,"hyper_encode_ns":53.91}
+{"set":"get","run":3,"ours_ns":32.09,"floor_ns":12.29,"hyper_construct_encode_ns":152.29,"hyper_clone_encode_ns":116.63,"hyper_encode_ns":53.80}
+{"set":"get","run":4,"ours_ns":33.99,"floor_ns":13.14,"hyper_construct_encode_ns":164.27,"hyper_clone_encode_ns":120.96,"hyper_encode_ns":56.03}
+{"set":"get","run":5,"ours_ns":32.87,"floor_ns":12.83,"hyper_construct_encode_ns":158.78,"hyper_clone_encode_ns":115.92,"hyper_encode_ns":53.77}
+{"set":"get","run":6,"ours_ns":31.57,"floor_ns":12.39,"hyper_construct_encode_ns":154.83,"hyper_clone_encode_ns":114.13,"hyper_encode_ns":52.17}
+{"set":"post1k","run":0,"ours_ns":146.30,"floor_ns":55.32,"hyper_construct_encode_ns":631.62,"hyper_clone_encode_ns":343.20,"hyper_encode_ns":113.36}
+{"set":"post1k","run":1,"ours_ns":143.95,"floor_ns":48.51,"hyper_construct_encode_ns":586.05,"hyper_clone_encode_ns":369.03,"hyper_encode_ns":127.50}
+{"set":"post1k","run":2,"ours_ns":171.84,"floor_ns":63.23,"hyper_construct_encode_ns":674.05,"hyper_clone_encode_ns":390.20,"hyper_encode_ns":130.09}
+{"set":"post1k","run":3,"ours_ns":146.49,"floor_ns":48.48,"hyper_construct_encode_ns":576.87,"hyper_clone_encode_ns":354.20,"hyper_encode_ns":116.18}
+{"set":"post1k","run":4,"ours_ns":154.77,"floor_ns":50.53,"hyper_construct_encode_ns":613.46,"hyper_clone_encode_ns":355.54,"hyper_encode_ns":119.49}
+{"set":"post1k","run":5,"ours_ns":149.33,"floor_ns":48.49,"hyper_construct_encode_ns":584.79,"hyper_clone_encode_ns":337.98,"hyper_encode_ns":113.32}
+{"set":"post1k","run":6,"ours_ns":145.39,"floor_ns":47.09,"hyper_construct_encode_ns":632.34,"hyper_clone_encode_ns":335.16,"hyper_encode_ns":158.61}
+{"set":"varied","run":0,"ours_ns":253.79,"floor_ns":68.56,"hyper_construct_encode_ns":940.11,"hyper_clone_encode_ns":482.17,"hyper_encode_ns":158.05}
+{"set":"varied","run":1,"ours_ns":189.08,"floor_ns":63.51,"hyper_construct_encode_ns":944.14,"hyper_clone_encode_ns":470.15,"hyper_encode_ns":170.92}
+{"set":"varied","run":2,"ours_ns":186.17,"floor_ns":61.46,"hyper_construct_encode_ns":860.15,"hyper_clone_encode_ns":459.74,"hyper_encode_ns":242.94}
+{"set":"varied","run":3,"ours_ns":207.70,"floor_ns":68.99,"hyper_construct_encode_ns":1076.67,"hyper_clone_encode_ns":543.26,"hyper_encode_ns":171.69}
+{"set":"varied","run":4,"ours_ns":180.66,"floor_ns":62.70,"hyper_construct_encode_ns":871.70,"hyper_clone_encode_ns":503.41,"hyper_encode_ns":159.44}
+{"set":"varied","run":5,"ours_ns":230.45,"floor_ns":161.74,"hyper_construct_encode_ns":927.78,"hyper_clone_encode_ns":498.56,"hyper_encode_ns":203.31}
+{"set":"varied","run":6,"ours_ns":218.36,"floor_ns":75.08,"hyper_construct_encode_ns":1055.44,"hyper_clone_encode_ns":551.70,"hyper_encode_ns":192.36}
+
+write_request vs hyper 1.12 encoder emulation; 7 runs x 4 blocks, medians
+| set | ours ns | hyper construct+encode ns | ours / construct+encode | ours / clone+encode | our floor ns | hyper encode-only ns | our floor / hyper encode-only |
+|---|---|---|---|---|---|---|---|
+| `get` | 32.3 | 154.8 | 0.209 | 0.277 | 12.6 | 53.8 | 0.234 |
+| `post1k` | 146.5 | 613.5 | 0.239 | 0.414 | 48.5 | 119.5 | 0.406 |
+| `varied` | 207.7 | 940.1 | 0.221 | 0.417 | 68.6 | 171.7 | 0.399 |
+round 3 2026-11-08T18:03:57Z
+{"set":"get","run":0,"writer_ns":49.60,"floor_ns":20.26,"ratio":2.4485}
+{"set":"get","run":1,"writer_ns":63.41,"floor_ns":32.80,"ratio":1.9331}
+{"set":"get","run":2,"writer_ns":104.27,"floor_ns":27.00,"ratio":3.8621}
+{"set":"get","run":3,"writer_ns":116.91,"floor_ns":20.75,"ratio":5.6339}
+{"set":"get","run":4,"writer_ns":44.30,"floor_ns":17.85,"ratio":2.4815}
+{"set":"get","run":5,"writer_ns":45.14,"floor_ns":17.85,"ratio":2.5293}
+{"set":"get","run":6,"writer_ns":43.99,"floor_ns":17.50,"ratio":2.5145}
+{"set":"post1k","run":0,"writer_ns":195.09,"floor_ns":64.07,"ratio":3.0450}
+{"set":"post1k","run":1,"writer_ns":168.67,"floor_ns":54.08,"ratio":3.1187}
+{"set":"post1k","run":2,"writer_ns":166.35,"floor_ns":53.67,"ratio":3.0993}
+{"set":"post1k","run":3,"writer_ns":166.63,"floor_ns":54.55,"ratio":3.0547}
+{"set":"post1k","run":4,"writer_ns":162.19,"floor_ns":52.89,"ratio":3.0665}
+{"set":"post1k","run":5,"writer_ns":336.58,"floor_ns":56.10,"ratio":5.9991}
+{"set":"post1k","run":6,"writer_ns":162.81,"floor_ns":57.34,"ratio":2.8393}
+{"set":"varied","run":0,"writer_ns":154.75,"floor_ns":60.49,"ratio":2.5583}
+{"set":"varied","run":1,"writer_ns":171.12,"floor_ns":65.94,"ratio":2.5953}
+{"set":"varied","run":2,"writer_ns":202.47,"floor_ns":71.44,"ratio":2.8340}
+{"set":"varied","run":3,"writer_ns":170.77,"floor_ns":67.41,"ratio":2.5334}
+{"set":"varied","run":4,"writer_ns":198.53,"floor_ns":72.26,"ratio":2.7476}
+{"set":"varied","run":5,"writer_ns":258.89,"floor_ns":88.23,"ratio":2.9342}
+{"set":"varied","run":6,"writer_ns":231.77,"floor_ns":88.12,"ratio":2.6302}
+
+write_request vs copy floor; 7 runs x 4 blocks, median of per-run ratios
+| set | mean head B | writer ns (median) | floor ns (median) | ratio median | ratio min | ratio max |
+|---|---|---|---|---|---|---|
+| `get` | 146 | 49.6 | 20.3 | 2.514 | 1.933 | 5.634 |
+| `post1k` | 335 | 166.6 | 54.5 | 3.067 | 2.839 | 5.999 |
+| `varied` | 445 | 198.5 | 71.4 | 2.630 | 2.533 | 2.934 |
+{"set":"get","run":0,"ours_ns":41.98,"floor_ns":16.08,"hyper_construct_encode_ns":206.08,"hyper_clone_encode_ns":145.89,"hyper_encode_ns":72.90}
+{"set":"get","run":1,"ours_ns":40.23,"floor_ns":16.25,"hyper_construct_encode_ns":200.41,"hyper_clone_encode_ns":150.56,"hyper_encode_ns":65.63}
+{"set":"get","run":2,"ours_ns":38.33,"floor_ns":14.61,"hyper_construct_encode_ns":181.38,"hyper_clone_encode_ns":139.10,"hyper_encode_ns":65.07}
+{"set":"get","run":3,"ours_ns":46.21,"floor_ns":17.02,"hyper_construct_encode_ns":214.57,"hyper_clone_encode_ns":155.79,"hyper_encode_ns":74.28}
+{"set":"get","run":4,"ours_ns":44.66,"floor_ns":17.59,"hyper_construct_encode_ns":210.19,"hyper_clone_encode_ns":165.34,"hyper_encode_ns":74.41}
+{"set":"get","run":5,"ours_ns":45.43,"floor_ns":17.50,"hyper_construct_encode_ns":228.72,"hyper_clone_encode_ns":180.09,"hyper_encode_ns":81.33}
+{"set":"get","run":6,"ours_ns":49.29,"floor_ns":17.86,"hyper_construct_encode_ns":256.68,"hyper_clone_encode_ns":199.87,"hyper_encode_ns":87.82}
+{"set":"post1k","run":0,"ours_ns":183.79,"floor_ns":60.88,"hyper_construct_encode_ns":712.34,"hyper_clone_encode_ns":434.80,"hyper_encode_ns":136.46}
+{"set":"post1k","run":1,"ours_ns":166.98,"floor_ns":56.05,"hyper_construct_encode_ns":678.36,"hyper_clone_encode_ns":398.23,"hyper_encode_ns":126.96}
+{"set":"post1k","run":2,"ours_ns":182.35,"floor_ns":58.51,"hyper_construct_encode_ns":770.06,"hyper_clone_encode_ns":443.15,"hyper_encode_ns":139.61}
+{"set":"post1k","run":3,"ours_ns":187.44,"floor_ns":62.07,"hyper_construct_encode_ns":754.82,"hyper_clone_encode_ns":419.36,"hyper_encode_ns":136.46}
+{"set":"post1k","run":4,"ours_ns":159.74,"floor_ns":52.53,"hyper_construct_encode_ns":658.18,"hyper_clone_encode_ns":400.20,"hyper_encode_ns":126.17}
+{"set":"post1k","run":5,"ours_ns":184.97,"floor_ns":58.21,"hyper_construct_encode_ns":686.13,"hyper_clone_encode_ns":424.11,"hyper_encode_ns":142.34}
+{"set":"post1k","run":6,"ours_ns":157.65,"floor_ns":51.83,"hyper_construct_encode_ns":620.60,"hyper_clone_encode_ns":448.94,"hyper_encode_ns":127.34}
+{"set":"varied","run":0,"ours_ns":188.49,"floor_ns":62.51,"hyper_construct_encode_ns":855.45,"hyper_clone_encode_ns":464.27,"hyper_encode_ns":151.19}
+{"set":"varied","run":1,"ours_ns":185.09,"floor_ns":62.79,"hyper_construct_encode_ns":866.55,"hyper_clone_encode_ns":489.70,"hyper_encode_ns":153.92}
+{"set":"varied","run":2,"ours_ns":185.24,"floor_ns":62.40,"hyper_construct_encode_ns":869.39,"hyper_clone_encode_ns":533.96,"hyper_encode_ns":151.53}
+{"set":"varied","run":3,"ours_ns":185.70,"floor_ns":61.82,"hyper_construct_encode_ns":839.37,"hyper_clone_encode_ns":455.57,"hyper_encode_ns":145.94}
+{"set":"varied","run":4,"ours_ns":186.27,"floor_ns":61.20,"hyper_construct_encode_ns":853.75,"hyper_clone_encode_ns":462.47,"hyper_encode_ns":155.53}
+{"set":"varied","run":5,"ours_ns":186.57,"floor_ns":62.34,"hyper_construct_encode_ns":936.09,"hyper_clone_encode_ns":552.20,"hyper_encode_ns":167.18}
+{"set":"varied","run":6,"ours_ns":188.25,"floor_ns":62.47,"hyper_construct_encode_ns":867.14,"hyper_clone_encode_ns":475.99,"hyper_encode_ns":152.99}
+
+write_request vs hyper 1.12 encoder emulation; 7 runs x 4 blocks, medians
+| set | ours ns | hyper construct+encode ns | ours / construct+encode | ours / clone+encode | our floor ns | hyper encode-only ns | our floor / hyper encode-only |
+|---|---|---|---|---|---|---|---|
+| `get` | 44.7 | 210.2 | 0.212 | 0.287 | 17.0 | 74.3 | 0.229 |
+| `post1k` | 182.3 | 686.1 | 0.266 | 0.430 | 58.2 | 136.5 | 0.427 |
+| `varied` | 186.3 | 866.5 | 0.215 | 0.391 | 62.4 | 153.0 | 0.408 |

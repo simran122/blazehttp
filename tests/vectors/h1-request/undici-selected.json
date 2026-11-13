@@ -1,0 +1,703 @@
+{
+  "source": {
+    "project": "undici",
+    "url": "https://github.com/nodejs/undici/tree/779ee3e12cb8c1f365f6e69ee34b088159402d2f/test",
+    "tag": "v8.12.4",
+    "commit": "779ee3e12cb8c1f365f6e69ee34b088159402d2f",
+    "licence": "MIT",
+    "copyright": "Copyright (c) Matteo Collina and Undici contributors"
+  },
+  "cases": [
+    {
+      "name": "request-crlf / content-type with CRLF and a smuggled request",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-type: application/json\r\n\r\nGET /foo2 HTTP/1.1\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/request-crlf.js:should validate content-type CRLF Injection @ v8.12.4"
+    },
+    {
+      "name": "request-crlf / blob type with an injected line",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/endpoint",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-type: text/html\r\nX-Injected: true\r\n",
+        "headerLines": 1,
+        "body": "hello"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/request-crlf.js:should validate blob body content-type CRLF Injection @ v8.12.4"
+    },
+    {
+      "name": "headers-crlf / host from the user",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-type: application/json\r\nhost: 12 \r\n\r\naaa:aaa\r\n",
+        "headerLines": 2,
+        "body": "asd"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/headers-crlf.js:CRLF Injection in Nodejs ‘undici’ via host @ v8.12.4"
+    },
+    {
+      "name": "headers-crlf / host in the template",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "12 \r\n\r\naaa:aaa",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-type: application/json\r\n",
+        "headerLines": 1,
+        "body": "asd"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/headers-crlf.js:CRLF Injection in Nodejs ‘undici’ via host @ v8.12.4"
+    },
+    {
+      "name": "header-function-crlf / toString injects transfer-encoding",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "x-safe: legit\r\ntransfer-encoding: chunked\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/header-function-crlf.js:rejects function header value with CRLF via toString @ v8.12.4"
+    },
+    {
+      "name": "header-function-crlf / toPrimitive injects a line",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "x-safe: legit\r\nx-injected: yes\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/header-function-crlf.js:rejects function header value with CRLF via Symbol.toPrimitive @ v8.12.4"
+    },
+    {
+      "name": "header-function-crlf / array toString injects a line",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "x-safe: legit\r\nx-injected: via-array\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/header-function-crlf.js:rejects function header value in array element with CRLF via toString @ v8.12.4"
+    },
+    {
+      "name": "header-function-crlf / array toPrimitive injects a line",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "x-safe: legit\r\nx-injected: via-array-primitive\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/header-function-crlf.js:rejects function header value in array element with CRLF via Symbol.toPrimitive @ v8.12.4"
+    },
+    {
+      "name": "header-function-crlf / number and boolean values",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "x-num: 123\r\nx-bool: true\r\n",
+        "headerLines": 2,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET / HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nx-num: 123\r\nx-bool: true\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/header-function-crlf.js:still accepts number and boolean header values @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / content-length asd",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: asd\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / content-length 1.1",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: 1.1\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / content-length 10abc",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: 10abc\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / content-length -1",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: -1\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / transfer-encoding",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "transfer-encoding: chunked\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / upgrade",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: asd\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / connection",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "connection: invalid header with spaces\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / keep-alive",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "keep-alive: timeout=5\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / expect 100-continue",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "expect: 100-continue\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / Expect 100-continue",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "Expect: 100-continue\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "invalid-headers / expect asd",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "expect: asd\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/invalid-headers.js:invalid headers @ v8.12.4"
+    },
+    {
+      "name": "upgrade-crlf / crlf",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: websocket\r\n\r\nSET pwned true\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/upgrade-crlf.js:CRLF injection in upgrade header via CRLF sequence @ v8.12.4"
+    },
+    {
+      "name": "upgrade-crlf / lone cr",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: websocket\rinjected\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/upgrade-crlf.js:CRLF injection in upgrade header via lone CR @ v8.12.4"
+    },
+    {
+      "name": "upgrade-crlf / lone lf",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: websocket\ninjected\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/upgrade-crlf.js:CRLF injection in upgrade header via lone LF @ v8.12.4"
+    },
+    {
+      "name": "upgrade-crlf / nul",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: websocket\u0000injected\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/upgrade-crlf.js:CRLF injection in upgrade header via null byte @ v8.12.4"
+    },
+    {
+      "name": "upgrade-crlf / request option",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: websocket\r\n\r\nGET /smuggled HTTP/1.1\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/upgrade-crlf.js:CRLF injection in upgrade option via client.request @ v8.12.4"
+    },
+    {
+      "name": "upgrade-crlf / valid value",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "upgrade: websocket\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/upgrade-crlf.js:valid upgrade value is accepted @ v8.12.4"
+    },
+    {
+      "name": "headers-as-array / duplicate content-length different case",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "Content-Length: 5\r\ncontent-length: 0\r\n",
+        "headerLines": 2,
+        "body": "hello"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/headers-as-array.js:fail if duplicate content-length headers (different case) @ v8.12.4"
+    },
+    {
+      "name": "headers-as-array / duplicate content-length same case",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "POST",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: 5\r\ncontent-length: 0\r\n",
+        "headerLines": 2,
+        "body": "hello"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/headers-as-array.js:fail if duplicate content-length headers (same case) @ v8.12.4"
+    },
+    {
+      "name": "headers-as-array / duplicate host different case",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "Host: example.com\r\nhost: evil.com\r\n",
+        "headerLines": 2,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/headers-as-array.js:fail if duplicate host headers (different case) @ v8.12.4"
+    },
+    {
+      "name": "headers-as-array / duplicate host same case",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "host: example.com\r\nhost: evil.com\r\n",
+        "headerLines": 2,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/headers-as-array.js:fail if duplicate host headers (same case) @ v8.12.4"
+    },
+    {
+      "name": "content-length / user content-length on PUT",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "PUT",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: 10\r\n",
+        "headerLines": 1,
+        "body": "asd"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/content-length.js:request invalid content-length @ v8.12.4"
+    },
+    {
+      "name": "content-length / PUT without body sends zero",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "PUT",
+        "target": "/put0",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "PUT /put0 HTTP/1.1\r\nhost: 127.0.0.1:3999\r\ncontent-length: 0\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/content-length.js:content-length shouldSendContentLength=false @ v8.12.4"
+    },
+    {
+      "name": "content-length / HEAD sends none",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "HEAD",
+        "target": "/head",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "HEAD /head HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/content-length.js:content-length shouldSendContentLength=false @ v8.12.4"
+    },
+    {
+      "name": "content-length / GET sends none",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/get",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /get HTTP/1.1\r\nhost: 127.0.0.1:3999\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/content-length.js:content-length shouldSendContentLength=false @ v8.12.4"
+    },
+    {
+      "name": "query / string body with content-type",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "QUERY",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-type: application/json\r\n",
+        "headerLines": 1,
+        "body": "{\"query\":\"{user}\"}"
+      },
+      "expect": {
+        "bytes": "QUERY / HTTP/1.1\r\nhost: 127.0.0.1:3999\r\ncontent-type: application/json\r\ncontent-length: 18\r\n\r\n{\"query\":\"{user}\"}",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/query.js:QUERY with string body sends correctly @ v8.12.4"
+    },
+    {
+      "name": "query / empty body sends zero",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "QUERY",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "QUERY / HTTP/1.1\r\nhost: 127.0.0.1:3999\r\ncontent-length: 0\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/query.js:QUERY without body works @ v8.12.4"
+    },
+    {
+      "name": "query / body sends its length",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "QUERY",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": "hello"
+      },
+      "expect": {
+        "bytes": "QUERY / HTTP/1.1\r\nhost: 127.0.0.1:3999\r\ncontent-length: 5\r\n\r\nhello",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "test/query.js:QUERY sends content-length header @ v8.12.4"
+    },
+    {
+      "name": "query / user content-length",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "QUERY",
+        "target": "/",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "content-length: 10\r\n",
+        "headerLines": 1,
+        "body": "asd"
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "test/query.js:QUERY with content-length mismatch should error @ v8.12.4"
+    }
+  ]
+}

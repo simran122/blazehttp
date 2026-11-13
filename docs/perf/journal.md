@@ -359,3 +359,175 @@ Record every measured idea. Keep only measured wins.
 - **Kept / dropped:** no code change; the bound for the gate cells (a 1-CPU client keeps the server ≈ 30%) and the
   per-run < 60% assertion (Task 10) are recorded in the note.
 - **Commit:** see the PR that adds `crates/bench-server`.
+
+### 2026-11-08: `write_request` (Task 5) vs the copy floor, a hyper-1.12 encoder emulation and Go 1.27.3 (committed benches, dev numbers)
+
+*"Copy floor" in the three 2026-11-08 writer entries is the baseline renamed "unchecked appends" on 2026-11-13: it is
+not a lower bound, and its time moves with code layout (2026-11-13 entry). "hyper" there means our emulation of
+hyper 1.12's encoder (`bench/writer/hyper-emul`); no hyper code runs. Verdicts in these dev entries are indicative,
+not gate results.*
+
+- **Idea:** the chosen request writer (`docs/notes/request-writer.md` §1: pre-encoded template + re-validated delta,
+  one exact reservation, one buffer) against the copy floor (same bytes, same appends and framing, no checks), an
+  emulation of hyper 1.12's encoder (`bench/writer/hyper-emul`) and Go's `(*Request).Write` (`bench/writer/go`).
+- **Hypothesis:** within the provisional gates of note §8.4 (`post1k` ≤ 2.3×, `varied` ≤ 2.9× the floor; advisory
+  `get` ≤ 60 ns, `post1k` ≤ 250 ns, `varied` ≤ 300 ns) and ≤ 0.5× the hyper emulation.
+- **Method:** `cargo run --release -p engine-core --example h1_write_bench` (7 runs × 4 interleaved blocks × 100,000
+  requests, 100 ms warm-up, median of per-run ratios) and `cargo run --release --manifest-path
+  bench/writer/hyper-emul/Cargo.toml`, each binary run 3 rounds. Linux arm64: Docker Desktop on the owner's M2,
+  `rust:1-bookworm` (rustc 1.99.1), `--cpus=1` (`cpu.max = 100000 100000`), kernel 6.11.11-linuxkit, generic `aarch64`.
+  Go: `golang:1.27.3-bookworm`, `--cpus=1`, `GOMAXPROCS=1`, `-count 5 -benchmem`. macOS 26.4 on the same M2, default
+  target CPU. **Not a gate run:** other agents' containers were running; host load average 4–10.
+- **Numbers (Linux arm64, rounds 1 / 2 / 3; writer ns, floor ns, median ratio):** `get` (head 146 B) 20.8 / 9.6
+  (2.16), 23.0 / 10.6 (2.16), 55.2 / 26.9 (2.04); `post1k` (head 335 B + 1 KiB) 91.3 / 35.8 (2.55), 99.6 / 39.6 (2.51),
+  288.2 / 105.9 (2.79, loaded round); `varied` (mean head 440 B) 100.2 / 48.9 (2.04), 105.7 / 52.2 (2.05), 331.1 /
+  137.8 (2.38). An earlier quiet round (2026-11-08T07:14Z): 19.1 / 83.5 / 87.8 ns, ratios 2.19 / 2.58 / 2.04.
+  **vs hyper emulation (ours / clone + encode, ours / encode-only):** `get` 0.22–0.25 / 0.47–0.51, `post1k`
+  0.38–0.41 / 1.16–1.22, `varied` 0.33–0.34 / 0.98–1.02 — encode-only is hyper's serialisation floor without
+  validation, cloning or `content-length` construction, so the second ratio is not equal work (superseded by the fix
+  round 1 entry below). **Go** `(*Request).Write`: `get` 792–1,631 ns, 224 B, 5 allocations; `post1k` 1,514–2,210 ns,
+  328 B, 10 allocations, 2 of them the harness's body reader (removed in fix round 1) (ours: 0 allocations,
+  `tests/h1_writer_alloc.rs`). **macOS:** ratios
+  2.11–2.14 / 2.67–2.76 / 2.36–2.56; vs hyper emulation 0.18 / 0.30–0.32 / 0.31–0.33.
+- **Kept / dropped:** kept (the design of note §1). Indicative (dev run, not a gate run): below the advisory absolute
+  values (`get` ≤ 23 ns, `post1k` ≤ 100 ns, `varied` ≤ 106 ns in the unloaded rounds) and below the hyper-emulation
+  target (≤ 0.41×); **above** the provisional `post1k` gate (writer/floor 2.51–2.58× against ≤ 2.3×); `varied`
+  (2.04–2.05×) and `get` below theirs. The writer itself is
+  faster than the prototype (91 vs 111–220 ns) but the floor is faster too (36 vs 72–112 ns), and the checks added in
+  review (singletons, underscore spellings, line count, authority) cost ≈ 15 ns on `post1k` (next entry). The gates are
+  provisional until the 10 reference-host rounds (note §8.4); P1a's block classification is the planned lever.
+- **Commit:** Task 5 PR (`p0/writer`).
+
+### 2026-11-08: Request writer micro-variants (scratch A/B, not committed)
+
+- **Idea:** where the writer's time goes, and four candidate speed-ups: (a) `#[inline]` on `write_request` so it
+  inlines into the caller's loop across the crate boundary; (b) unrolled appends that skip empty pieces instead of a
+  loop over the 12-slice piece list; (c) a branch-free name-spelling fold; (d) a first-byte filter before name
+  classification; (e) a `name == canonical` fast path before the case-insensitive compare.
+- **Hypothesis:** (a) removes call and setup overhead; (b)–(e) shave the classification cost.
+- **Method:** a scratch crate with the writer's source copied per variant (same crate, so each inlines), timed on the
+  three request sets, 9 runs × 200,000 requests per variant, median; Linux arm64 container `--cpus=1`, 3 rounds. The
+  scratch crate was not committed, so (b)–(e) cannot be re-run from the repository; their drops are provisional. (a)
+  measured with the committed bench: three rounds of the inlined build, then three of the previous build, 15–20 s
+  later (not alternated: rounds 07:14:26–:32Z, then 07:14:47–:54Z).
+- **Numbers:** ablations (quiet round): `post1k` 74–79 ns full, 58–65 ns without classification, 44–46 ns without any
+  delta scan, 76–78 ns without the target check; `varied` 87–93 / 76–85 / 49–51 / 78–80 ns. (a) committed bench `get`
+  19.1 vs 29.7–38.4 ns, `post1k` 83.3–84.9 vs 105.8–123.5 ns, `varied` 87.8–99.5 vs 118.1–136.5 ns (ratios 2.17–2.20 vs
+  3.38–3.40, 2.56–2.58 vs 2.82–2.84, 2.04–2.11 vs 2.23–2.32; `docs/perf/logs/writer/bench-linux-inline.log` /
+  `docs/perf/logs/writer/bench-linux-3.log`). Between the two blocks the floor (same code in both builds) rose 13–34% on `post1k` and
+  `varied`, so the ns differences include host drift; the ratios do not. Both logs also hold a hyper-emulation section
+  that panicked at its byte-equality check ("both encoders write the same request", line 48 of each log, before its
+  `varied` rows); none of its rows is used here, only the writer rows above. (b) ±5%, mixed sign; (c) 0 to +2%; (d) 0 to −10% on `varied` only;
+  (e) −4% on `post1k` in 2 of 3 rounds, +33% in the third.
+- **Kept / dropped:** (a) kept: by writer/floor ratio `get` ≈ 35%, `post1k` ≈ 9%, `varied` ≈ 5–12% less time (the
+  ns figures first recorded here, 16–50%, included the drift above). (b)–(e) dropped: no win beyond noise
+  (provisional, scratch crate not committed).
+- **Commit:** Task 5 PR (`p0/writer`), `#[inline]` on `write_request`.
+
+### 2026-11-08: Request writer after review fix round 1 (committed benches, dev numbers)
+
+- **Idea:** re-measure after the review fixes (template line count, OPTIONS content type, `trailer`/`http2-settings`/
+  `proxy-` names, host and target rules, sensitive-name spelling, the module split) and replace the hyper comparison
+  with equal work (construct+encode, ruling of the review); record the regression found and its fix.
+- **Hypothesis:** the added rules cost little; the ≤ 0.5× hyper target still holds with equal work.
+- **Method:** as the 2026-11-08 entry above (Linux arm64 Docker `--cpus=1`, rustc 1.99.1; macOS host; Go in
+  `golang:1.27.3-bookworm`), 3 rounds each. Regression hunt: the pre-review tree (`fb80d32`, kept reachable by the tag
+  `notes/request-writer-task5`; same engine-core source as `12d82d7`) and the current tree built side by side as two
+  binaries and alternated in one container (`docs/perf/logs/writer/bench-ab-fr1.log`, `docs/perf/logs/writer/bench-ab-fr1-opt.log`; columns: set, mean
+  head B, writer ns, floor ns, median ratio, min, max), plus a scratch crate with ablations of the new writer (9 runs
+  × 200,000 requests, median; not committed). Host load average 4–37 during the hunt (other agents' jobs); dev
+  numbers, no gate claim.
+- **Numbers.** *Regression:* the first fix build was slower than the pre-review writer — `get` 35–38 vs 27 ns,
+  `post1k` 149–154 vs 116–119 ns, `varied` 213–231 vs 128–132 ns. Ablations: the target rule's sequential
+  in-query state and its `position` pass cost ≈ 22 ns on `varied`; the `_`-folding name compare ≈ 10–15 ns on
+  `post1k`; the `proxy-` prefix check and the sensitive-name loop ≈ 0–5 ns each. *Fix:* the target bytes are one
+  vectorisable fold with no carried state and the path is searched only when the target holds a backslash; names
+  try `eq_ignore_ascii_case` before folding. *After the fix* (A/B, same container, rounds 1 / 2 / 3,
+  `docs/perf/logs/writer/bench-ab-fr1-opt.log`; **current vs pre-review**): `get` 38.7 / 42.3 / 33.6 vs 29.1 / 33.3 / 29.7 ns, ratio
+  2.49 / 2.42 / 2.45 vs 2.17 / 2.16 / 2.18; `post1k` 148.4 / 175.3 / 137.2 vs 143.5 / 132.1 / 134.5 ns; `varied`
+  160.5 / 172.0 / 170.4 vs 167.1 / 168.5 / 160.8 ns. The two trees did not write the same `varied` and `post1k`
+  requests: fix round 1 added a `content-type` field to every `OPTIONS` request with a body (mean head 440 → 445 B)
+  and changed the `post1k` body bytes. **Regression kept: `get` +12–15% by ratio** (+13% in ns in the quietest round,
+  floor flat 13.5 → 13.7 ns); `post1k` +2–4% in ns in rounds 1 and 3. Owner: Task 5b (fix round 2 measured a
+  candidate, 2026-11-13 entry).
+  *Final rounds (Linux, writer / floor ns, median ratio):* `get` 31.0 / 12.8 (2.43), 33.4 / 13.4 (2.49), 49.6 / 20.3
+  (2.51); `post1k` 151.1 / 48.1 (3.02), 135.5 / 45.2 (3.01), 166.6 / 54.5 (3.07); `varied` 166.0 / 62.7 (2.58),
+  157.9 / 60.6 (2.62), 198.5 / 71.4 (2.63) (`docs/perf/logs/writer/bench-linux-fr1-final.log`). The floor's code is the same line for
+  line in both trees, yet it measured 13–21% faster in the current binary on `post1k` and `varied` in 5 of 6 round × set cells (round 2
+  `post1k`, a loaded round, +8%: 51.0 → 54.9 ns, `bench-ab-fr1-opt.log`; A/B above) with
+  more bytes to copy: its time moves with code layout, so these ratios are not comparable with the earlier entry's.
+  *Hyper-1.12 encoder emulation (ours / construct+encode):* `get` 0.209–0.212, `post1k` 0.239–0.266, `varied`
+  0.215–0.223 — the emulation builds its `HeaderMap` from `(name, value)` pairs inside the timed region while our
+  writer gets the delta already joined, so this is not equal input; the conservative figure is ours / clone+encode
+  0.28–0.29 / 0.41–0.43 / 0.39–0.42; *serialisation floors* (our copy floor / emulated encode-only): 0.23 /
+  0.41–0.46 / 0.40–0.41.
+  *Go* `(*Request).Write`, harness allocations removed: `get` 727–817 ns, 224 B, 5 allocations; `post1k` 1,294–1,524
+  ns, 264 B, 8 allocations (`docs/perf/logs/writer/bench-go-fr1.log`). *macOS:* ratios 2.36–2.37 / 3.13–3.26 / 2.92–3.06; ours /
+  construct+encode 0.15–0.16 / 0.17–0.19 / 0.15–0.17 (`docs/perf/logs/writer/bench-macos-fr1.log`).
+- **Kept / dropped:** kept. Both speed fixes are wins against the *first fix build*, not against the pre-review
+  writer: `get` stays 12–15% slower than before review (above). Indicative (dev runs): below the ≤ 0.5×
+  hyper-emulation target, also by the conservative clone+encode ratio; `varied` below ≤ 2.9× on Linux (2.58–2.63)
+  and **above it on macOS (2.92–3.06)**; `post1k` above ≤ 2.3× (3.0×), an accepted miss owned by Task 5b, which
+  also decides the exact-vs-amortised reservation growth. The owner's goal is to beat
+  every writer; the cross-language writer race is Task 5c.
+- **Commit:** Task 5 PR (`p0/writer`), fix round 1.
+
+### 2026-11-13: Request writer fix round 2 (one-binary A/B and committed benches, dev numbers, quiet machine)
+
+- **Idea:** measure fix round 2 (per-component target rule, canonical IPv6 hosts) against the pre-review writer and
+  fix round 1 in **one** binary, find the cause of the `get` slowdown since fix round 1 (review finding), and keep no
+  measured slowdown without a reason.
+- **Hypothesis:** the per-component target rule costs little if its byte check stays one vectorised fold.
+- **Method:** `docs/perf/harness/writer-ab/` (engine-core at `68c48f0` = pre-review, `abe8c87` = fix round 1, and the
+  fix-round-2 head, plus the `shape`, `appends` and `memcpy` baselines, all in one binary, rotated, 7 runs × 4
+  blocks, medians; 3 separate launches), then the committed benches. Binaries built first (`run.sh build`); `run.sh
+  measure` ran alone: the controller stopped every other agent and watched the machine (only the 3 bench containers,
+  one after another); Linux arm64 Docker on the owner's M2, `--cpus=1` pinned to vCPU 2, rustc 1.99.1,
+  `target-cpu=generic`. Dev runs on a quiet machine outside the nightly window: **not gate evidence**. Assembly read
+  with `cargo rustc --release -- --emit asm` (no timing). Ranges below are the three launches. Commits are named
+  after the rebase onto `milestone/p0` (`7a63a27`) and fix round 3's subject rewording, which left
+  `crates/engine-core`, `bench/writer` and the harness unchanged; the runs built the pre-rebase commits that each
+  log's `provenance.txt` names (`12d82d7` → `68c48f0`, `89a028c` → `abe8c87`, `1faf80d` → `d5151e9`, `82e2020` →
+  `81b2005`, `33a7710` → `a969f36`).
+- **Numbers.** *Run 1* (`d5151e9`, 256-entry flag table; load 3.60 → 3.28, 36 s; `docs/perf/logs/writer/fr2-run1/`):
+
+  | set | pre-review | fix round 1 | fix round 2 | shape | appends | memcpy |
+  |---|---|---|---|---|---|---|
+  | `get` | 18.3–19.1 | 21.2–22.8 | 21.0–22.7 | 20.3–21.7 | 17.8–18.6 | 4.3–4.5 |
+  | `post1k` | 79.5–83.3 | 93.4–98.9 | 91.7–97.2 | 34.8–36.2 | 31.9–33.3 | 17.8–18.5 |
+  | `varied` | 101.2–104.1 | 103.6–107.4 | 128.6–132.0 | 44.7–45.7 | 41.1–42.5 | 27.3–27.5 |
+
+  The table made `varied` 21–27% slower than fix round 1 (same-launch ratios). Cause, from the assembly: the table lookup is one
+  dependent load per byte, so the fold stays scalar (0 NEON instructions and 25 byte loads in `check_request`, against
+  55 vector instructions in fix round 1 and 32 pre-review); fix round 1 also calls `memchr` for its backslash search.
+  `get` and `post1k` stay 15–19% and 15–17% slower than pre-review (fix round 1: 16–19% and 17–19%). The committed bench in the
+  same run: writer / shape / appends / memcpy `get` 22.6 / 11.8 / 9.4 / 4.5, `post1k` 91.7 / 33.9 / 30.4 / 17.7,
+  `varied` 113.1 / 43.0 / 39.6 / 27.1 ns. The same `shape` code measured 11.8 ns there and 20.3–21.7 ns in the A/B
+  binary: at `get` size, code layout moves a baseline by ≈ 2×, so only same-binary comparisons are used here.
+  *Run 2* (`81b2005`; load 2.68 → 3.08, 37 s; `docs/perf/logs/writer/fr2-run2/`): the flags computed with
+  comparisons and selects instead of the table, plus skipping empty request pieces. `get` 41.1–44.3 (pre-review
+  17.7–19.0, fix round 1 20.6–22.0), `post1k` 113.8–114.3 (79.4–80.0 / 93.8–94.9), `varied` 133.1–136.1 ns (99.8–102.3
+  / 109.0–110.1). The fold vectorised (312 16-lane instructions) but its scalar loop for short targets compiled to
+  byte-dependent branches and a switch-table load; the check-free `shape` with the skip got slower in every set
+  (`get` 21.7–25.0, `post1k` 43.6–43.7, `varied` 53.2–53.7 ns against 20.3–21.7 / 34.8–36.2 / 44.7–45.7 in run 1).
+  *Run 3* (`a969f36`, fix round 1's fold structure with the per-component rule: one `&` fold over the bytes allowed
+  in every component, the per-component check only for a target holding `\`, `^`, `` ` ``, `{`, `}` or `'`; load
+  2.94 → 2.88, 34 s; `docs/perf/logs/writer/fr2-run3/`), same-launch ratios over the three launches: `varied` 0.90–1.03×
+  fix round 1 and 0.94–1.05× pre-review (fix round 1: 1.01–1.09× pre-review; launch 1's pre-review 121.2 ns is an
+  outlier against 101.8–104.1 in launches 2–3); `get` 1.01–1.02× fix round 1, 1.18–1.19× pre-review (fix round 1
+  1.16–1.18×); `post1k` 1.01–1.03× fix round 1, 1.17–1.21× pre-review (fix round 1 1.16–1.17×). Assembly: the fold
+  is vectorised (16 bytes per step, 8 for short targets) and its scalar remainder has no byte-dependent branch. The
+  committed bench in the same run: writer − shape `get` 10.0, `post1k` 58.5, `varied` 64.9 ns.
+  *Comparisons (runs 1 and 3, committed benches):* ours + join / hyper-emulation construct+encode 0.167–0.207 / 0.293–0.296 /
+  0.245–0.252, ours / clone+encode 0.263–0.266 / 0.414–0.416 / 0.386–0.402; Go `(*Request).Write` `get` 643–690 ns,
+  224 B, 5 allocations, `post1k` 1,036–1,238 ns, 264 B, 8 allocations.
+- **Kept / dropped:** the flag table, dropped (measured +21–27% on `varied`); the comparison-and-select flags,
+  dropped (measured: `get` ×2, `varied` no better); skipping empty pieces, dropped in this form (the check-free shape
+  measured slower in every set) and kept as a Task 5b open item (`ideas.md`). Both reverted in `4fe01fb`
+  ([controller's call], 2026-11-13). Kept: fix round 1's fold structure with the per-component rule (run 3: `varied`
+  back to fix round 1's time, `get`/`post1k` within 1–3% of fix round 1). **Not recovered, open:** `get` and `post1k`
+  stay 1.16–1.21× pre-review since fix round 1's safety checks; hypothesis: a per-call fixed cost in the checks fix
+  round 1 added (it shows on `get`, which has no per-request field; the check-free shape is not the cause). Task 5
+  merges at fix round 1's speed and Task 5b must win the gap back, then beat pre-review ([controller's call],
+  2026-11-13; `ideas.md`). The gate redefinition proposed for the owner is in the note §8.4 (Task 5b).
+- **Commit:** Task 5 PR (`p0/writer`), fix round 2 (`a969f36`; losses reverted in `4fe01fb`).

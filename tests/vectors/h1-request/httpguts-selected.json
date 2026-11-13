@@ -1,0 +1,2706 @@
+{
+  "source": {
+    "project": "golang.org/x/net",
+    "url": "https://github.com/golang/net/blob/3de643db506517b3e652a13cc0b56034cea6b8e6/http/httpguts/httplex_test.go",
+    "tag": "v0.62.0",
+    "commit": "3de643db506517b3e652a13cc0b56034cea6b8e6",
+    "licence": "BSD-3-Clause",
+    "copyright": "Copyright 2009 The Go Authors."
+  },
+  "cases": [
+    {
+      "name": "valid name / (empty)",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": ": v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestValidHeaderFieldName @ v0.62.0"
+    },
+    {
+      "name": "valid name / Accept Charset",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "Accept Charset: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestValidHeaderFieldName @ v0.62.0"
+    },
+    {
+      "name": "valid name / Accept-Charset",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "Accept-Charset: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nAccept-Charset: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestValidHeaderFieldName @ v0.62.0"
+    },
+    {
+      "name": "valid name / AccepT-EncodinG",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "AccepT-EncodinG: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nAccepT-EncodinG: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestValidHeaderFieldName @ v0.62.0"
+    },
+    {
+      "name": "valid name / CONNECTION",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "CONNECTION: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestValidHeaderFieldName @ v0.62.0"
+    },
+    {
+      "name": "valid name / résumé",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "rÃ©sumÃ©: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestValidHeaderFieldName @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x00",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0000b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x01",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0001b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x02",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0002b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x03",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0003b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x04",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0004b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x05",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0005b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x06",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0006b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x07",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0007b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x08",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\bb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x09",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\tb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x0a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\nb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x0b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u000bb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x0c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\fb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x0d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\rb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x0e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u000eb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x0f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u000fb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x10",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0010b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x11",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0011b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x12",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0012b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x13",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0013b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x14",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0014b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x15",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0015b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x16",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0016b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x17",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0017b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x18",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0018b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x19",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u0019b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x1a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u001ab: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x1b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u001bb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x1c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u001cb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x1d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u001db: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x1e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u001eb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x1f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\u001fb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x20",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x21",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a!b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na!b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x22",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\"b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x23",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a#b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na#b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x24",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a$b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na$b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x25",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a%b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na%b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x26",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a&b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na&b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x27",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a'b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na'b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x28",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a(b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x29",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a)b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x2a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a*b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na*b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x2b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a+b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na+b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x2c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a,b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x2d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a-b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na-b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x2e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a.b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na.b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x2f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a/b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x30",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a0b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na0b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x31",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a1b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na1b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x32",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a2b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na2b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x33",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a3b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na3b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x34",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a4b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na4b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x35",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a5b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na5b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x36",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a6b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na6b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x37",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a7b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na7b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x38",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a8b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na8b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x39",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a9b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na9b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x3a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a:b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x3b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a;b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x3c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a<b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x3d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a=b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x3e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a>b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x3f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a?b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x40",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a@b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x41",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aAb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naAb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x42",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aBb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naBb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x43",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aCb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naCb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x44",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aDb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naDb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x45",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aEb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naEb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x46",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aFb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naFb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x47",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aGb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naGb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x48",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aHb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naHb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x49",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aIb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naIb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x4a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aJb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naJb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x4b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aKb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naKb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x4c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aLb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naLb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x4d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aMb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naMb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x4e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aNb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naNb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x4f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aOb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naOb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x50",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aPb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naPb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x51",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aQb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naQb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x52",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aRb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naRb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x53",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aSb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naSb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x54",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aTb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naTb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x55",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aUb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naUb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x56",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aVb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naVb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x57",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aWb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naWb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x58",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aXb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naXb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x59",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aYb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naYb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x5a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aZb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naZb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x5b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a[b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x5c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a\\b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x5d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a]b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x5e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a^b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na^b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x5f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a_b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na_b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x60",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a`b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na`b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x61",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aab: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naab: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x62",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "abb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nabb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x63",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "acb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nacb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x64",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "adb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nadb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x65",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aeb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naeb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x66",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "afb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nafb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x67",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "agb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nagb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x68",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ahb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nahb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x69",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aib: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naib: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x6a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ajb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\najb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x6b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "akb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nakb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x6c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "alb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nalb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x6d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "amb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\namb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x6e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "anb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nanb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x6f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aob: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naob: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x70",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "apb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\napb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x71",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aqb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naqb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x72",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "arb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\narb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x73",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "asb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nasb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x74",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "atb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\natb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x75",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "aub: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naub: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x76",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "avb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\navb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x77",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "awb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nawb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x78",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "axb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\naxb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x79",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ayb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nayb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x7a",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "azb: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\nazb: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x7b",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a{b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x7c",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a|b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na|b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x7d",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a}b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x7e",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "a~b: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: 127.0.0.1:3999\r\na~b: v\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x7f",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ab: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x80",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ab: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x81",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ab: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "token rune / 0x82",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "127.0.0.1:3999",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "ab: v\r\n",
+        "headerLines": 1,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestIsTokenRune @ v0.62.0"
+    },
+    {
+      "name": "punycode host / www.google.com accepted",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "www.google.com",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: www.google.com\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / xn--c1ae0ajs.xn--p1ai accepted",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "xn--c1ae0ajs.xn--p1ai",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: xn--c1ae0ajs.xn--p1ai\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / xn--bcher-kva.de accepted",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "xn--bcher-kva.de",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: xn--bcher-kva.de\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / xn--bcher-kva.de:8080 accepted",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "xn--bcher-kva.de:8080",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: xn--bcher-kva.de:8080\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / [1::6]:8080 accepted",
+      "inputEncoding": "utf8",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "[1::6]:8080",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "bytes": "GET /x HTTP/1.1\r\nhost: [1::6]:8080\r\n\r\n",
+        "reuse": "allowed"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / гофер.рф must arrive punycoded",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "Ð³Ð¾ÑÐµÑ.ÑÑ",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / bücher.de must arrive punycoded",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "bÃ¼cher.de",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    },
+    {
+      "name": "punycode host / bücher.de:8080 must arrive punycoded",
+      "inputEncoding": "latin1",
+      "request": {
+        "method": "GET",
+        "target": "/x",
+        "templateHost": "bÃ¼cher.de:8080",
+        "templateFields": "",
+        "templateFieldLines": 0,
+        "headers": "",
+        "headerLines": 0,
+        "body": ""
+      },
+      "expect": {
+        "error": "ENGINE/internal"
+      },
+      "derivedFrom": "http/httpguts/httplex_test.go:TestPunycodeHostPort @ v0.62.0"
+    }
+  ]
+}

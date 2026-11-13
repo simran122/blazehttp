@@ -23,6 +23,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "h1_writer"
+path = "fuzz_targets/h1_writer.rs"
+test = false
+doc = false
+bench = false
+
 # Mirrors the root [workspace.lints] tables (this crate is its own workspace); pnpm policy checks they match.
 [lints.rust]
 deprecated = "deny"

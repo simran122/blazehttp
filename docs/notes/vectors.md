@@ -29,7 +29,8 @@ against the engine now; Vitest and the conformance suite (native and undici) run
 ```
 
 Validated by `tools/vectors/schema.ts` (`loadVectorFile`, strict: unknown keys are errors) and read in Rust by
-`crates/engine-core/tests/support/vectors.rs` (`load_suite`).
+`load_suite::<ResponseCase>` (`crates/engine-core/tests/support/response_vectors.rs`, over the shared index walk in
+`tests/support/vectors.rs`).
 
 | Field | Meaning |
 |---|---|
@@ -55,7 +56,7 @@ string with the case's encoding; the informational fields are validated by the T
 `{ "h1-response/llhttp-sample.json": ["engine-core:h1_response"] }`. `pnpm vectors:index`
 (`tools/vectors/check-index.ts`, run in CI) fails on files missing from the index, index entries without a file and
 entries without a suite. `load_suite` also panics on an unregistered `.json` file next to a suite's files and on a
-file without cases. The Rust loader is a module of the integration tests (`tests/support/vectors.rs`, included as a
+file without cases. The Rust loaders are modules of the integration tests (`tests/support/{vectors,response_vectors,request_vectors}.rs`, included as a
 submodule as in [The Book §11.3, "Submodules in Integration Tests"](https://doc.rust-lang.org/book/ch11-03-test-organization.html#submodules-in-integration-tests)),
 so it is not compiled into the crate; `serde`/`serde_json` are dev-dependencies only.
 
@@ -267,3 +268,78 @@ total exactly (or, for the field-count cases, `x-fill-NNNN: a`); status-line cas
 `r` bytes. Boundaries: status line 8,192 / 8,193 bytes; 100 / 101 fields; head 65,536 / 65,537 bytes; a 32,768-byte
 `103` head plus a final head totalling 65,536 / 65,537; a final status line that fits 8 KiB but not the budget left
 after a 65,436-byte interim head; 10 / 11 interim heads.
+
+## Request vectors (Task 5)
+
+`tests/vectors/h1-request/` holds request cases for the writer (`docs/notes/request-writer.md` §9.2–§9.4), suite
+`engine-core:h1_writer`. The case schema is chosen by the file's directory (`loadVectorFile` in
+`tools/vectors/schema.ts`: `h1-response/` → response case, `h1-request/` → request case; any other directory is an
+error), so no `kind` field is needed and unknown keys stay errors. Rust reads them with
+`load_suite::<RequestCase>` (`tests/support/request_vectors.rs`); the index walk in `tests/support/vectors.rs` is shared
+with the response cases (`tests/support/response_vectors.rs`), so both kinds get the same unregistered-file and
+empty-file panics.
+
+```json
+{
+  "name": "value / well-formed injected line",
+  "inputEncoding": "utf8",
+  "request": {
+    "method": "GET",
+    "target": "/x",
+    "templateHost": "127.0.0.1:3999",
+    "templateFields": "",
+    "templateFieldLines": 0,
+    "headers": "x-a: a\r\nc: d\r\n",
+    "headerLines": 1,
+    "body": ""
+  },
+  "expect": { "error": "ENGINE/internal" }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `inputEncoding` | As for responses; applies to every byte string of the case (request fields and `expect.bytes`). |
+| `request.method` | One of the generated `METHODS`. |
+| `request.target` | The origin-form target bytes. |
+| `request.templateHost`, `request.templateFields` | `HeaderTemplate::new(host, fields, field_lines, &[])` with `templateFieldLines` as `field_lines`; a template that fails to build is the case's result. |
+| `request.templateFieldLines` | The field count JS serialised into `templateFields` (`HeaderTemplate::new`'s `field_lines`, a `u16`), **not** the number of CRLFs present. |
+| `request.headers` | The per-request delta, `("name: value\r\n")*`. |
+| `request.headerLines` | The field count the JS layer passes (`RequestParts::header_lines`, a `u16`), **not** the number of CRLFs present: an injection case states what JS serialised. |
+| `request.body` | The body bytes. |
+| `request.connAuthority` | Optional; the connection's authority, `templateHost` when absent. |
+| `expect` | `{ "bytes": "<whole request>", "reuse": "allowed" \| "closeAfterExchange" }` or `{ "error": "CODE/detail" }` (an engine error, as for responses). |
+
+**Provenance of the own file.** `blazehttp-rules.json` cites the note at commit `3ab8c8a` (fix round 3), which the
+annotated tag `notes/request-writer-task5-fr3` keeps reachable whatever happens to the branch; the note's text at the
+pin is the text all 309 cases were derived from, the fix-round-2 and fix-round-3 rules included (verify-3 V3-1). The
+first pin, `482b8e3` (tag `notes/request-writer-task5`, review item 26), predates those rules and is kept only as
+history. A pinned commit may stop being an ancestor of the branch, or of `main` after the squash merge, once the
+branch is rebased; it then stays reachable only through its tag. Re-pin to a new tag whenever the note's rules
+change.
+
+**How the files were built.** Every case states its intended outcome; an independent model of the note's rules
+(§6.2–§7, written with plain per-byte loops and set lookups, outside the repository) computes the outcome and the exact
+bytes, and a case is written only when the two agree. The Rust runner (`injection_vectors` in `tests/h1_writer.rs`)
+then checks the writer against every case, so the writer, the model and the stated intent all agree. Limit cases
+follow one rule: the template is `host: 127.0.0.1:3999\r\n` (22 bytes) and a single `x-fill: a…a\r\n` line sizes the
+fields to exactly 65,536 / 65,537 bytes; targets are `/` plus `a` bytes (16,384 / 16,385); bodies are `b` bytes
+(65,536 / 65,537).
+
+| File | Source | Cases | Content |
+|---|---|---|---|
+| `h1-request/blazehttp-rules.json` | blazehttp (`MIT OR Apache-2.0`, no notice) | 309 | §9.2: bad bytes at start / middle / end of names, values and targets, smuggled requests, well-formed injected lines vs `headerLines`, latin1 truncation, every forbidden name in three cases and every underscore spelling, singleton repeats, every method × body cell, target forms, the three limits at their boundaries, error precedence, authority binding, template hosts; fix round 1 adds the template line count, OPTIONS `Content-Type`, `trailer` / `http2-settings` / `proxy-` names, host structure, `" < > \` in targets and the documented pass-through of non-singleton repeats; fix round 2 adds the per-component target rule (path `^`, `` ` ``, `{`, `}`, `\`; query `'`; bytes kept raw, dot segments and `%` not normalised) and canonical IPv6 hosts; fix round 3 adds canonical IPv4 hosts (a name that ends in a number) and targets with two `?` (the query starts at the first) |
+| `h1-request/undici-selected.json` | undici `v8.12.4` (MIT) | 38 | `test/request-crlf.js`, `headers-crlf.js`, `header-function-crlf.js`, `invalid-headers.js`, `upgrade-crlf.js`, `headers-as-array.js` (duplicate `content-length`/`host`, CVE-2026-1525), `content-length.js`, `query.js` |
+| `h1-request/go-selected.json` | Go `go1.27.3` (BSD-3-Clause) | 17 | `requestwrite_test.go` (`TestRequestWrite` cases 0, 3, 4, 5, 7, 8, 15, 16, 18, 19, 20, 25, 26; `TestRequestWriteTransport`), `request_test.go` (`TestRequestBadHostHeader`, `TestRequestBadUserAgent`) |
+| `h1-request/httpguts-selected.json` | golang.org/x/net `v0.62.0` (BSD-3-Clause) | 145 | `httplex_test.go`: `TestValidHeaderFieldName` (6), `TestIsTokenRune` (runes 0–130 as a name byte, 131), `TestPunycodeHostPort` (5 punycoded hosts accepted, 3 Unicode hosts rejected) |
+| `h1-request/hyper-selected.json` | hyper `v1.12.0` (MIT) | 5 | `src/proto/h1/role.rs` transfer-encoding / content-length encode tests, as reject-not-repair cases |
+
+**Where we differ from the upstream expectation (by design, note §3 "Reject, never repair"):** x/net's
+`TestValidHeaderFieldName` calls `CONNECTION` a valid name; it is a valid token but a forbidden field here, so
+`valid name / CONNECTION` expects `ENGINE/internal`. Go blanks an invalid
+Host, replaces CR/LF in values with SP, ignores a user `Content-Length` and sends `Keep-Alive`/`Proxy-Connection`;
+hyper rewrites a user `transfer-encoding` and drops `content-length`; undici accepts `connection`, `upgrade` (option)
+and DEL/0x80–0xFF in paths. Each of those is an error here. Not ported: Go's trailer cases (#78775; no trailers in 1.0,
+deferred with chunked uploads), `TestRequestInvalidMethod` (an unknown method is unrepresentable: `Method` is a closed
+enum and the codec rejects an unknown wire id), Go's `CONNECT` and absolute-form cases (P1b), and hyper's title-case
+and original-case tests (names are sent as given).

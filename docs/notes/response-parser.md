@@ -408,8 +408,9 @@ Final head:
     `wrapping_mul`/`wrapping_add` — bounded by 999, so it cannot wrap;
   - const table builder: `wrapping_add` on loop counters bounded by the loop condition;
   - `Content-Length`: `checked_mul`/`checked_add` (overflow is a `Malformed` value).
-- Enforcement in `grammar.rs` and `parser.rs`: `#![deny(clippy::indexing_slicing, clippy::arithmetic_side_effects,
-  clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable)]` (also in `parser/facts.rs`), with
+- Enforcement: `#![deny(clippy::indexing_slicing, clippy::arithmetic_side_effects,
+  clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable)]` once in `h1/mod.rs` (Task 5 hoisted
+  it from `grammar.rs`, `parser/mod.rs` and `parser/facts.rs`; it covers the writer too), with
   one exception: the `#[expect(clippy::indexing_slicing)]` on the const table builder (§6.2). The fuzz target runs with
   debug assertions and overflow checks on.
 

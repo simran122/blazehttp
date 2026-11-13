@@ -1,0 +1,127 @@
+//! The request sets of the writer benchmarks and the zero-allocation test (`docs/notes/request-writer.md` §8.1):
+//! `get` (template-only), `post1k` (1 KiB JSON + 3 fields) and the `varied` ring (mixed methods, targets of 8–200
+//! bytes, 0–6 extra fields of 4–80 value bytes, bodies of 0–2 KiB), generated deterministically. Shared by
+//! `tests/h1_writer_alloc.rs`, `examples/h1_write_bench.rs` and `bench/writer/hyper-emul`.
+
+use engine_core::generated::spec::Method;
+use engine_core::h1::RequestParts;
+
+pub const HOST: &[u8] = b"127.0.0.1:3999";
+/// The client's default fields of every set's template.
+pub const DEFAULTS: &[u8] =
+    b"accept: application/json, text/plain, */*\r\nuser-agent: blazehttp/0.0.0\r\naccept-encoding: gzip, br\r\n";
+/// The number of fields in [`DEFAULTS`].
+pub const DEFAULT_LINES: u16 = 3;
+const POST_BODY_LEN: usize = 1024;
+const VARIANTS: usize = 64;
+const VARIED: usize = 256;
+const VARIED_METHODS: [Method; 7] = [
+    Method::Get,
+    Method::Post,
+    Method::Put,
+    Method::Delete,
+    Method::Patch,
+    Method::Options,
+    Method::Query,
+];
+
+/// One owned request of a set.
+pub struct Request {
+    pub method: Method,
+    pub target: Vec<u8>,
+    /// `("name: value\r\n")*`.
+    pub headers: Vec<u8>,
+    /// The number of fields generated into `headers` (as JS counts entries, never from the bytes).
+    pub header_lines: u16,
+    pub body: Vec<u8>,
+}
+
+impl Request {
+    fn new(method: Method, target: Vec<u8>, fields: &[String], body: Vec<u8>) -> Self {
+        Self {
+            method,
+            target,
+            headers: fields.concat().into_bytes(),
+            header_lines: u16::try_from(fields.len()).expect("few fields"),
+            body,
+        }
+    }
+
+    /// The writer's view.
+    pub fn parts(&self) -> RequestParts<'_> {
+        RequestParts {
+            method: self.method,
+            target: &self.target,
+            headers: &self.headers,
+            header_lines: self.header_lines,
+            body: &self.body,
+        }
+    }
+}
+
+/// xorshift64: a fixed, seedable sequence (no dependency).
+fn next(state: &mut u64, bound: usize) -> usize {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    usize::try_from(*state % u64::try_from(bound).expect("small")).expect("small")
+}
+
+/// `GET /data/NN`: template-only requests (no per-request field, no body).
+pub fn get() -> Vec<Request> {
+    (0..VARIANTS)
+        .map(|i| {
+            Request::new(
+                Method::Get,
+                format!("/data/{i:02}").into_bytes(),
+                &[],
+                Vec::new(),
+            )
+        })
+        .collect()
+}
+
+/// `POST /api/items` with a 1 KiB JSON body and `content-type`, `x-request-id`, `authorization`.
+pub fn post1k() -> Vec<Request> {
+    (0..VARIANTS)
+        .map(|i| {
+            let fields = [
+                "content-type: application/json\r\n".to_owned(),
+                format!("x-request-id: 7f3c9a2e-{i:04}-4b8d-9e1f-2a6c8d0b4e{i:02}\r\n"),
+                format!("authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJiZW5jaCJ9.c2lnbmF0dXJl{i:02}\r\n"),
+            ];
+            Request::new(Method::Post, b"/api/items".to_vec(), &fields, json_body(i))
+        })
+        .collect()
+}
+
+/// A valid JSON object of exactly `POST_BODY_LEN` bytes: an array of items, padded with whitespace.
+fn json_body(i: usize) -> Vec<u8> {
+    let item = format!("{{\"id\":{i},\"name\":\"item-{i}\",\"tags\":[\"a\",\"b\"],\"v\":1.5}}");
+    let items = vec![item.as_str(); (POST_BODY_LEN - 16) / (item.len() + 1)].join(",");
+    let mut body = format!("{{\"items\":[{items}").into_bytes();
+    body.resize(POST_BODY_LEN - 2, b' ');
+    body.extend_from_slice(b"]}");
+    body
+}
+
+/// The varied ring of 256 requests.
+pub fn varied() -> Vec<Request> {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    (0..VARIED)
+        .map(|i| {
+            let count = next(&mut state, 7);
+            let mut fields: Vec<String> = (0..count)
+                .map(|f| format!("x-field-{f}: {}\r\n", "v".repeat(4 + next(&mut state, 77))))
+                .collect();
+            let target = [&b"/"[..], &vec![b'p'; 7 + next(&mut state, 193)]].concat();
+            let body = vec![b'b'; next(&mut state, 2049)];
+            let method = VARIED_METHODS[i % VARIED_METHODS.len()];
+            // OPTIONS content needs a content-type (RFC 9110 §9.3.7).
+            if method == Method::Options && !body.is_empty() {
+                fields.push("content-type: application/octet-stream\r\n".to_owned());
+            }
+            Request::new(method, target, &fields, body)
+        })
+        .collect()
+}

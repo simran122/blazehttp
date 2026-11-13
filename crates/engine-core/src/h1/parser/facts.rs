@@ -2,15 +2,6 @@
 //! `Content-Length`, `Transfer-Encoding` and `Connection` facts, folded as each validated field line completes, and
 //! the final head's `Framing` and keep-alive.
 
-#![deny(
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable
-)]
-
 use super::{Framing, HttpVersion, MALFORMED, SMUGGLING};
 use crate::generated::spec::ErrorCode;
 
