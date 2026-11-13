@@ -10,7 +10,9 @@
 - **Where heavy tools run** (plan "Process rules", resource limits): `cargo fuzz run` and `cargo mutants` never run
   on the host, and neither does a Miri run of more than about 30 s. Each runs alone in a capped container
   (`docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, source mounted read-only and copied inside); libFuzzer
-  gets `-rss_limit_mb=2048`; cargo-mutants runs with one job, at most 2 test threads and a test timeout of about 20 s.
+  gets `-rss_limit_mb=1536`, below the container's 2 GiB, so that it stops by itself and writes the reproducer before
+  the kernel kills the container (2048 is libFuzzer's default and equals the container limit); cargo-mutants runs
+  with one job, at most 2 test threads and a test timeout of about 20 s.
   The fuzz command above is the command inside that container.
 - **cargo-mutants:** no version is pinned yet. P0 Task 4d records the version it uses here when it first runs the
   mutation pass.

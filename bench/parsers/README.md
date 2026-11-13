@@ -57,8 +57,9 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
   other container is running (it never stops one).
 - Same CPU baseline everywhere: generic Armv8-A on arm64 (Rust `-C target-cpu=generic`, C/C++ `-march=armv8-a`, Zig
   `-mcpu=baseline`, Go `GOARM64=v8.0`). Nobody gets `native`. On x64 every row, ours and every rival, is built for
-  `x86-64-v3` (design §16.4, "Component micro-gates"); the x64 build flags are added with the first x64 run (plan
-  Task 4c).
+  `x86-64-v3`. Design §16.4 ("Component micro-gates") gives the rule and its reason: the C rivals choose their SIMD
+  paths at compile time, so at the plain `x86-64` baseline they would run scalar code. The x64 build flags are added
+  with the first x64 run (plan Task 4c).
 - Release flags per design §16.2: Rust release, fat LTO, `codegen-units = 1`; C/C++ `-O3 -DNDEBUG -flto=auto`; Zig
   `ReleaseFast`; Go default.
 - C/C++ compiler: GCC 14.2 (Debian 13) by default, pulled through the ECR mirror of Docker Hub's official Debian
@@ -77,8 +78,10 @@ records its versions and flags in `/versions.txt`, copied into the run's `meta` 
   (values in order per name) without the `Connection` and `Transfer-Encoding` fields it consumes into
   `resp.Close`/`resp.TransferEncoding` (checked through the facts instead). Any mismatch aborts the run.
 - Statistic: each round runs every parser once per workload. The start position rotates by one parser per round: the
-  order is cyclic, not random, so each parser always runs right after the same neighbour, and with fewer rounds than
-  parsers some parsers never start a round. Per invocation 100 ms warm-up, then blocks of 1,000 parses until
+  order is cyclic, not random, so a parser runs right after the same neighbour in every round except the one it
+  starts, and with fewer rounds than parsers some parsers never start a round. Plan Task 4c replaces the rotation
+  with a seeded shuffle for every round and workload (design §16.4). Per invocation 100 ms warm-up, then blocks of
+  1,000 parses until
   `--run-ms` (default 300, at most 60,000) elapses; ns/head per round. Reported: median and min–max ns over rounds,
   and the median and min–max of the per-round ratios **ours+fields / theirs** and **ours / theirs** (below 1: ours is
   faster). At least 5 rounds (default 7).
