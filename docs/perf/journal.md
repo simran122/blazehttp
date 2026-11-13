@@ -485,10 +485,11 @@ not gate results.*
   one after another); Linux arm64 Docker on the owner's M2, `--cpus=1` pinned to vCPU 2, rustc 1.99.1,
   `target-cpu=generic`. Dev runs on a quiet machine outside the nightly window: **not gate evidence**. Assembly read
   with `cargo rustc --release -- --emit asm` (no timing). Ranges below are the three launches. Commits are named
-  after the rebase onto `milestone/p0` (`7a63a27`), which left `crates/engine-core`, `bench/writer` and the harness
-  unchanged; the runs built the pre-rebase commits that each log's `provenance.txt` names (`12d82d7` → `68c48f0`,
-  `89a028c` → `abe8c87`, `1faf80d` → `d4855a2`, `82e2020` → `692c7bd`, `33a7710` → `caf019e`).
-- **Numbers.** *Run 1* (`d4855a2`, 256-entry flag table; load 3.60 → 3.28, 36 s; `docs/perf/logs/writer/fr2-run1/`):
+  after the rebase onto `milestone/p0` (`7a63a27`) and fix round 3's subject rewording, which left
+  `crates/engine-core`, `bench/writer` and the harness unchanged; the runs built the pre-rebase commits that each
+  log's `provenance.txt` names (`12d82d7` → `68c48f0`, `89a028c` → `abe8c87`, `1faf80d` → `d5151e9`, `82e2020` →
+  `81b2005`, `33a7710` → `a969f36`).
+- **Numbers.** *Run 1* (`d5151e9`, 256-entry flag table; load 3.60 → 3.28, 36 s; `docs/perf/logs/writer/fr2-run1/`):
 
   | set | pre-review | fix round 1 | fix round 2 | shape | appends | memcpy |
   |---|---|---|---|---|---|---|
@@ -503,13 +504,13 @@ not gate results.*
   same run: writer / shape / appends / memcpy `get` 22.6 / 11.8 / 9.4 / 4.5, `post1k` 91.7 / 33.9 / 30.4 / 17.7,
   `varied` 113.1 / 43.0 / 39.6 / 27.1 ns. The same `shape` code measured 11.8 ns there and 20.3–21.7 ns in the A/B
   binary: at `get` size, code layout moves a baseline by ≈ 2×, so only same-binary comparisons are used here.
-  *Run 2* (`692c7bd`; load 2.68 → 3.08, 37 s; `docs/perf/logs/writer/fr2-run2/`): the flags computed with
+  *Run 2* (`81b2005`; load 2.68 → 3.08, 37 s; `docs/perf/logs/writer/fr2-run2/`): the flags computed with
   comparisons and selects instead of the table, plus skipping empty request pieces. `get` 41.1–44.3 (pre-review
   17.7–19.0, fix round 1 20.6–22.0), `post1k` 113.8–114.3 (79.4–80.0 / 93.8–94.9), `varied` 133.1–136.1 ns (99.8–102.3
   / 109.0–110.1). The fold vectorised (312 16-lane instructions) but its scalar loop for short targets compiled to
   byte-dependent branches and a switch-table load; the check-free `shape` with the skip got slower in every set
   (`get` 21.7–25.0, `post1k` 43.6–43.7, `varied` 53.2–53.7 ns against 20.3–21.7 / 34.8–36.2 / 44.7–45.7 in run 1).
-  *Run 3* (`caf019e`, fix round 1's fold structure with the per-component rule: one `&` fold over the bytes allowed
+  *Run 3* (`a969f36`, fix round 1's fold structure with the per-component rule: one `&` fold over the bytes allowed
   in every component, the per-component check only for a target holding `\`, `^`, `` ` ``, `{`, `}` or `'`; load
   2.94 → 2.88, 34 s; `docs/perf/logs/writer/fr2-run3/`), same-launch ratios over the three launches: `varied` 0.90–1.03×
   fix round 1 and 0.94–1.05× pre-review (fix round 1: 1.01–1.09× pre-review; launch 1's pre-review 121.2 ns is an
@@ -522,11 +523,11 @@ not gate results.*
   224 B, 5 allocations, `post1k` 1,036–1,238 ns, 264 B, 8 allocations.
 - **Kept / dropped:** the flag table, dropped (measured +21–27% on `varied`); the comparison-and-select flags,
   dropped (measured: `get` ×2, `varied` no better); skipping empty pieces, dropped in this form (the check-free shape
-  measured slower in every set) and kept as a Task 5b open item (`ideas.md`). Both reverted in `24d19ac`
+  measured slower in every set) and kept as a Task 5b open item (`ideas.md`). Both reverted in `4fe01fb`
   ([controller's call], 2026-11-13). Kept: fix round 1's fold structure with the per-component rule (run 3: `varied`
   back to fix round 1's time, `get`/`post1k` within 1–3% of fix round 1). **Not recovered, open:** `get` and `post1k`
   stay 1.16–1.21× pre-review since fix round 1's safety checks; hypothesis: a per-call fixed cost in the checks fix
   round 1 added (it shows on `get`, which has no per-request field; the check-free shape is not the cause). Task 5
   merges at fix round 1's speed and Task 5b must win the gap back, then beat pre-review ([controller's call],
   2026-11-13; `ideas.md`). The gate redefinition proposed for the owner is in the note §8.4 (Task 5b).
-- **Commit:** Task 5 PR (`p0/writer`), fix round 2 (`caf019e`; losses reverted in `24d19ac`).
+- **Commit:** Task 5 PR (`p0/writer`), fix round 2 (`a969f36`; losses reverted in `4fe01fb`).
