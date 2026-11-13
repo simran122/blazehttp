@@ -133,9 +133,7 @@ pub fn write_request(
         .ok_or(RESOURCE_EXHAUSTED)?;
     out.try_reserve_exact(total)
         .map_err(|_| RESOURCE_EXHAUSTED)?;
-    // Up to six pieces are empty (a `get` has no fields, framing lines or body); skipping them saves a `memcpy` call
-    // each (docs/perf/journal.md, 2026-11-13).
-    for piece in pieces.into_iter().filter(|piece| !piece.is_empty()) {
+    for piece in pieces {
         out.extend_from_slice(piece);
     }
     Ok(framing.reuse())

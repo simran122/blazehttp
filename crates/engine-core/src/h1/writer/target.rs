@@ -13,25 +13,33 @@ const NOT_IN_QUERY: u8 = 1 << 1;
 /// Never emitted: controls, SP, DEL, non-ASCII, `#` (fragment), `"`, `<`, `>` (always percent-encoded).
 const NEVER: u8 = NOT_IN_PATH | NOT_IN_QUERY;
 
-/// The flags of one byte; 0 means "allowed in both components". Comparisons and selects only, never a table: a fold
-/// over this vectorises, while a 256-entry table costs one dependent load per byte and stays scalar (a table made
-/// `varied` 23–27% slower, docs/perf/journal.md, 2026-11-13).
+/// The flags of every byte; 0 means "allowed in both components".
+static TARGET_FLAGS: [u8; 256] = target_flags_table();
+
 #[expect(
-    clippy::needless_bitwise_bool,
-    reason = "`|` keeps the per-byte test branch-free so the fold vectorises; every operand is a cheap comparison"
+    clippy::indexing_slicing,
+    reason = "const fn: `get_mut` is not const on 1.99.1; `b` stays below 0x7F by the loop condition"
 )]
-fn byte_flags(b: u8) -> u8 {
-    let never = !b.is_ascii_graphic() | (b == b'#') | (b == b'"') | (b == b'<') | (b == b'>');
-    let not_in_path = (b == b'\\') | (b == b'^') | (b == b'`') | (b == b'{') | (b == b'}');
-    let not_in_query = b == b'\'';
-    (if never { NEVER } else { 0 })
-        | (if not_in_path { NOT_IN_PATH } else { 0 })
-        | (if not_in_query { NOT_IN_QUERY } else { 0 })
+const fn target_flags_table() -> [u8; 256] {
+    let mut table = [NEVER; 256];
+    let mut b: u8 = b'!';
+    while b <= b'~' {
+        table[b as usize] = match b {
+            b'#' | b'"' | b'<' | b'>' => NEVER,
+            b'\\' | b'^' | b'`' | b'{' | b'}' => NOT_IN_PATH,
+            b'\'' => NOT_IN_QUERY,
+            _ => 0,
+        };
+        b = b.wrapping_add(1); // b ≤ `~` (0x7E): cannot wrap
+    }
+    table
 }
 
-/// The union of the flags of `bytes`: one OR per byte, no branch and no carried component state.
+/// The union of the flags of `bytes`: one table load and one OR per byte, no branch and no carried component state.
 fn flags_of(bytes: &[u8]) -> u8 {
-    bytes.iter().fold(0, |flags, &b| flags | byte_flags(b))
+    bytes.iter().fold(0, |flags, &b| {
+        flags | TARGET_FLAGS.get(usize::from(b)).copied().unwrap_or(NEVER)
+    })
 }
 
 /// Origin-form: `/` first, then bytes the component allows. The common target holds no flagged byte, so one pass
@@ -57,13 +65,12 @@ pub(super) fn validate_target(target: &[u8]) -> Result<(), ErrorCode> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NEVER, NOT_IN_PATH, NOT_IN_QUERY, byte_flags};
+    use super::{NEVER, NOT_IN_PATH, NOT_IN_QUERY, TARGET_FLAGS};
 
-    /// Every byte's flags against the rule written out byte by byte.
+    /// The table against the rule written out byte by byte.
     #[test]
     fn flags_follow_the_whatwg_percent_encode_sets() {
-        for b in 0..=u8::MAX {
-            let flags = byte_flags(b);
+        for (b, &flags) in (0..=u8::MAX).zip(TARGET_FLAGS.iter()) {
             let expected = match b {
                 b'#' | b'"' | b'<' | b'>' => NEVER,
                 b'\\' | b'^' | b'`' | b'{' | b'}' => NOT_IN_PATH,
