@@ -222,7 +222,7 @@ Dependencies:
 - Tasks 17–20: gate runs need the nightly window, which the owner has not chosen yet. Until then, runs use `--dev` and do not count as gate evidence.
 - Task 20: the decision on `io_uring` funding (if triggered), and approval of the milestone PR. The x64 VM and its budget cap exist since 2026-11-07.
 
-**Owner decisions needed (open on 2026-11-13).** No task lead decides these; each line carries a recommendation. The gate questions from the design review (the G0 statistic, shared-limit cells, the size of the G0 matrix, the 128 MiB budget, the arm64 gate host) are in design §21 "Open owner decisions".
+**Owner decisions needed (open on 2026-11-13).** No task lead decides these; each line carries a recommendation. The questions from the design review (the G0/G1 statistic, shared-limit cells, the size of the G0 matrix, the 128 MiB budget, the arm64 gate host, gates without a rule, the mixed-load cell, the axios surface) are in design §21 "Open owner decisions".
 
 | Decision | Options | Recommendation |
 |---|---|---|
