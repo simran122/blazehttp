@@ -34,13 +34,14 @@ standard library's `format_into` (stable since 1.98.0); head and body in one buf
   caller's `header_lines` is counted independently of the bytes (one per entry it serialised); a caller that counts
   CRLFs in its own output disables that check, and the writer cannot tell. That count is a contract on
   `RequestParts` (§6.6), and each producer states where its count comes from (P2 §10.4, P1b §10.3).
-- **Measured (committed benches, dev, Linux arm64 container, `docs/perf/journal.md` 2026-11-08 fix round 1):** the
-  writer costs **≈ 31–50 ns** for a template-only `GET` and **≈ 136–167 ns** for a `POST` with a 1 KiB JSON body and 3
-  extra headers — **0.21× (GET) and 0.24–0.27× (POST)** an emulation of hyper 1.12's encoder (no hyper code
-  runs; target parsed and every per-request field built per call, construct+encode; 0.28–0.43× against its
-  clone+encode, the conservative figure), and ≈ 0.73–0.82 µs / 1.3–1.5 µs
-  with 5 / 8 allocations for Go 1.27.3 `(*Request).Write`. (The prototype numbers of §8.2 were 28–35 / 110–220 ns.) Against the ≈ 5 µs CPU budget of a whole request (design
-  §1-F) the writer is ≈ 0.5–4%.
+- **Measured (committed benches, dev, Linux arm64 container on a quiet machine, `docs/perf/journal.md` 2026-11-13
+  fix round 2):** the writer costs **≈ 21–23 ns** for a template-only `GET` and **≈ 92–100 ns** for a `POST` with a
+  1 KiB JSON body and 3 extra headers — **0.17–0.21× (GET) and 0.29–0.30× (POST)** an emulation of hyper 1.12's
+  encoder fed the same `(name, value)` pairs (ours + join / construct+encode; no hyper code runs; target parsed and
+  every per-request field built per call; 0.26–0.42× against its clone+encode, the conservative figure), and
+  ≈ 0.64–0.69 µs / 1.0–1.2 µs with 5 / 8 allocations for Go 1.27.3 `(*Request).Write`. In one binary, `get` and
+  `post1k` are 1.16–1.21× the pre-review writer since fix round 1's safety checks (open, Task 5b, §10.5); `varied`
+  is at fix round 1's time. Against the ≈ 5 µs CPU budget of a whole request (design §1-F) the writer is ≈ 0.4–2%.
 
 **Interface changes to the brief** (§6.6), each justified there:
 - `HeaderTemplate::new(host, fields, field_lines, sensitive_names)` takes **wire bytes**, in the same
@@ -734,11 +735,11 @@ keep correct. Stability was confirmed by the review by compiling and running it 
   template-only `GET` (no delta, so no value scan runs) V1 was 4% and 14% faster than V2 and V3 7% faster in run 3,
   differences of the size that rejected V3 elsewhere; two loaded runs decide nothing there. V2 is chosen for the
   sets with fields and because it reuses the parser's primitives (DRY).
-- *(prototype only, superseded by the fix-round-2 ablation in §8.4)* Validation costs 0.5–1.5× the copy floor.
+- *(prototype only, superseded by `writer − shape` in §8.4)* Validation costs 0.5–1.5× the copy floor.
 - *(prototype)* hyper's serialisation alone (encode-only, map pre-built, no validation) measured 1.33–1.59× our full
   prototype writer on `post1k`/`varied`. That compares a floor with a validating writer; the committed bench compares
-  the emulation's construct+encode with our writer (0.21–0.27×; equal input shape only in the "ours + join" row added
-  in fix round 2, and 0.28–0.43× against clone+encode, the conservative figure) and floors with floors (our copy floor
+  the emulation's construct+encode with our writer fed the same pairs (ours + join, 0.17–0.30× in fix round 2;
+  0.26–0.42× against clone+encode, the conservative figure) and floors with floors (our copy floor
   / emulated encode-only: 0.23–0.46×), §8.4.
 - *(prototype only)* The measured prototype did not yet include the checks added in review rounds 1 and 2; the
   provisional gates were set with a 15% margin for them. The margin did not hold (§8.4).
@@ -815,9 +816,14 @@ atomic block (`writev(2)`), and with `TCP_NODELAY` a second write is sent "as so
   4. A check that `out.capacity()` ≤ `MAX_P0_REQUEST_BYTES` (§6.7). Growth policy (exact reservations reallocate on
      each new high, bounded by `MAX_P0_REQUEST_BYTES`): measured and decided by Task 5b (item 31).
 
-**Measured (fix round 1, `docs/perf/journal.md`; dev, indicative):** `get` 2.43–2.51×, `post1k` 3.01–3.07× (above
-its gate: the accepted miss, owned by Task 5b), `varied` 2.58–2.63× the copy floor (now "unchecked appends") on
-Linux; ours / hyper-emulation construct+encode 0.21–0.27× (clone+encode, the conservative figure: 0.28–0.43×).
+**Measured (fix round 2, `docs/perf/journal.md` 2026-11-13 run 3; dev on a quiet machine, indicative):**
+writer / unchecked appends `get` 2.29×, `post1k` 3.01× (above its gate: the accepted miss, owned by Task 5b),
+`varied` 2.62×; `writer − shape` (the checks' cost) `get` 10.0, `post1k` 58.5, `varied` 64.9 ns; ours + join /
+hyper-emulation construct+encode 0.17–0.30× (clone+encode, the conservative figure: 0.26–0.42×). One-binary A/B
+against earlier revisions (same-launch ratios): `varied` 0.90–1.03× fix round 1; `get` 1.18–1.19× and `post1k`
+1.17–1.21× pre-review, as since fix round 1 (1.16–1.18× / 1.16–1.17×): Task 5 merges at fix round 1's speed and
+Task 5b wins the gap back ([controller's call], §10.5). Fix round 1's numbers: `get` 2.43–2.51×, `post1k`
+3.01–3.07×, `varied` 2.58–2.63× the then "copy floor" (journal 2026-11-08).
 
 **Ratio gates: PROVISIONAL.** They hold until 10 rounds have run on the reference host in the nightly window *and*
 on the x64 VM. After that the thresholds are reset from the median and bootstrap 95% CI (design §16.4); journal and
@@ -837,7 +843,7 @@ decides, the ratio gates above stay as written and are reported with the ns diff
 
 **Comparison targets** (reported in the PR and `journal.md`, not gated in P0): ≤ 0.5× the hyper-encoder emulation
 (no hyper code runs until Task 5c): reported as ours + join / construct+encode (equal input shape) and ours /
-clone+encode (the conservative figure; dev 0.28–0.43×), with Go for context.
+clone+encode (the conservative figure; dev 0.26–0.42× in fix round 2), with Go for context.
 The owner's goal is to beat every writer; the cross-language writer race is Task 5c.
 
 **Share of a request:** ≈ 0.03–0.22 µs of ≈ 5 µs CPU (design §1-F). The parser takes ≈ 0.05–0.27 µs
@@ -846,7 +852,8 @@ The owner's goal is to beat every writer; the cross-language writer race is Task
 **P1a:** `value_len` and `token_len` become `engine-simd` block classification
 (`docs/notes/simd-scanning-research.md` §6.1). The delta block is contiguous, so it can be classified in one call.
 **Target (defined, fix round 2, W2):** P1a halves `writer − shape` on `post1k` and on `varied` (the cost of every
-check, §8.1), measured with the one-binary rotated bench against the fix-round-2 value in the journal. The earlier
+check, §8.1), measured with the one-binary rotated bench against the fix-round-2 value in the journal (run 3:
+`post1k` 58.5 ns, `varied` 64.9 ns). The earlier
 "validation overhead ≤ 50 ns" named no quantity: the delta scan alone was ≈ 30 ns (already met) and writer − floor
 90–112 ns (missed by 2×). The fixed cost on `get` (no delta) is not a classification cost and is Task 5b's (§10.5).
 **G0:** Task 7's harness reports CPU µs per request end to end; the
@@ -1223,8 +1230,10 @@ Proxy tests:
 - **Budget hook (X6):** `required_len(parts, template)`, §6.7.
 - **Criterion benches:** the example benches are replaced (#23).
 - **Task 5b:** the `post1k` writer/appends gate (accepted miss in Task 5), the gate redefinition proposed in §8.4
-  (owner decision), the writer's fixed cost on `get` (`shape − appends` and `writer − shape`, §8.4; the 12-piece
-  append list is the first suspect), and the exact-vs-amortised reservation growth (item 31: each new high
+  (owner decision), **winning back the `get`/`post1k` time lost to fix round 1's safety checks and then beating the
+  pre-review writer** (1.16–1.21× pre-review in one binary, journal 2026-11-13 run 3; hypothesis: a per-call fixed
+  cost in the added checks, since the check-free shape is not the cause and skipping empty pieces measured slower;
+  `ideas.md`), and the exact-vs-amortised reservation growth (item 31: each new high
   reallocates; measure `try_reserve` with the §6.7 shrink bound and add a growth test).
 
 ## 11. Design changes (accepted; applied in the Task 5 PR)

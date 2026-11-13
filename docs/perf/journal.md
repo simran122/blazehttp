@@ -503,11 +503,24 @@ not gate results.*
   / 109.0–110.1). The fold vectorised (312 16-lane instructions) but its scalar loop for short targets compiled to
   byte-dependent branches and a switch-table load; the check-free `shape` with the skip got slower in every set
   (`get` 21.7–25.0, `post1k` 43.6–43.7, `varied` 53.2–53.7 ns against 20.3–21.7 / 34.8–36.2 / 44.7–45.7 in run 1).
-  *Comparisons (run 1, committed benches):* ours + join / hyper-emulation construct+encode 0.207 / 0.293 / 0.252,
-  ours / clone+encode 0.263 / 0.414 / 0.402; Go `(*Request).Write` `get` 643–669 ns, 224 B, 5 allocations, `post1k`
-  1,036–1,134 ns, 264 B, 8 allocations.
+  *Run 3* (`33a7710`, fix round 1's fold structure with the per-component rule: one `&` fold over the bytes allowed
+  in every component, the per-component check only for a target holding `\`, `^`, `` ` ``, `{`, `}` or `'`; load
+  2.94 → 2.88, 34 s; `docs/perf/logs/writer/fr2-run3/`), same-launch ratios over the three launches: `varied` 0.90–1.03×
+  fix round 1 and 0.94–1.05× pre-review (fix round 1: 1.01–1.09× pre-review; launch 1's pre-review 121.2 ns is an
+  outlier against 101.8–104.1 in launches 2–3); `get` 1.01–1.02× fix round 1, 1.18–1.19× pre-review (fix round 1
+  1.16–1.18×); `post1k` 1.01–1.03× fix round 1, 1.17–1.21× pre-review (fix round 1 1.16–1.17×). Assembly: the fold
+  is vectorised (16 bytes per step, 8 for short targets) and its scalar remainder has no byte-dependent branch. The
+  committed bench in the same run: writer − shape `get` 10.0, `post1k` 58.5, `varied` 64.9 ns.
+  *Comparisons (runs 1 and 3, committed benches):* ours + join / hyper-emulation construct+encode 0.167–0.207 / 0.293–0.296 /
+  0.245–0.252, ours / clone+encode 0.263–0.266 / 0.414–0.416 / 0.386–0.402; Go `(*Request).Write` `get` 643–690 ns,
+  224 B, 5 allocations, `post1k` 1,036–1,238 ns, 264 B, 8 allocations.
 - **Kept / dropped:** the flag table, dropped (measured +21–27% on `varied`); the comparison-and-select flags,
   dropped (measured: `get` ×2, `varied` no better); skipping empty pieces, dropped in this form (the check-free shape
   measured slower in every set) and kept as a Task 5b open item (`ideas.md`). Both reverted in `2466bd5`
-  ([controller's call], 2026-11-13). Run 3 measures fix round 1's fold structure with the per-component rule.
-- **Commit:** Task 5 PR (`p0/writer`), fix round 2.
+  ([controller's call], 2026-11-13). Kept: fix round 1's fold structure with the per-component rule (run 3: `varied`
+  back to fix round 1's time, `get`/`post1k` within 1–3% of fix round 1). **Not recovered, open:** `get` and `post1k`
+  stay 1.16–1.21× pre-review since fix round 1's safety checks; hypothesis: a per-call fixed cost in the checks fix
+  round 1 added (it shows on `get`, which has no per-request field; the check-free shape is not the cause). Task 5
+  merges at fix round 1's speed and Task 5b must win the gap back, then beat pre-review ([controller's call],
+  2026-11-13; `ideas.md`). The gate redefinition proposed for the owner is in the note §8.4 (Task 5b).
+- **Commit:** Task 5 PR (`p0/writer`), fix round 2 (`33a7710`; losses reverted in `2466bd5`).

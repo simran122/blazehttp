@@ -1,0 +1,14 @@
+goos: linux
+goarch: arm64
+pkg: github.com/simran122/blazehttp/bench/writer/go
+BenchmarkGet    	 1556469	       652.6 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1816743	       659.4 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1788817	       690.3 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1876543	       684.6 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1897417	       677.6 ns/op	     224 B/op	       5 allocs/op
+BenchmarkPost1k 	 1000000	      1179 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	  895432	      1185 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1144 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1238 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1164 ns/op	     264 B/op	       8 allocs/op
+PASS
