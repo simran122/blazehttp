@@ -129,11 +129,17 @@ fn stop_signal() -> io::Result<impl Future<Output = ()> + Send + 'static> {
     })
 }
 
-/// Completes on Ctrl-C (the only stop request outside Unix).
+/// Completes on Ctrl-C (the only stop request outside Unix). Ctrl-C is registered on first poll; if that fails, the
+/// failure is reported and the server keeps running instead of stopping at once.
 #[cfg(not(unix))]
 fn stop_signal() -> io::Result<impl Future<Output = ()> + Send + 'static> {
     Ok(async {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            report(&format!(
+                "bench-server: cannot listen for Ctrl-C ({e}); stop the process another way"
+            ));
+            std::future::pending::<()>().await;
+        }
     })
 }
 
