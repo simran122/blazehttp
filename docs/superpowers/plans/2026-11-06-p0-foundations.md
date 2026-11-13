@@ -1,6 +1,6 @@
 # blazehttp P0 Foundations Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** execute this plan task by task with the `implementation-plan` skill: one task-lead agent per task, which also runs that task's review loop ("Process rules"). Steps use checkbox (`- [ ]`) syntax. The record of what is done is the "Plan status" table; the checkboxes of the tasks merged before 2026-11-13 were never ticked and are not back-filled **[author's call: one record, not two]**.
 
 **Goal:** Deliver design phase P0 (weeks 1–3): the monorepo with CI on 8 targets, packaging dry-run, `spec.json` codegen, the vector import pipeline, G0/G1/leaderboard harness skeletons, the Rust G0 competitors, the quick cross-language baseline, a minimal own HTTP/1.1 engine prototype driven from Rust and from Node, and the measurements that settle the open P0 items (design §22). P0 is accepted when the prototype engine is ≥ hyper `client::conn` in the G0 plaintext reference cell.
 
@@ -14,43 +14,51 @@
 
 Every task must also meet these. Values are copied from the design.
 
-- Rust **edition 2024**, stable toolchain only, pinned in `rust-toolchain.toml` to the stable release that is current when Task 1 runs (MSRV = that release, recorded in `docs/notes/toolchain.md`). Nightly is allowed only for Miri and `cargo-fuzz`, on a pinned nightly date (§6.3). The local machine has rustc 1.91.1, which is too old: run `rustup update stable` first.
+- Rust **edition 2024**, stable toolchain only, pinned in `rust-toolchain.toml` to the stable release that is current when Task 1 runs (MSRV = that release, recorded in `docs/notes/toolchain.md`). Nightly is allowed only for Miri and `cargo-fuzz`, on a pinned nightly date (§6.3). Task 1 pinned `1.99.1` (`rust-toolchain.toml`).
 - `engine-core` declares `#![forbid(unsafe_code)]`. `unsafe` is allowed only in `engine-simd` (P1a) and `node-binding`, and every block needs a `// SAFETY:` comment (G7).
 - Lints come from the workspace (`[workspace.lints]`, and every crate sets `[lints] workspace = true`): `deprecated = "deny"`, clippy `pedantic` deny, `clippy::await_holding_refcell_ref` deny. CI runs with `RUSTFLAGS=-D warnings`. These attributes are forbidden anywhere and the policy check enforces it: `#[allow(deprecated)]`, `#[allow(dead_code)]`, `#[allow(unused…)]`, and the same names inside `expect(...)` (§14.1–14.2).
 - Release profile: `lto = "fat"`, `codegen-units = 1`, `panic = "unwind"`. `node-binding` asserts `panic = "unwind"` at compile time (§11.3).
-- Never use an HTTP engine as the engine. hyper, reqwest, ureq, isahc, h2 and undici are allowed only as **benchmark competitors** inside `engine-bench` and `bench/`. `engine-core` and `node-binding` may depend only on infrastructure crates: tokio, rustls/tokio-rustls, decoders, `url`/`idna`, `memchr`, `parking_lot`, `mimalloc`, napi-rs/napi-sys (§14).
+- Never use an HTTP engine as the engine. hyper, reqwest, ureq, isahc, h2 and undici are allowed only as **benchmark competitors** inside `engine-bench` and `bench/`. `engine-core` and `node-binding` may depend only on infrastructure crates: tokio, rustls/tokio-rustls, decoders, `url`/`idna`, `parking_lot`, `mimalloc`, napi-rs/napi-sys (§14). `memchr` left this list on 2026-11-13: the parser scans with its own fused loop and SWAR (Task 4), so nothing depends on it.
 - Nothing deprecated anywhere. That covers `@typescript-eslint/no-deprecated` as an error, tests run with `--throw-deprecation`, no Node `DEP*` APIs, and only documented APIs (`buf.write(str, off, 'latin1')`, not `latin1Write`). CI fails on a deprecated npm dependency. Actions stay on current majors (§14.1).
 - No unused code. `knip`, `noUnusedLocals`, `noUnusedParameters`, `cargo-shear` and `cargo hack --each-feature` must all be clean. Every `TODO`/`FIXME` links an issue (`TODO(#123):`). Temporary code carries `removal: <version|condition> (#issue)`. Commented-out code is rejected (§14.2).
 - TypeScript: `strict`, no `any`, lookup maps instead of `switch`, and only `Error` may be extended. Rust: exhaustive `enum` + `match`, no `Box<dyn …>` on the hot path (§13).
 - No `postinstall`. `@blazehttp/<target>` packages are exact-pinned `optionalDependencies`. Build with `napi build --no-js` plus our own loader with a SHA-256 integrity check (§12).
 - Licence is `MIT OR Apache-2.0`. Ported vectors keep their copyright notice in the vector file and in `THIRD_PARTY_NOTICES`. No third-party code goes into the npm packages (§6.1).
-- Coverage: ≥ 95% for TS and ≥ 90% for Rust (G7).
+- Coverage: ≥ 95% for TS and ≥ 90% for Rust (G7). CI enforces the Rust figure from Task 15a on. Until Task 15a merges, CI runs `cargo test --workspace`. A step of this plan that says `cargo nextest run` may use `cargo test` with the same arguments until then. The task lead reports the `cargo llvm-cov` figure in the PR.
 - The 8 targets: `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`, `linux-x64-musl`, `linux-arm64-gnu`, `linux-arm64-musl`, `win32-x64-msvc`, `win32-arm64-msvc`. CI runners: `macos-15`, `macos-15-intel`, `ubuntu-24.04`, `ubuntu-24.04-arm` (musl through `docker run` on Alpine), `windows-2025`, `windows-11-arm` (§14).
 - Node floor is `>=22.19` (`engines`). Benchmarks run on Node 24 LTS and Node 26 (§16.1).
 - Every queue, buffer and cache is bounded. When a bound is hit the request fails fast with a typed error and never blocks (G6).
 - Benchmark host rules:
   - The arm64 reference host is the owner's Mac with Docker Desktop at 8 CPUs.
-  - Gate runs happen **only inside the nightly window**, and the owner keeps other containers stopped then. **Never stop the owner's containers.** The harness aborts if a container it did not start is running.
+  - On the arm64 reference host, gate runs happen **only inside the nightly window**, and the owner keeps other containers stopped then. **Never stop the owner's containers.** The harness aborts if a container it did not start is running.
+  - Runs there outside the window are **dev** runs: labelled `dev` in the file name and the data, never gate evidence. A dev benchmark still needs a quiet machine ("Resource limits"). The x64 VM has no window: a run there is gate evidence when it is a gate run with nothing else running on the VM (design §16.4).
   - The G0 server gets ≥ 4 CPUs and the client gets 1 CPU. A run is discarded when server CPU is ≥ 60% or the host is not idle (§16.1–16.2).
-- Statistics: ratio of medians over **10 rounds**, with a bootstrap 95% CI. G0 engine-bound cells need the CI lower bound ≥ 1.0× (stretch 1.15×). The reference cell needs a median ≥ 63,790 req/s **and** a CI lower bound ≥ 63,790 × 0.97 (§16.4).
+  - The x64 host is the owner's AWS `c7a.4xlarge`, started and stopped per run inside the owner's cap of $20 per month (about 10 instance-hours). Every run is logged with its duration and cost in `bench/aws-cost-log.md` (created by the first run's PR); a run is refused when month-to-date plus its estimate would pass the cap; the instance is stopped and checked after every run and never terminated.
+- Statistics (§16.4), computed against **every** rival of a cell, never only the best-known one:
+  - Client gates: ratio of medians over **10 rounds**, with a bootstrap 95% CI.
+  - G0 engine-bound cells need the CI lower bound ≥ 1.0× (stretch 1.15×). G0 shared-limit cells need the median ratio > 1.0× **and** the CI lower bound ≥ 0.97×.
+  - G1-low needs the median p50 and p99 deltas against undici ≤ 0, with the CI upper bound of the delta ≤ +0.1 ms (p50) and ≤ +0.3 ms (p99).
+  - The reference cell needs a median ≥ 63,790 req/s **and** a CI lower bound ≥ 63,790 × 0.97.
+  - Component micro-gates (the parser and writer races: Tasks 4b, 4c, 5b, 5c) use the paired statistic of §16.4 "Component micro-gates", computed by one function, `pairedRatioCi`.
+- The 15 G0 rivals (§2): Rust hyper `client::conn`, reqwest, ureq, isahc · C libcurl multi, libh2o · C++ Boost.Beast, cpp-httplib · Zig `std.http.Client` · Go `net/http`, fasthttp · Java Netty, Jetty `HttpClient`, `java.net.http.HttpClient` · .NET `HttpClient`. P0 gates hyper only and reports the other three Rust clients (Task 20) and four non-Rust clients (Task 11); the rest arrive in P1a (E7).
 - Git (repo rule, which overrides the global one-step rule): Claude commits, pushes `p0/<slug>` branches and opens PRs into `milestone/p0`. A PR merges after CI is green and the agent review passes. The owner approves the `milestone/p0` → `main` PR. Commit messages are imperative and never mention Claude, AI or agents.
-- Library APIs come from Context7 (`library-docs-context7`) or docs.rs for the exact version locked in `Cargo.lock`/the lockfile. Rust claims in design notes cite doc.rust-lang.org first (§6.3).
+- Library APIs come from the official documentation (the `docs-lookup` skill) or docs.rs for the exact version locked in `Cargo.lock`/the lockfile. Rust claims in design notes cite doc.rust-lang.org first (§6.3).
 
 ## Review Focus
 
 These are the inputs and conditions most likely to hurt users that no single task's main tests exercise. Each one has a test in the task that owns the code.
 
 1. **A response split across reads at any byte boundary**: 1-byte reads, CRLF split between reads, a head split from its body. The result must equal the single-read result. → Task 4 `every_vector_is_split_invariant`.
-2. **The server closes an idle keep-alive connection, or resets mid-body.** The request must settle with `NETWORK/closed-before-response` or `PROTOCOL/incomplete-body`, never hang, and the next request must get a fresh connection. → Task 6 `server_closed_idle_connection_settles_with_network_error`, `eof_mid_body_settles_incomplete_body`.
+2. **The server closes an idle keep-alive connection, or resets mid-body.** A close that the idle check of design §5.1 has seen retires the connection, and the next request succeeds on a fresh one. A close or a reset after the request was written and before any response byte settles `NETWORK/closed-before-response`; an EOF mid-body settles `PROTOCOL/incomplete-body`, and a reset after the first response byte settles `NETWORK/reset`. No request hangs, and the request after a failed one gets a fresh connection. → Task 6 `idle_eof_retires_connection_before_next_request`, `close_after_request_settles_closed_before_response`, `eof_mid_body_settles_incomplete_body`, `reset_mid_body_settles_reset`.
 3. **More requests submitted than the shard queue holds.** They must fail fast with `QUEUE_FULL` `{ scope: 'global', bound }`, never block the main thread, and never grow memory without bound. → Task 6 `queue_full_fails_fast`, Task 12 `queue_full_is_a_completion_not_a_throw`.
 4. **The native binary is missing, built for another libc, tampered with, or the platform is unsupported.** Loading must return a typed result and must not crash. → Task 13 `tampered_binary_returns_integrity`, `missing_package_returns_binary_load`, `unsupported_platform`. Task 15 Alpine job `glibc_binary_on_musl_returns_binary_load`.
 5. **Process lifetime.** A Node process with no pending requests must exit on its own, and one with pending requests must stay alive until they settle. → Task 12 `process_exits_when_idle`, `process_stays_alive_while_pending`.
 
 ## Process rules added by the owner during execution (2026-11-06)
 
-These apply to every task from Task 4 on and override anything above that conflicts.
+These apply to every task from Task 4 on and override anything above that conflicts. The owner's resource limits ("Resource limits" below) override every rule and step in this plan.
 
-- **Research gate before engine code.** Tasks 4, 5, 6, 12 and 13, and every engine component in later phases, start with a research step before any code is written:
+- **Research gate before engine code.** Tasks 4, 4c, 5, 5b, 5c, 6, 12 and 13, and every engine component in later phases, start with a research step before any code is written (for Tasks 4c, 5b and 5c the reviewed note is `docs/notes/h1-speed-research.md`, PR #22):
   1. A research agent writes `docs/notes/<component>.md`, covering:
      - 2–3 reference implementations at their **latest published release**: what makes them fast, and what we should not copy;
      - their bug trackers, CVEs and advisories;
@@ -61,16 +69,49 @@ These apply to every task from Task 4 on and override anything above that confli
      Every source is linked with its access date. Each idea is marked **verified** (checked against docs, source code or a measurement) or **unverified**; unverified ideas go only to `docs/perf/ideas.md`. The note compares at least two design options (time and space complexity, allocations, risks) and states the decision and how it will be measured.
   2. A reviewer checks the note, and gaps are fixed in the note.
   3. The implementer builds what the note decided, and the code reviewers check that the code follows it.
+  4. **Own-algorithm rule (owner, 2026-11-07).** For a performance-critical component the research also covers published papers and algorithms. When nothing existing wins, we design our own: a write-up with time and space complexity, a prototype, an equal-work measurement on arm64 **and** x64, and proof by differential tests, fuzzing, Miri (where `unsafe` exists) and mutation testing. Only measured wins are kept. This applies to Task 4c and to P1a's `engine-simd`.
 - **Review setup.**
-  - The first review runs two reviewers in parallel:
-    - the `code-review` agent, which follows `~/.claude/rules/code-review.md` and returns the coverage table;
-    - the built-in `/code-review` at high effort on the task PR.
-  - Tasks 4, 6, 12 and 13 also get a `security-audit` pass.
-  - All findings, minor ones included, are merged into **one** fix round. After it, a verification pass checks every finding (FIXED / NOT FIXED) and applies the full checklist to the fix diff.
+  - The first review uses these reviewers:
+    - the `code-review` agent (the owner's `review-workflow` skill), which returns the coverage table;
+    - the built-in `/code-review` at high effort on the task PR;
+    - a `security-audit` pass for Tasks 4, 4c, 4d, 5, 5b, 6, 12 and 13 and, in P1a, for every `engine-simd` kernel.
+  - They run one after another whenever two at once would put more than 2 helper agents alive: the `code-review` and `security-audit` agents start their own finders and verifiers ("Resource limits").
+  - Which reviewers a documentation-only PR needs is an open owner decision ("Owner decisions needed"). Until the owner decides, definition-of-done item 7 applies to a documentation-only PR as to any other. #25 and #26 have had the `code-review` agent's review, fix rounds and verification passes so far; they get the built-in `/code-review` pass before they merge into the milestone branch, unless the owner chooses (b) first.
+  - A PR above about 1,000 changed lines is split into sequential PRs, or flagged to the owner before review.
+  - All findings, minor ones included, are merged into **one** fix round. After it, a verification pass (one verifier for the open findings plus one finder on the fix diff) checks every finding (FIXED / NOT FIXED) and applies the full checklist to the fix diff.
   - **Review until clean:** if the verification pass finds anything, of any severity, including problems the first review missed, the implementer fixes it and another verification pass runs. A task merges only after a pass reports zero findings. If a fifth pass still finds problems, the controller reports to the owner instead of continuing silently.
   - Implementers check their own diff against the same checklist before reporting.
 - **Agents** run on Opus at high effort.
-- **Upstream test vectors** come from the latest published, non-prerelease release **source** tag. The exact commit is recorded, and `--refresh` re-imports at the start of each phase.
+- **Per-task definition of done (owner, 2026-11-07).** A task merges only when all of these hold and the PR shows the evidence:
+  1. Research note: reviewed before code for engine tasks, committed before code for infrastructure tasks.
+  2. TDD, with coverage ≥ 90% for Rust and ≥ 95% for TypeScript.
+  3. Test cases ported from other libraries at their latest published release, with notices.
+  4. Fuzzing plus a differential check against another library, for anything that parses or builds bytes. The run is in CI, or in the capped container as the local fallback ("Resource limits").
+  5. Mutation testing (`cargo-mutants`; Stryker for TypeScript where useful), run in CI or in the capped container as the local fallback ("Resource limits"): every surviving mutant is killed by a new test or listed as equivalent with a one-line proof.
+  6. For anything speed-related: a benchmark against the best existing libraries, recorded in `docs/perf/journal.md`, with no regression against the previous version.
+  7. The reviewers of "Review setup", one fix round, and verification passes until one is clean.
+  8. CI green.
+  9. The controller re-runs the tests, the lints and a bench smoke run itself before every merge.
+
+  Task 4 merged before items 5 and 6 existed: Task 4d runs its mutation pass, and Task 4b is its benchmark. Tasks 4d and 15a have no research step of their own. For item 1, Task 4d records its decisions in `docs/notes/response-parser.md`, and Task 15a records its tool choices in `docs/notes/toolchain.md`, before the code that follows from them.
+- **Owner speed gates for components (hard gates: no release until they are met).**
+  - **Parser (2026-11-07).** `ResponseParser` is faster than every other head parser, C and Rust included (httparse, picohttpparser, llhttp and every other row of the Task 4b race), with **equal work** (per-field name and value spans), on arm64 **and** x64, on the workloads `1k`, `1k-h20`, the 64-variant rings, `mixed` and the 1-byte feeds (in `bench/parsers/workloads.ts`: `1k-3-headers`, `1k-20-headers`, `1k-3-headers-ring64`, `1k-20-headers-ring64`, `mixed-64` and the four feed inputs; `varied-256`, which Task 4c adds, is gated as well, because the decision of 2026-11-13 says every cell). The run has 10 rounds in the quiet window, and the §16.4 component statistic's CI upper bound is < 1.0× against every rival. **Owner decision 2026-11-13:** the gate is met by the **scalar** parser, with no `engine-simd` kernel, against rivals that run as shipped with their own SIMD. It is Task 4c's acceptance, and Task 4c is not closed while a cell loses. SIMD (P1a) is an extra layer on a scalar parser that already wins, never the way to meet the gate. The race is re-run whenever the parser changes, P1a included.
+  - **Writer (2026-11-08).** `write_request` is faster than every other request writer with equal work (Task 5c's race and tiers), on arm64 and x64, by the same statistic, and `post1k` costs ≤ 2.3× the copy floor.
+  - **First in every cell (2026-11-08).** The engine and the client are first in every benchmark, component and cell, shared-limit cells included (§2). A lost cell is an open speed item with an owner task and is never dropped from a report.
+
+  Task leads do not change these gates. A cell still open when a task ends is reported to the owner with its numbers.
+- **Resource limits (owner).** The Mac has 16 GiB, is shared with other sessions, and has had a kernel panic from a mutation run on the host.
+  - At most 2 helper agents are alive per task, and about 8 are used per task in total. Run `bash ~/.claude/scripts/preflight.sh --wait 600` before starting an agent or a heavy job.
+  - No process fan-out on the host. Build parallelism is at most 2 (`CARGO_BUILD_JOBS=2`), which matters for the fat-LTO release builds.
+  - Fuzzing, mutation testing, load tests, benchmarks and any test over about 30 s or 10,000 cases run **one at a time in a capped container**: `docker run --rm --memory=2g --memory-swap=2g --cpus=1 …`, with the source mounted read-only and copied inside. Check `docker ps` first: never two such jobs at once. Whether one benchmark run's own containers (its server and its clients, labelled `blazehttp-bench`) count as one job is an open owner decision ("Owner decisions needed"). Until the owner decides, the strict reading holds on the Mac, the machine these limits are about: no run that needs two containers at once is started there. The first such run is Task 10's harness, so the decision is needed before it. The parser race starts one container at a time and is not affected, and neither is a harness run on the x64 VM. cargo-mutants runs with `--jobs 1`, at most 2 test threads and a timeout of about 20 s. libFuzzer gets `-rss_limit_mb=1536` **[author's call: below the container's 2 GiB, so libFuzzer stops by itself and writes the reproducer before the kernel kills the container; 2048 is libFuzzer's default and equals the container limit]**. Without Docker the job is skipped and reported as "not run (resource policy)".
+  - Test stubs, buffers and collectors have a size cap (for example 64 MiB) and fail fast, so a runaway mutant fails in milliseconds.
+  - A step in this plan that runs such a job "locally" or on the host runs it in the capped container. That covers Task 4 Step 7 (fuzzing), Task 6 `each_key_completes_exactly_once` (10,000 requests) and Task 18 `pending-cost.ts` (100,000 pending requests).
+  - **Mutation testing and fuzzing run in GitHub Actions CI (owner decision 2026-11-13).** A separate PR adds the workflow for the mutation pass and the fuzz runs the task steps ask for. Task 15a's `fuzz-smoke` job, the short run of every fuzz target on each pull request, is part of the same move: if that PR adds it first, Task 15a adds only what is still missing. From the workflow's merge on, a step of this plan that runs cargo-mutants or a fuzz target "in the capped container" is done by the CI run, and the evidence the step asks for (for cargo-mutants the `mutants.out/` files, for a fuzz run its log and any reproducer) comes from that run's artefacts. The capped container stays as the local fallback, under the rules above: before the workflow exists, to reproduce a CI finding, and when CI is not available.
+  - Every benchmark container carries `--memory` and `--memory-swap`: 2 GiB for a server or a client, 128 MiB for the G2 memory cells (the design's G2 container size, §16.3). The G0 server's 4 CPUs (Task 10) are the one exception to `--cpus=1`. It follows from the owner's benchmark-host decision (§16.1, §21) and is used only on a quiet machine; the owner's confirmation of this exception is listed under "Owner decisions needed".
+  - **Quiet machine for every benchmark (owner, 2026-11-13).** An agent never starts a benchmark, dev runs included, while other agents may be running. It commits, pushes, writes its checkpoint and replies "ready for benchmark". The controller stops the other agents, checks the load, `docker ps` and peer sessions, runs the benchmark alone, and resumes them.
+- **Upstream test vectors** come from the latest published, non-prerelease release **source** tag, and the exact commit is recorded in each vector file.
+  - The llhttp sets have an importer: `pnpm vectors:import-llhttp --refresh` re-imports them at the start of each phase.
+  - The curl, Go, httparse and hyper sets (`*-selected.json`) are ported by hand. At the start of each phase the task lead diffs the upstream test files between the recorded commit and the latest release, ports new or changed cases by hand, and records the new tag and commit (`docs/notes/vectors.md`).
 - **Code structure:** every task follows design §13.1, "production-grade code structure", the owner rule: organise by component; one responsibility per file, split past about 500 lines; narrow public APIs; unit tests with their code; matching component names across tests, fuzz, bench, vectors and notes; fixed top level; one-way dependencies. Reviewers check it as part of the maintainability category.
 - **One function, one job** (design §13.1 rule 9): each function does one thing that its name states, in at most 60 lines. CI enforces this through clippy `too_many_lines`/`too_many_arguments` (`clippy.toml`) and ESLint `max-lines-per-function`/`complexity`/`max-depth`/`max-params`. Any exception needs a reviewed `#[expect]` or `eslint-disable-next-line` with a reason.
 - **OOP and design-pattern hard rules** (design §13.2): encapsulation, interfaces at seams, static dispatch on hot paths, composition over inheritance, SOLID, and GoF patterns only as listed in the §13 table. Reviewers check them under maintainability, and a violation is an Important finding.
@@ -93,8 +134,12 @@ tools/policy-check/                       repo rules (§14.1–14.2)
 tools/vectors/                            vector schema, importers, notices generator
 tools/pack/                               integrity hashes, packing, placeholders
 tests/vectors/index.json                  vector file → consuming suites
-tests/vectors/h1-response/*.json
+tests/vectors/h1-response/*.json          llhttp (imported); curl, Go, httparse, hyper (hand-ported); blazehttp-rules
+tests/fixtures/h1-heads/                  response heads the parser benches time
+tests/fixtures/bodies/                    the 1 KB JSON body the bench server serves, and its committed gzip
+tools/h1-research/                        bit-stream model of the P1a parser candidates (scanthru_model.py) and the asmcheck crate; deleted in P1a (#24)
 crates/engine-core/                       prototype engine (parser, writer, shard, connection, sink trait)
+crates/engine-core/examples/              h1_parse_bench.rs, h1_write_bench.rs: same-container A/B benches (criterion in P1a, #23)
 crates/engine-core/fuzz/                  cargo-fuzz (own workspace)
 crates/node-binding/                      napi bridge
 crates/engine-bench/                      G0 harness + Rust competitors
@@ -102,8 +147,11 @@ crates/bench-server/                      fixed-response server (lib + bin)
 bench/harness/                            Docker orchestration, stats, validity, reports (TS)
 bench/g1/                                 Node-side G1 client runner
 bench/xlang/{c,cpp,zig,go}/               cross-language baseline clients
+bench/parsers/                            cross-language parser race (Task 4b; CI job bench-parsers)
+bench/writers/                            cross-language writer race (Task 5c; replaces Task 5's bench/writer/)
 bench/docker/                             Dockerfiles
-bench/results/                            committed gate-run JSONL
+bench/results/                            committed JSONL: gate runs, and the dev runs a note or the journal cites (named *-dev-*, with their load-sample .txt)
+bench/aws-cost-log.md                     duration and cost of every x64 VM run
 packages/blazehttp/                       main npm package (loader, NativeSession seed, generated spec)
 npm/<target>/                             8 platform packages
 docs/notes/  docs/perf/ideas.md  docs/perf/journal.md  docs/reports/p0.md
@@ -112,23 +160,87 @@ docs/notes/  docs/perf/ideas.md  docs/perf/journal.md  docs/reports/p0.md
 
 `spike/` is deleted in Task 14, after `bench/` reproduces the §1 numbers.
 
+## Plan status (2026-11-13)
+
+| Task | State | PR |
+|---|---|---|
+| 1 bootstrap, 2 specgen, 3 vectors | merged | #1, #3, #4, #6 |
+| 4 `ResponseParser` | merged; open items in Task 4d | #10 |
+| 4b parser race | merged as a dev bench; the gate-grade run is owed (Task 4b) | #14, #21 |
+| Research notes: SIMD scanning, H1 speed | merged | #11, #22 |
+| Process and design changes | merged | #8, #9, #12, #17, #19, #20 |
+| 5 `RequestWriter` | open, in review | #18 |
+| 9 bench-server | merged | #13 |
+| Documentation review fixes | open. #25 (plan, design) and #26 (research notes) merge together: this plan cites note text that #26 adds (§4.1 "Coverage limits", §5.7, the W-A estimate of §6.2) | #25, #26 |
+| 4c, 4d, 5b, 5c, 6–8, 10–20, 15a | not started | — |
+
+Each task's PR updates this table.
+
 ## Schedule and parallel tracks
+
+The original three-week table was replaced on 2026-11-13. In the first 8 days (2026-11-06 to 2026-11-13) 4 of the 20 original tasks merged, plus Task 4b and two research notes; the two largest engine tasks (6 and 12) had not started, and five tasks were added (4c, 4d, 5b, 5c, 15a). At that rate P0 takes **about 5–7 weeks from 2026-11-06 (estimate)**, so it ends between 2026-12-11 and 2026-12-25. The owner sets the end date ("Owner decisions needed"). The order follows the dependencies; the week numbers are estimates. Task 4c has no end date: by owner decision (2026-11-13) it stays open until the scalar parser wins every cell, so the estimate counts only its first PR. If Task 4c is still open when the rest of P0 is done, it is a gate miss in the sense of design §15 ("Gate misses"): other work continues and the P0 report lists it as open.
 
 | Week | Engine track | Bench track | Platform track |
 |---|---|---|---|
-| 1 | T4 parser, T5 writer | T9 bench-server, T10 harness | T1 bootstrap, T2 specgen, T3 vectors |
-| 2 | T6 shard + connection, T12 binding | T7, T8 engine-bench | T13 loader + session, T15 CI matrix |
-| 3 | T17 wake latency, T18–T19 measurements | T11 xlang baseline, T14 G1 + spike retirement | T16 packaging, T20 gate + review |
+| 1 (done) | T4 parser, research notes | T4b parser race | T1 bootstrap, T2 specgen, T3 vectors |
+| 2 | T5 writer, T4d parser fixes and mutation pass | T9 bench-server | T15a CI jobs without the binding |
+| 3 | T4c spans in the scan, T5b writer speed | T5c writer race | — |
+| 4 | T6 shard + connection | T7, T8 engine-bench, T10 harness | T12 binding |
+| 5 | — | T11 xlang baseline | T13 loader + session, T15 CI matrix |
+| 6–7 | T17 wake latency (after T14), T18–T19 measurements | T14 G1 + spike retirement | T16 packaging, T20 gate + review |
 
-Dependencies: T1 → T2 → {T3, T4, T9}. T4 → T5 → T6. T6 → {T7, T12}. T7 → T8. T9 → {T7, T10}. T12 → T13 → {T14, T15, T16}. {T10, T11, T14} → {T17, T18, T19} → T20. T11 must land before T14 (spike deletion).
+Dependencies:
+- T1 → T2 → {T3, T9}. {T2, T3} → T4 (the parser's tests run the vectors Task 3 imports). T1 → T15a.
+- T4 → {T4b, T4d, T5}. {T4b, T4d} → T4c: 4c needs the race, and it changes code whose surviving mutants 4d must kill first.
+- T5 → T5b → T5c. T4c's first PR → {T5b, T5c}: 5b reuses the name search 4c puts in `grammar.rs`, and 5c reuses `pairedRatioCi`. Task 4c's research loop (Step 9) does not hold them back; when a later cycle changes the name search in `grammar.rs`, Task 5b's A/B is run again on the new code.
+- {T4c, T5} → T6: 4c changes `parse`, which the connection calls. Task 6 needs Task 4c's first PR, which carries the interface; it does not wait for Task 4c to close. Task 5b keeps `write_request`'s signature, so it may run beside Task 6.
+- T6 → {T7, T12}. T7 → {T8, T10, T11}: the harness smoke run and the xlang runner need `engine-bench`. T9 → {T7, T10}. T10 → {T11, T14}: the xlang baseline and the G1 runs use the harness.
+- T12 → T13 → {T14, T15}. T15a → T15 (Task 15 extends Task 15a's jobs). T15 → T16 (packaging uses the native matrix's artefacts).
+- {T7, T8, T10, T11, T14} → {T17, T18, T19} → T20. T11 must land before T14 (spike deletion). Task 19's `?size=` cell changes Task 9's `bench-server`.
 
-**Schedule deviation:** §9.4 asks for the 2-hop wake measurement in week 1. Measuring it needs T6 + T12 + T13, so it lands at the start of week 2 (T17 starts as soon as T13 merges). This must be reported to the owner in the P0 report.
+**Schedule deviation:** §9.4 asks for the 2-hop wake measurement in week 1. Measuring it needs T6 + T12 + T13, and its G1 reference cell needs T14, so T17 starts as soon as T14 merges (week 6 of the estimate). This must be reported to the owner in the P0 report.
+
+**Window time (estimate).** One measured run is about 12 s (`--secs 10` plus warm-up). Container starts, the pause between rounds and re-runs of invalid rounds roughly double it.
+
+| Task, in run order | Runs in the nightly window (arm64) | Measured time |
+|---|---|---|
+| 19 Step 1 TLS provider (first: it fixes P1a code) | 2 providers × 2 cells × 10 rounds = 40 | 8 min |
+| 17 wake latency (second: it can change engine code) | baseline 4 c × 2 RTT × 2 clients × 10 = 160; each kept strategy 160 + 20 on the reference cell | 32 min + 36 min per kept strategy |
+| 18 allocator and burst | 3 allocators × 10 + 3 burst runs | 10 min |
+| 19 Steps 3–4 sweeps and undici baselines | 120 + 60 + 160 = 340 | 68 min |
+| 11 xlang baseline | 5 clients × 10 = 50 | 10 min |
+| 14 §1 reproduction and first G1 number | 3 clients × 10 = 30 | 6 min |
+| 20 G0 reference gate | 5 pairs (4 rivals and the raw loop) × 2 clients × 10 rounds = 100, + 18 saturation runs (6 clients × 3, design §16.2) = 118 | 24 min |
+| Component races: parser (Tasks 4b, 4c) and writer (Task 5c) | 1 invocation each, 10 rounds; every further Task 4c gate race repeats the parser one | Parser race ≈ 10–25 min, container starts included (estimate): per round 45–120 timed invocations (300 ms + 100 ms warm-up) and 36–80 feed invocations, one container start of about 0.5 s each, × 10 rounds; the feed passes themselves add about 3.6 s per round for today's 9 rows (dev results of 2026-11-08). The writer race has other rows, JMH rows among them, and no feeds; it is not estimated until Task 5c has fixed its rows |
+| **Total with two kept strategies** | ≈ 1,130 runs and 2 races | ≈ 4.2–4.7 h measured, ≈ 8–9 h of window (the writer race is counted with the parser race's figure until it has its own; the races' figure already holds their container starts, so it is not doubled) |
+
+- Wake strategies are screened in dev runs of 3 rounds. A strategy gets the 10-round window run only if its median p50 or its median p99 over the 3 rounds is below the baseline's on at least one low-load cell **[author's call: 3 rounds cannot carry a CI, so the screen only drops a strategy that shows no gain at all; the window run decides]**.
+- A decision taken on dev data (TLS provider, wake strategy, allocator, sizes) is provisional and is re-run in the window before Task 20.
+- x64 (AWS, inside the monthly cap): the parser and writer races (Tasks 4b, 4c, 5b, 5c: minutes each plus image builds), the TLS provider cells, the spike re-measure and the Task 20 gate. Estimate: 3–4 instance-hours for P0, plus about half an instance-hour for every research cycle of Task 4c Step 9 (estimate; the number of cycles is unknown). The cap, about 10 instance-hours a month, bounds how many cycles can re-run on x64 in a month; how the cycles use it is listed under "Owner decisions needed".
 
 **Owner checkpoints:**
-- Task 1: confirm the GitHub account and that the repo should be public before `gh repo create`.
+- Task 1: confirm the GitHub account and that the repo should be public before `gh repo create` (done).
+- Task 14: pushing the tag `p0-spike-final` needs the owner's OK (tag pushes always ask).
+- Task 15: the required checks on `main` and `milestone/p0` are branch protection, so the owner sets them or gives an explicit OK first.
 - Task 16: the owner publishes the `0.0.0` placeholders and configures OIDC trusted publishers.
 - Tasks 17–20: gate runs need the nightly window, which the owner has not chosen yet. Until then, runs use `--dev` and do not count as gate evidence.
-- Task 20: x64 VM access, the decision on `io_uring` funding (if triggered), and approval of the milestone PR.
+- Task 20: the decision on `io_uring` funding (if triggered), and approval of the milestone PR. The x64 VM and its budget cap exist since 2026-11-07.
+
+**Owner decisions needed (open on 2026-11-13).** No task lead decides these; each row gives the options and a recommendation. The questions from the design review (the G0/G1 statistic, shared-limit cells, the size of the G0 matrix, the 128 MiB budget, the arm64 gate host, gates without a rule, the mixed-load cell, the axios surface) are in design §21 "Open owner decisions".
+
+| Decision | Options | Recommendation |
+|---|---|---|
+| P0 end date | (a) accept the 5–7 week estimate; (b) move Tasks 17–19 to P1a and end P0 about 2 weeks earlier, which also changes the P0 row of design §15 (wake-latency measurements, allocator choice) and §22; (c) keep 3 weeks, which is not reachable at the measured rate | (a), with a new estimate when Task 6 merges |
+| Nightly window: hours and length (the table above needs ≈ 8–9 h on arm64) | (a) a fixed 3 h window on at least 4 nights; (b) one night of about 9 h; (c) no fixed window yet: every run stays a dev run and no gate closes | (a), chosen now, so that Task 4b's owed run can use it; the fourth night covers re-runs and further Task 4c races |
+| Writer line "`post1k` ≤ 2.3× the copy floor" | (a) keep the ratio to the floor; (b) replace it by the Task 5c race result plus a fixed ns budget | (b): between two binaries with the same floor code the measured floor moved by 13–21% on `varied` and by 14–15% on `post1k` (measurement review of 2026-11-13; the journal entries are on `p0/writer`, PR #18), so the ratio is not a stable measure. Until the owner decides, the line stays as it is |
+| The 4-CPU G0 server as an exception to the `--cpus=1` container rule | (a) confirm it for quiet-machine runs; (b) 2 CPUs on the Mac and 4 only on x64, which also changes design §16.1 and §16.2 (a G0 server on ≥ 4 CPUs on the arm64 reference host) | (a) |
+| One benchmark run's server and client containers as one job under "never two at once" (needed before Task 10's first run) | (a) confirm this reading for quiet-machine runs; (b) one container at a time without exception, which rules out the client-and-server harness of design §16.2 on the Mac | (a) |
+| What "without SIMD" covers in the parser gate (Task 4c acceptance line 6) | (a) no `engine-simd` kernel, no `std::arch` intrinsic and no explicit vector type; SWAR on `u64` and what the compiler vectorises by itself are allowed; (b) as (a), and our row is also built with the compiler's auto-vectorisation off | (a): it is the code that ships, and the owner's words name the `engine-simd` kernels. The race report lists the loops the compiler vectorised, so the owner can see what (a) allows |
+| x64 budget of Task 4c's research cycles (each re-runs the race on the x64 VM, about half an instance-hour, estimate; the cap is about 10 instance-hours a month for all of P0's x64 work) | (a) a cycle runs arm64 first and x64 only when the arm64 dev run closes the cell it worked on, and otherwise once a week; (b) every cycle runs both, and the cap is raised when it is reached | (a): it stays inside the cap the owner set, and a change that does not win on arm64 is dropped before it costs an x64 run. Until the owner decides, the cap rule alone applies |
+| Reviewers of a documentation-only PR | (a) all reviewers of definition-of-done item 7; (b) the `code-review` agent alone, with the same fix round and verification passes | (b): the built-in `/code-review` and `security-audit` check code paths, and a documentation PR has none. #25 and #26 have had the reviews of (b) so far; under the interim rule of "Review setup" they get the built-in `/code-review` pass before they merge unless the owner chooses (b) |
+| PR #18 (Task 5 writer) is above the limit of about 1,000 changed lines ("Review setup"; review report 3, PL1) | (a) merge it as one PR after its review loop; (b) split it into sequential PRs | (a): its review loop already covers the whole diff, and a split now would repeat it |
+
+Owner actions still pending (not decisions): the AWS budget alert; the npm org `blazehttp` with OIDC trusted publishing; and an update of `.claude/CLAUDE.md`, which only the owner changes, to the two decisions of 2026-11-13 it does not carry yet (the parser gate is met by the scalar parser; mutation testing and fuzzing run in CI). Until then this plan is the rule for both.
 
 ---
 
@@ -206,7 +318,7 @@ test('engine crates may not depend on HTTP engines', () => {
   - `eslint.config.js`: typescript-eslint `strictTypeChecked`, `@typescript-eslint/no-deprecated: error`, `no-unused-vars` and `no-unused-expressions` as errors, `sonarjs/no-commented-code: error`, and `no-restricted-syntax` banning `SwitchStatement`.
   - `vitest.config.ts`: Vitest `projects`, `execArgv: ['--throw-deprecation']`, and v8 coverage thresholds of 95 for lines, branches, functions and statements.
   - `knip.json`: entries for each workspace, including test files and `bench/**`.
-  - Check every config key against the current docs through Context7.
+  - Check every config key against the current docs (`docs-lookup` skill).
 
 - [ ] **Step 7: Run** `pnpm vitest run tools/policy-check && pnpm lint && pnpm typecheck && pnpm knip && pnpm policy`. Expected: all pass.
 
@@ -238,7 +350,7 @@ git push -u origin p0/bootstrap && gh pr create --base milestone/p0 --fill
   - Codes with structured fields: `HTTP_STATUS {status}`, `TOO_MANY_REDIRECTS {count}`, `SSRF_BLOCKED {address, rule}`, `QUEUE_FULL {scope: ["client","origin","bytes","contexts","global"], bound}`, `INVALID_CONFIG {field, reason}`. They use `"fields": { name: "u32" | "string" | [enum…] }`.
   - Codes that never cross the wire carry `"wire": false`: `HTTP_STATUS`, `INVALID_CONFIG`, `SSRF_BLOCKED` (string fields; P1b extends the wire), and `PARSE`.
 - `limits.h1`: `maxHeadBytes: 65536`, `maxStatusLineBytes: 8192`, `maxHeaderFields: 100`, `maxInterimResponses: 10`.
-- `methods`: `["GET","HEAD","POST","PUT","DELETE","PATCH","OPTIONS"]`. Index = wire id. Generated as the TS `type Method` and the Rust `pub enum Method` with `from_wire`/`to_wire`. `CONNECT` is never representable (§12).
+- `methods`: `["GET","HEAD","POST","PUT","DELETE","PATCH","OPTIONS","QUERY"]`. Index = wire id. Generated as the TS `type Method` and the Rust `pub enum Method` with `from_wire`/`to_wire`. `CONNECT` is never representable (§12).
 - `wire`: record layouts in u32 words, added in Task 12.
 
 **Interfaces:**
@@ -300,7 +412,7 @@ git push -u origin p0/bootstrap && gh pr create --base milestone/p0 --fill
 - `tests/vectors/index.json` maps each file to the suites that consume it, e.g. `{ "h1-response/llhttp-sample.json": ["engine-core:h1_response"] }`.
 
 **Interfaces:**
-- Produces (TS): `loadVectorFile(path: string): VectorFile`, and `checkIndex(root: string): string[]`, which returns unreferenced or missing files.
+- Produces (TS): `loadVectorFile(path: string): VectorFile` (after PR #18: `loadVectorFile(root: string, path: string): VectorFile | RequestVectorFile`, with `path` relative to `root`; its folder selects the case schema), and `checkIndex(root: string): string[]`, which returns unreferenced or missing files.
 - Produces (Rust test support): `pub fn load_suite(suite: &str) -> Vec<(String /*file*/, Case)>`, which reads `index.json` and panics on an unregistered file under the suite's directory. Also `pub struct Case { name, input: Vec<u8>, method: String, expect: Expect }` and `pub enum Expect { Ok { status: u16, headers: Vec<(String, String)>, body: Vec<u8>, keep_alive: bool }, Error(String) }`.
 
 - [ ] **Step 1: Pin llhttp and read its harness.**
@@ -327,11 +439,14 @@ git push -u origin p0/bootstrap && gh pr create --base milestone/p0 --fill
 
 ### Task 4: `ResponseParser` (scalar, strict §5.2 head rules)
 
+**As built** (PR #10, merged): the text below is corrected to the merged code. Open review items are in Task 4d; the speed work is in Tasks 4b and 4c.
+
 **Files:**
-- Create: `crates/engine-core/src/h1/mod.rs`, `crates/engine-core/src/h1/parser.rs`
-- Create: `tests/vectors/h1-response/blazehttp-rules.json` (source project `blazehttp`, licence `MIT OR Apache-2.0`), registered in `index.json`
-- Create: `crates/engine-core/tests/h1_response.rs`
-- Create: `crates/engine-core/fuzz/Cargo.toml`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`
+- Create: `crates/engine-core/src/h1/mod.rs`, `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/src/h1/grammar.rs`
+- Create: `tests/vectors/h1-response/blazehttp-rules.json` (source project `blazehttp`, licence `MIT OR Apache-2.0`) and the hand-ported `tests/vectors/h1-response/{curl, go, httparse, hyper}-selected.json`, registered in `index.json`
+- Create: `crates/engine-core/tests/h1_response.rs`, `crates/engine-core/tests/support/fixtures.rs`, `tests/fixtures/h1-heads/*.http`
+- Create: `crates/engine-core/fuzz/Cargo.toml`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`, `crates/engine-core/fuzz/h1_response.dict`
+- Create: `crates/engine-core/examples/h1_parse_bench.rs`
 - Create: `docs/notes/response-parser.md`. Update `docs/perf/ideas.md` with the P0 survey.
 
 **Interfaces:**
@@ -354,7 +469,7 @@ impl ResponseParser {
 }
 ```
 
-`headers` is the byte range of the header block. The engine extracts `Content-Length`, `Transfer-Encoding`, `Connection` and `Keep-Alive` during the scan and builds no map (§5.1). After `Interim { consumed }`, the caller drops `consumed` bytes and calls again. Interim heads count toward the 64 KiB limit and the limit of 10 interim responses.
+`headers` is the byte range of the header block. The engine extracts `Content-Length`, `Transfer-Encoding` and `Connection` during the scan and builds no map (§5.1). It does not read the `Keep-Alive` field: reuse follows the version and `Connection` only. Task 4c adds per-field spans to this interface. After `Interim { consumed }`, the caller drops `consumed` bytes and calls again. Interim heads count toward the 64 KiB limit and the limit of 10 interim responses.
 
 **Error mapping (decided here, cited in the design note):**
 - Head > 64 KiB or status line > 8 KiB → `TooLarge(Headers)`.
@@ -384,38 +499,167 @@ impl ResponseParser {
         assert_eq!(parse_byte_by_byte(&case), whole, "{file}/{} 1-byte reads", case.name);
     }
 }
-#[test] fn errors_never_contain_header_bytes() { /* Debug/Display of every error from the corpus contains no input substring ≥ 4 bytes */ }
+#[test] fn every_error_is_a_payload_free_code() { /* every error from the corpus is a bare `ErrorCode` that carries no input bytes */ }
 ```
 
   `parse_whole` and its two variants run the parser and then slice the body by `Framing::ContentLength`. This keeps CL body slicing inside the test helper, because the connection owns body reading.
 - [ ] **Step 4: Run** `cargo nextest run -p engine-core --test h1_response`. Expected: FAIL.
 - [ ] **Step 5: Implement the parser.**
-  - Use a single forward scan with `memchr` for CR, a resume offset stored in the struct, and token and value tables as `const [bool; 256]`.
+  - Use a single fused forward scan (a table loop for names, SWAR for value bytes; no `memchr`), a resume offset stored in the struct, and token and value tables as `static [bool; 256]` in `h1/grammar.rs`.
   - Do no allocation.
   - Parse `Content-Length` with checked u64 arithmetic.
 - [ ] **Step 6: Run** the tests, then `cargo clippy -p engine-core --all-targets -- -D warnings`. Expected: PASS.
-- [ ] **Step 7: Add the fuzz target.** It takes `arbitrary` bytes plus a split point and must not panic. The split result must equal the whole result. Run `cargo +nightly-<pinned> fuzz run h1_response -- -max_total_time=300` locally. Expected: no crash. Record the pinned nightly date in `docs/notes/toolchain.md`.
+- [ ] **Step 7: Add the fuzz target.** It is structure-aware: it builds heads from a model, mutates them, and checks the parser against the model's verdict (an oracle), and the split result must equal the whole result. Run `cargo +nightly-<pinned> fuzz run h1_response -- -max_total_time=300 -rss_limit_mb=1536` in the capped container ("Resource limits"). Expected: no crash. Record the pinned nightly date in `docs/notes/toolchain.md`.
 - [ ] **Step 8: Commit** `Add strict HTTP/1.1 response head parser with rule vectors and fuzz target` and open a PR.
+
+---
+
+### Task 4b: Cross-language parser race (delivered as a dev bench; the gate-grade run is owed)
+
+**Delivered** (PRs #14 and #21, merged): `bench/parsers/` with nine rows (ours plain and with fields, httparse, picohttpparser, llhttp, Boost.Beast `response_parser` and `basic_parser`, Zig `std.http`, Go `net/http`), one pinned image per language, a differential gate before timing, the CI job `bench-parsers`, the dev results `bench/results/2026-11-0{7,8}-arm64-dev-parsers*.jsonl`, and `docs/notes/response-parser.md` §8.6.
+
+**Owed against the owner's parser gate**, each with the task that delivers it:
+- [ ] `pairedRatioCi`, the `varied-256` ring, and the fasthttp and nginx rows → Task 4c Steps 2 and 6.
+- [ ] A run of the race on x64 (none exists) → Task 4c Step 7.
+- [ ] A 10-round run in the nightly window on the arm64 reference host → Task 4c Step 7 if the window exists by then, otherwise Task 20 Step 1.
+
+**Acceptance:** two committed results files hold 10 valid rounds (design §16.4) for every row and workload: `bench/results/<date>-arm64-ref-parsers.jsonl`, run in the nightly window on the reference host, and `bench/results/<date>-x64-parsers.jsonl`, run on the x64 VM. A dev run (a `-dev-` file) does not count. The report prints the paired ratio with its CI for every rival. If no window exists when Task 4c reaches Step 7, the arm64 file comes from Task 20 Step 1 and this task stays open until then. Passing the owner's gate is not part of this task: it is Task 4c's acceptance.
+
+---
+
+### Task 4c: Field spans in the scan (P-A, then P-B)
+
+Research: `docs/notes/h1-speed-research.md` §5 (reviewed, PR #22). It runs after Task 4d, and its first PR merges **before Task 6**, because it changes `parse`. **Owner decision 2026-11-13:** the task passes only when the scalar parser beats every rival in every cell on both architectures (acceptance line 6). Until then it stays open as research (Step 9). This section is the rule for the round count, the A/B rule and the acceptance; the research note §5.7 summarises them (as amended by PR #26).
+
+**Files:**
+- Modify: `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/tests/h1_response.rs`, `crates/engine-core/fuzz/fuzz_targets/h1_response.rs`, `crates/engine-core/examples/h1_parse_bench.rs`
+- Create: `bench/parsers/{stats.test.ts, order.ts, order.test.ts, rounds.ts, rounds.test.ts, ab.ts, ab.test.ts}`, `docs/perf/harness/ab/` (the A/B builder and the parser's bench source), `crates/engine-core/tests/h1_response_alloc.rs`
+- Modify: `bench/parsers/{stats.ts, workloads.ts, workloads.test.ts, gate.ts, gate.test.ts, run.ts, protocol.ts, protocol.test.ts, options.ts, options.test.ts, report.ts, report.test.ts, README.md}`, `bench/parsers/rust/` (our row emits spans; the `blazehttp+fields` row becomes the pinned baseline row of acceptance line 2 and is deleted after that comparison), `bench/parsers/go/` (fasthttp row), `bench/parsers/c/` (nginx row; Clang builds), `bench/parsers/cpp/` (Clang builds)
+- Modify: `docs/notes/response-parser.md`, `docs/notes/h1-speed-research.md`, `docs/perf/journal.md`
+
+**Interfaces** (Task 6 consumes exactly these):
+
+```rust
+pub struct FieldSpan { pub name_start: u16, pub name_end: u16, pub value_start: u16, pub value_end: u16 }  // offsets from the head's start
+pub struct FieldSpans(/* [FieldSpan; H1_LIMITS.max_header_fields]; caller-owned, one per connection */);
+// `ResponseHead` gains `pub fields: u16`; spans [0, fields) are valid after `Complete`.
+pub fn parse(&mut self, buf: &[u8], spans: &mut FieldSpans) -> Result<ParseStatus, ErrorCode>;
+```
+
+```ts
+// design §16.4 "Component micro-gates"; the only implementation, reused by Task 5c. The Task 10 harness does not use it
+export function pairedRatioCi(ours: readonly number[], theirs: readonly number[], o: { resamples: number; seed: number; confidence: number }): { point: number; lo: number; hi: number };
+```
+
+**Span invariants (tested):** for every field `name_start < name_end < value_start ≤ value_end < head_len`; fields are in input order; leading and trailing OWS is outside the value and obs-text is never trimmed; a span is written only when its line's CRLF is confirmed; `fields` restarts at 0 after an `Interim`.
+
+**A/B rule (keep or drop) [author's call: 10 rounds, the gate statistic's count, so that one function judges a change and a gate]:** the old and the new revision of `engine-core` are compiled into **one bench binary** as renamed crates and run in rotation inside it, because two binaries of the same code can differ by code layout alone (measurement review of 2026-11-13: the writer's floor moved by 13–21% between two binaries of the same floor code). A **round** is one launch of that binary in the pinned, capped container. A launch prints one JSON line per workload and variant, where a variant is a revision or a baseline such as the writer's floor. The line holds the nanoseconds per operation: for a timed workload the median of the launch's internal runs, for a 1-byte feed its one pass. `bench/parsers/ab.ts` launches the binary 10 times, pairs the lines by round and workload, and calls `pairedRatioCi`, so the statistic keeps one implementation **[author's call]**. A change is kept only if `pairedRatioCi(new, old)` has its CI upper bound < 1.0 on at least one timed workload and a point estimate ≤ 1.02 on every other workload, the 1-byte feeds included. A dropped change is recorded in the journal with its numbers.
+
+The harness is `docs/perf/harness/ab/`: a builder that takes two or more named revisions and a bench source, and the parser's bench source, which takes `h1_parse_bench`'s workloads and feeds from a module both use, never from a copy. It follows the scheme of the writer PR's `docs/perf/harness/writer-ab/` (PR #18), which is fixed to three revisions and three launches; Task 5b moves the writer onto this builder.
+
+- [ ] **Step 1: Profile plain Design G** on `1k-h20` (sampling profiler on the x64 VM, or Instruments on arm64) and replace the guessed per-field cost split in the research note §5.0 with the measured one.
+- [ ] **Step 2: Add `pairedRatioCi` and the `varied-256` ring** (names shuffled, value lengths 0.5–1.5×) before any candidate is judged. Tests: `paired_ci_is_deterministic_for_seed_and_brackets_point`, `paired_ci_rejects_unequal_round_counts`, `paired_ci_narrows_with_less_noise`. The runner prints the CI for every rival and workload. In the same step the runner's cyclic start rotation (`run.ts`) is replaced by a seeded shuffle of the row order for every round and workload, with the seed in the results file, so that no row always runs after the same neighbour (design §16.4). The shuffle is a pure function in `order.ts`, which `run.ts` calls; test `row_order_is_seeded_and_differs_between_rounds` in `order.test.ts`. Three more changes to `run.ts` belong to this step, because acceptance line 6 and Task 4b's acceptance cannot be computed without them:
+  - **Feed workloads are paired too.** Today `feedAll` runs each parser's feed rounds in one block and keeps only their spread. The feed workloads join the same seeded rounds as the timed ones: in every round each row runs each feed workload once, and the results file keeps the value of every round, so `pairedRatioCi` gets paired values. One invocation reports one feed pass, as every harness does today, so no harness changes for this. The option `--feed-rounds` is removed.
+  - **A gate-run mode.** Today every run is labelled `dev (not a gate run)` and written to a `-dev-` file. The new option `--gate-run` (not today's `--gate-only`, which runs the differential gate alone) requires 10 rounds, labels the run `gate` and writes `<date>-arm64-ref-parsers.jsonl` or `<date>-x64-parsers.jsonl`. On the arm64 reference host a gate run is started only inside the nightly window (benchmark host rules).
+  - **An invalid round is discarded and run again** (design §16.4). Today a failed invocation aborts the race. A round in which a row fails or is interrupted is dropped whole and repeated, the results file counts the dropped rounds, and the race aborts after 3 dropped rounds **[author's call: a bound, so that a broken row cannot loop for ever]**. The round loop (repeat, count, abort) is a pure function in `rounds.ts` that takes the invocation as a parameter; tests `dropped_round_is_repeated_and_counted` and `race_aborts_after_three_dropped_rounds` in `rounds.test.ts`.
+- [ ] **Step 3: Write the failing span tests:** spans of the whole input equal the spans of every split point and of the 1-byte feed, for every vector and fixture; `fields` after an interim head; the OWS edges (SP, HTAB, empty value, a value of only OWS, obs-text at both ends); the race's differential gate compares our spans with every rival's fields. `tests/h1_response_alloc.rs` counts allocations with a counting global allocator (as the writer's `tests/h1_writer_alloc.rs` does, PR #18) and expects 0 per `parse` call on every fixture, whole and fed 1 byte at a time.
+- [ ] **Step 4: Build P-A** (spans written in the scan). `h1_parse_bench` has no equal-work baseline for it, so P-A is judged by the race rows of acceptance line 2, in a dev run of 10 rounds, with the A/B rule's thresholds.
+- [ ] **Step 5: Build P-B one change at a time**, each with its own A/B: locals and one loop body per line; the STOP-set name search against the table loop; the masked `u64` prefix; the shared known-name classifier. Design G stays in the tests as the reference, and the fuzz target gains a differential oracle: the candidate's result and spans equal the reference's on every input. The padded read window is built here only if a measurement supports it; otherwise it moves to P1a.
+- [ ] **Step 6: Add the fasthttp and nginx rows** to the race. Survey the Jetty `HttpParser`, JDK `Http1HeaderParser` and .NET `HttpConnection` response parsers in the research note; one gets a race row only if it is plausibly faster than httparse. Add a Clang build of every C and C++ row as a row of its own: a parser entry per compiler with its own image (for example `picohttpparser@clang`; the Clang version is pinned in its Dockerfile), so that the GCC build and the Clang build of a rival run in the same rounds. The runner's `--cc` option stays what it is, the run-wide choice of the GCC version. The rivals were built with GCC only, and each must be raced at its best **[author's call]**. Every row is gated.
+- [ ] **Step 7: Run the race on both architectures** (quiet-machine rule): arm64, and x64 with every row built for `x86-64-v3` (design §16.4 gives the rule and its reason); 10 rounds in the nightly window if it exists. Our row is the scalar parser; every rival runs as shipped with its own SIMD. Record every cell in the journal and in the parser note.
+- [ ] **Step 8: Mutation run and 300 s of fuzzing** in the capped container, as in Task 4d. Update the notes, commit `Record field spans during the response head scan` and open the first PR. It merges when acceptance lines 1–5 hold, so that Task 6 can build on the new `parse`.
+- [ ] **Step 9: Close every open cell (research loop).** While any cell of the race has a CI upper bound ≥ 1.0: profile that cell for our parser and for the rival that wins it; study how the rival wins it; design our own scalar change (own-algorithm rule: study, rewrite, never copy); apply the A/B rule; re-run the race on both architectures; record the cycle in the journal and in the research note. Each cycle is its own PR under the per-task definition of done. A cycle's x64 run follows the cap rule of the benchmark host rules: it is refused when month-to-date plus its estimate would pass the monthly cap, and then the cycle's x64 cells stay open and the refusal is reported to the owner. After every race run the owner gets a progress report: the open cells with their numbers, what was tried, and what is next. A cell is never closed with SIMD (acceptance line 6).
+
+**Acceptance** (each line can fail and is computed inside the task):
+1. The span tests of Step 3 pass, and the differential fuzz oracle ran 300 s without a finding.
+2. With equal work, the new parser is faster than the parser Task 4d leaves. The race keeps one extra row for this comparison, `blazehttp+fields@4d`: `split_fields` after the scan, built against `engine-core` at Task 4d's merge commit (a `rev`-pinned git dependency in `bench/parsers/rust`). In the Step 7 race on arm64 and on x64, `pairedRatioCi(ours, blazehttp+fields@4d)` has its CI upper bound < 1.0 on every timed workload, and no 1-byte feed is slower (point estimate ≤ 1.02). The row is deleted, in the same PR, once that results file is committed.
+3. Every kept P-B change passed the A/B rule.
+4. Zero allocations (`tests/h1_response_alloc.rs`), `#![forbid(unsafe_code)]` unchanged, and every surviving mutant is killed or listed as equivalent with a one-line proof.
+5. The race ran on arm64 and x64 with the fasthttp and nginx rows, and the journal holds the paired ratio and CI of every cell.
+6. **The scalar parser beats every rival in every cell (owner decision 2026-11-13).** In a 10-round race in the nightly window on arm64 and a 10-round race on the x64 VM, `pairedRatioCi(ours, theirs)` has its CI upper bound < 1.0 for every rival row and every timed and feed workload of `bench/parsers/workloads.ts` (`varied-256` included), with equal work. Ours is the scalar parser: `engine-core` only, `#![forbid(unsafe_code)]`, no `engine-simd` kernel and no `std::arch` intrinsic. Whether word-at-a-time (SWAR) code on `u64` values and loops the compiler vectorises by itself count as scalar is an open owner decision ("Owner decisions needed"): on x64 our row is built for `x86-64-v3` like every row, so the compiler may emit AVX2 for a safe loop. Until the owner decides, the task works with reading (a) of that row, and the race report says, from the disassembly of our row, which hot loops were vectorised by the compiler. Every rival runs as shipped with its own SIMD (httparse NEON on arm64 and AVX2 on x64, picohttpparser SSE4.2 on x64, and whatever the other rows ship); on x64 the `x86-64-v3` build of Step 7 is what turns those paths on.
+
+**The task passes only when line 6 holds.** Lines 1–5 let the first PR merge; they do not close the task. While a cell loses, the task is not closed: it continues as research (Step 9) and is reported to the owner as open, and the gate is never relaxed. SIMD (P-D, `engine-simd`, P1a) is an extra layer on top of a scalar parser that already wins. It is never the way to pass this task. The arm64 run of line 6 needs the nightly window, which the owner has not chosen yet; until then arm64 results are dev runs and cannot close the task. The research note's estimates (P-A and P-B alone may leave cells open against httparse, and possibly against picohttpparser on x64) are unmeasured: they say where Step 9 is likely to start, and they change nothing in line 6.
+
+---
+
+### Task 4d: Review fixes and mutation pass on the merged parser
+
+It runs before Tasks 4c and 6, which build on the parser's exact limit behaviour. The code-fix task that follows the 2026-11-13 documentation review does it.
+
+**Scope:**
+- Mutation testing with `cargo-mutants` over `crates/engine-core/src/h1/**`. The version used is recorded in `docs/notes/toolchain.md`.
+- The findings Task 4 merged with, before the review-until-clean rule existed (line numbers at commit `76c4ed4`):
+  - `crates/engine-core/fuzz/fuzz_targets/h1_response.rs:594-597`: the oracle accepts `MalformedResponse` in place of any model error class.
+  - The same file, `:351-357`: mutation offsets are `u16`, so a byte at offset 65,536 or later is never mutated.
+  - The same file, `:181-184` against `:248`: the validity check and the head writer disagree on how many fields count.
+  - `tools/vectors/notices.ts`: `licenceText` indexes an object literal with `source.licence`.
+  - `docs/perf/journal.md`: the unexplained +9% in round 1 of the synthetic 20-field run.
+- The parser, test and fuzz findings of the 2026-11-13 review, by the ids of its parser-core report. The report is in the controller's ledger, not in the repository, so each finding is restated here in full. C4 (the parser note's summary against its own §8.6) is a note fix and belongs to the documentation follow-up; C5 (what a parse error carries) was fixed in design §5.2:
+  - C1: the fuzz oracle cannot see an over-strict limit, or a spurious `TooLarge` or `Malformed`, on the `Boundary` input shape.
+  - C2: "fail as soon as the buffer reaches the limit" has no test. Every limit is tested at its exact boundary on every input shape.
+  - C3: status codes 000–099 and 600–999 are rejected; RFC 9110 §15 says a client SHOULD process a response with an invalid status code as a 5xx.
+  - C6: obs-fold is rejected; RFC 9112 §5.2 says a user agent MUST replace it with SP.
+  - C7: a 304 with `Transfer-Encoding: chunked` or a `Content-Length` above 0 closes the connection; RFC 9112 §6.1 and RFC 9110 §8.6 allow both.
+  - C8: `Transfer-Encoding: chunked,` and `,chunked` are `smuggling-risk`; RFC 9110 §5.6.1.2 says a recipient MUST accept empty list elements.
+  - C9: `HTTP/1.2` to `HTTP/1.9` are rejected; RFC 9110 §2.5 says a recipient SHOULD process a higher minor version as its highest supported one.
+  - C10: `Content-Length: 5, 6` is `malformed-response` and the same values on two lines are `smuggling-risk`; RFC 9110 §5.3 treats them as one field value, so both get one class.
+  - C11: the fuzz target asserts nothing about our result when httparse rejects or wants more. A head with more than 101 fields falls into that unchecked path, because the oracle gives httparse 101 header slots. Interim heads are compared by start and length only, not by their fields. Read points are `u16`, so no arbitrary read splits past offset 65,535. No corpus or regression input is committed. (That the target does not run in CI is closed by Task 15a's `fuzz-smoke`.)
+  - C12: tests that assert the test helper instead of the product: the EOF rule and the five `PROTOCOL/incomplete-body` expectations are implemented in the test helper; Task 6 implements both and runs those vectors against the connection, so that part is closed there and not in this task. The vector format carries no `framing` and no `version`, so `Empty`, `ContentLength(0)` and an empty close-delimited body differ only through keep-alive: both fields are added to `expect.native` in the schema and the loaders. `every_error_is_a_payload_free_code` holds by construction: it is deleted or replaced by a test that can fail. The note's "1-byte feeds: each ≤ 1 ms" is printed by the example and asserted by no test: it becomes a test, or the note stops calling it a budget.
+
+  C3 and C6–C9 are places where the parser is stricter than an RFC SHOULD or MUST. Each gets a decision (keep the stricter rule, with its reason, or follow the RFC) recorded in `docs/notes/response-parser.md` with the RFC section, and a vector; design §5.2 is updated to the decision in the same PR. C13 (per-field costs on the hot path) is answered by Task 4c Step 1's profile.
+
+- [ ] **Step 1:** For each finding, write a test that fails (or tighten the fuzz oracle so that it fails), then fix the cause.
+- [ ] **Step 2:** Run cargo-mutants in the capped container (`docker run --rm --memory=2g --memory-swap=2g --cpus=1`, source mounted read-only and copied inside) with one job, 2 test threads and a test timeout of about 20 s. Take the flag names from the cargo-mutants documentation for the version used. The container is `--rm`, so the output directory (`mutants.out/`) is written to a mounted folder and its `missed.txt` and `timeout.txt` are quoted in the PR.
+- [ ] **Step 3:** Kill every surviving mutant with a new test, or list it as equivalent with a one-line proof in `docs/notes/response-parser.md`. A mutant in `timeout.txt` is listed there with the reason it runs past the test timeout (for example a loop that no longer ends). One whose reason is not a changed loop or wait is run again alone with a longer timeout, with its output in a directory of its own so that the full run's files stay as they are. It is then treated by its new outcome: one that survives the re-run is a missed mutant.
+- [ ] **Step 4:** Fuzz `h1_response` for 300 s in the container. Commit `Fix parser review findings and kill surviving mutants` and open a PR.
+
+**Acceptance:**
+1. `mutants.out/missed.txt` holds no mutant outside the equivalent list in `docs/notes/response-parser.md`, and every mutant in `mutants.out/timeout.txt` is in the note with its reason. A timed-out mutant made the tests fail to finish, so it needs the reason and not an equivalence proof **[author's call]**. A mutant that was re-run (Step 3) and survived counts as missed: it is killed or on the equivalent list, and the PR quotes the re-run's outcome.
+2. Every code finding listed above has a test, or a tightened fuzz oracle, that fails without its fix.
+3. The journal item is closed by a journal entry that either reproduces the +9% and names its cause, or shows 10 further rounds without it.
+4. Every decision on C3 and C6–C9 is in `docs/notes/response-parser.md` and in design §5.2.
+5. The 300 s fuzz run is clean.
 
 ---
 
 ### Task 5: `RequestWriter` and header templates
 
+**As built** (PR #18): the interface below is the one on `p0/writer`; `docs/notes/request-writer.md` records each change from the first sketch and why. The speed work is in Tasks 5b and 5c.
+
 **Files:**
-- Create: `crates/engine-core/src/h1/writer.rs`, `crates/engine-core/tests/h1_writer.rs`, `docs/notes/request-writer.md`
+- Create: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs, host.rs, target.rs, template.rs}`, `crates/engine-core/tests/{h1_writer.rs, h1_writer_alloc.rs}`, `crates/engine-core/tests/support/{request_vectors.rs, response_vectors.rs, write_bench.rs, write_rings.rs}`, `crates/engine-core/fuzz/fuzz_targets/h1_writer.rs`, `crates/engine-core/fuzz/h1_writer.dict`, `crates/engine-core/examples/h1_write_bench.rs`, `docs/perf/harness/writer-ab/` (the A/B harness), `tests/vectors/h1-request/*.json`, `docs/notes/request-writer.md`
+- Modify: `policy/spec.json` (the limits `maxRequestTargetBytes`, `maxRequestFieldsBytes` and `maxCopiedBodyBytes`), the regenerated `crates/engine-core/src/generated/spec.rs` and `packages/blazehttp/src/generated/spec.ts`, and their tests `crates/engine-core/tests/spec_wire.rs` and `packages/blazehttp/test/spec.test.ts`
+- Modify: `crates/engine-core/src/h1/{mod.rs, grammar.rs}`, `crates/engine-core/src/h1/parser/{mod.rs, facts.rs}`, `crates/engine-core/{Cargo.toml, fuzz/Cargo.toml}`, `Cargo.lock`, `crates/engine-core/tests/{h1_response.rs, vectors_load.rs, support/vectors.rs}`, `crates/engine-core/examples/h1_parse_bench.rs`, `tools/vectors/{schema.ts, schema.test.ts, notices.ts, notices.test.ts, import-llhttp.ts}`, `tests/vectors/index.json`, `THIRD_PARTY_NOTICES`, `.github/workflows/ci.yml`
+- Modify: `docs/notes/{response-parser.md, vectors.md}`, `docs/perf/{journal.md, ideas.md}`, `docs/specs/2026-11-06-blazehttp-design.md`; Create: `docs/perf/logs/writer/`
+- The four lines above and the one below are the diff of PR #18 against the milestone on 2026-11-13.
+- Create: `bench/writer/` (hyper and Go comparisons; replaced by Task 5c's `bench/writers/`)
 
 **Interfaces:**
 - Consumes: `Method`, `ErrorCode` (Tasks 2 and 4)
 - Produces:
 
 ```rust
-pub struct HeaderTemplate { /* pre-encoded "host: …\r\nname: value\r\n…" bytes */ }
-impl HeaderTemplate { pub fn new(host: &str, defaults: &[(&str, &str)]) -> Result<Self, ErrorCode>; }
-pub struct RequestParts<'a> { pub method: Method, pub target: &'a [u8], pub headers: &'a [u8] /* "name: value\r\n"* */, pub body: &'a [u8] }
-pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &HeaderTemplate) -> Result<(), ErrorCode>;
+pub struct HeaderTemplate { /* pre-encoded "host: …\r\nname: value\r\n…" bytes, bound to one authority */ }
+impl HeaderTemplate {
+    pub fn new(host: &[u8], fields: &[u8], field_lines: u16, sensitive_names: &[&[u8]]) -> Result<Self, ErrorCode>;
+    pub fn authority(&self) -> &[u8];
+    pub fn is_sensitive(&self) -> bool;
+}
+pub struct RequestParts<'a> { pub method: Method, pub target: &'a [u8], pub headers: &'a [u8] /* "name: value\r\n"* */,
+                              pub header_lines: u16 /* lines the caller serialised */, pub body: &'a [u8] }
+#[must_use] pub enum Reuse { Allowed, CloseAfterExchange }
+pub const MAX_P0_REQUEST_BYTES: usize;   // the largest request P0 can write; the connection shrinks its write buffer to this size
+pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &HeaderTemplate, conn_authority: &[u8]) -> Result<Reuse, ErrorCode>;
 ```
 
-`write_request` clears `out` and writes the request line, the template, the validated per-request headers, `content-length` (only when there is a body, or the method is POST, PUT or PATCH), the blank line and the body, all into one buffer for one write. It reuses `out`'s capacity, so steady state does not allocate. Re-validation failures return `Engine(Internal)`: the user-facing `INVALID_CONFIG` comes from the JS layer in P2, and a failure here means that contract was bypassed (§12).
+`write_request` clears `out` and writes the request line, the template, the validated per-request headers, `content-length` (only when there is a body, or the method is POST, PUT, PATCH or QUERY), a generated `connection: close` when a body rides on GET, DELETE or OPTIONS, the blank line and the body, all into one buffer for one write. It reuses `out`'s capacity, so steady state does not allocate. The caller must honour the returned `Reuse`. On an error nothing is written, and the first failing check wins, in this order:
+1. a body above `maxCopiedBodyBytes` → `Engine(Internal)` (the shard's `try_submit` check was bypassed);
+2. a target above `maxRequestTargetBytes` → `TooLarge(Url)`;
+3. template plus headers above `maxRequestFieldsBytes` → `TooLarge(Headers)`;
+4. any other re-validation failure → `Engine(Internal)`: `conn_authority` is not the template's authority, `HEAD` with a body, a target that is not origin-form, a malformed header line, a forbidden name, a repeated singleton, a line count other than `header_lines`, or `OPTIONS` content without `content-type`;
+5. a buffer that cannot grow to the request's length → `Engine(ResourceExhausted)`.
+
+The user-facing `INVALID_CONFIG` comes from the JS layer in P2, and an `Engine(Internal)` here means that contract was bypassed (§12).
 
 - [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/request-writer.md`, and it is reviewed before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
@@ -430,7 +674,84 @@ pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &Hea
 - [ ] **Step 2: Run** `cargo nextest run -p engine-core --test h1_writer`. Expected: FAIL.
 - [ ] **Step 3: Implement** with the shared token and value tables from `parser.rs`. Move them to `h1/grammar.rs` so the writer does not duplicate them.
 - [ ] **Step 4: Run** the tests and clippy. Expected: PASS.
-- [ ] **Step 5: Commit** `Add request writer with pre-encoded header templates` and open a PR.
+- [ ] **Step 5: Add the fuzz target `h1_writer`:** arbitrary parts and template input never panic, and every accepted request parses back (httparse's request parser as the oracle) to the same method, target, fields and body. Run it for 300 s in the capped container.
+- [ ] **Step 6: Commit** `Add request writer with pre-encoded header templates` and open a PR.
+
+---
+
+### Task 5b: Writer speed (W-A)
+
+Research: `docs/notes/h1-speed-research.md` §6 (reviewed, PR #22). It runs after Task 5 and Task 4c's first PR; Task 4c's research loop does not hold it back ("Dependencies").
+
+**Files:**
+- Modify: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/examples/h1_write_bench.rs`, `crates/engine-core/tests/h1_writer.rs`, `crates/engine-core/tests/support/{write_bench.rs, write_rings.rs}`, `docs/perf/harness/ab/` (the writer's bench source moves here; `docs/perf/harness/writer-ab/` is deleted), `docs/notes/request-writer.md`, `docs/perf/journal.md`
+
+**Not in this task:** binding a template to its connection by `TemplateId` (P1a, with the profile leases; Task 6 keeps the authority compare); W-B layout hints (P2: they need the P2 wire contract); W-D SIMD validation (P1a, optional, only if measured faster). `write_request`'s signature does not change.
+
+- [ ] **Step 1: Add the workloads and fix the floor measurement** before any W-A A/B. `h1_write_bench`'s generator and `tests/support/write_rings.rs` gain `h20` (20 per-request fields, 400–800 B of headers; research note §3.13) and `varied-delta` **[author's call: the research note names the workload and does not define it; with everything but the header block fixed, a change in its result can only come from the per-request header path, which is what W-A changes]**: a 256-request ring with a fixed xorshift seed in which only the per-request header block varies (2 to 20 lines, names shuffled, value lengths 0.5–1.5×), with `post1k`'s method, target and body. In the same step the writer's A/B moves onto the harness of Task 4c's A/B rule (`docs/perf/harness/ab/`): two named revisions in place of the three fixed ones of `writer-ab/`, the floor and the other baselines as further variants, 10 launches, and the JSON lines that `ab.ts` reads. The writer's bench source moves there and `docs/perf/harness/writer-ab/` is deleted. The floor is then measured in the same binary as the writer, in rotation, with `pairedRatioCi`.
+- [ ] **Step 2: Write the failing tests:** the new classifier returns today's class for every forbidden, singleton and underscore-spelled name, in every letter case, and for fuzzed names (today's `classify` stays in the tests as the reference).
+- [ ] **Step 3: Build W-A one change at a time**, each under Task 4c's A/B rule (on the harness of Step 1) with its ablation: the shared known-name classifier; the name search and tchar fold from `grammar.rs` (only if Task 4c kept them); limits checked once on the summed length.
+- [ ] **Step 4: Run the mutation pass and 300 s of `h1_writer` fuzzing** in the capped container; `tests/h1_writer_alloc.rs` still shows 0 allocations.
+- [ ] **Step 5: Run the A/B on x64**, record both architectures in the journal, commit `Classify request header names with one shared word compare` and open a PR.
+
+**Acceptance:**
+1. Classification is unchanged (Step 2's tests and the fuzz target).
+2. Every kept change passed the A/B rule, and no workload (`get`, `post1k`, `varied`, `h20`, `varied-delta`) is slower than Task 5's writer: in the A/B harness, `pairedRatioCi(this task's head, Task 5's merge commit)` has a point estimate ≤ 1.02 on each of them, on arm64 and on x64.
+3. 0 allocations; every surviving mutant is killed or listed as equivalent.
+4. `post1k` costs ≤ 2.3× the copy floor on arm64 and x64, measured as Step 1 fixes it (the owner's line). The research projects W-A at about 2.15–2.7× (estimate), so a miss is possible: the task then stays open, the numbers go to the owner, and what follows is the owner's decision ("Owner decisions needed").
+
+Whether every rival is beaten with equal work is measured by Task 5c, not here.
+
+---
+
+### Task 5c: Cross-language writer race
+
+Research: `docs/notes/h1-speed-research.md` §3.12–§3.13. It runs after Task 5b (it judges W-A) and Task 4c's first PR (`pairedRatioCi`).
+
+**Files:**
+- Create: `bench/writers/` (runner, one Dockerfile and harness per language, README)
+- Modify: `bench/parsers/` only to move the modules both races need (statistics, harness protocol, provenance, options) into one shared folder, never to copy them
+- Delete: `bench/writer/`
+- Modify: `docs/notes/request-writer.md` §8.4, `docs/perf/journal.md`, `.github/workflows/ci.yml` (smoke job `bench-writers`)
+
+**Rows** (research note §3.13 gives each timed call):
+- Timed and gated: hyper (vendored at the pin with the one added `pub fn`), ureq, Go `net/http`, fasthttp, h2o client, Boost.Beast, cpp-httplib, Zig `std.http`, Netty and Jetty (JMH).
+- libcurl: timed if its head assembly can be isolated within one day of work; otherwise end-to-end only (G0), with the reason recorded.
+- Mapped to another row: reqwest → hyper; isahc → libcurl. End-to-end only (G0): `java.net.http`, .NET. Advisory: undici.
+- Work tiers (§3.12): the gated ratio is ours at EW2 against theirs at EW1; ours@EW2 / theirs@EW2 and the two copy floors are reported beside it.
+
+**Resource rules:** one container at a time, `--cpus=1 --memory=2g --memory-swap=2g --network=none`; the JVM rows run with a 1 GiB heap; image builds use at most 2 jobs. x64 budget: about one instance-hour including image builds (estimate), logged in `bench/aws-cost-log.md`.
+
+- [ ] **Step 1:** Export the workloads (`get`, `post1k`, `varied`, `h20`) once as JSON from `h1_write_bench`'s generator, so every language loads identical requests.
+- [ ] **Step 2:** Write the runner's failing tests, then the `check` mode and the differential gate: every row's bytes parse (httparse's request parser as the oracle) to the same method, target, `Content-Length`, body and field multiset as ours. A second gate runs the injection vectors (`tests/vectors/h1-request/`) through each rival's EW1 path and records reject, repair or pass in a committed table; it is never timed.
+- [ ] **Step 3:** Add the rows language by language (Rust, Go, C and C++, Zig, Java); each row must pass the differential gate before it is timed.
+- [ ] **Step 4:** Run the race on arm64 and on x64 (every row built for `x86-64-v3`, design §16.4), 10 rounds each. The arm64 gate run is in the nightly window. If no window exists yet, the arm64 run is a dev run, the writer gate stays open, and the gate run moves to Task 20 Step 1.
+- [ ] **Step 5:** Delete `bench/writer/`, update the notes, commit `Add cross-language request writer race` and open a PR.
+
+**Acceptance:**
+1. The differential gate passes for every row and workload before any timing, and the injection table is committed.
+2. Two committed results files hold 10 valid rounds (design §16.4) for every row and workload: `bench/results/<date>-arm64-ref-writers.jsonl` from the nightly window and `bench/results/<date>-x64-writers.jsonl` from the x64 VM. A dev run (a `-dev-` file) does not count: without a window the PR merges with the dev file, and this line stays open until Task 20 Step 1.
+3. The report prints, per rival and workload, the three ratios with their CIs and the allocations per request.
+4. `bench/writer/` is gone and `pnpm knip` and `pnpm policy` are clean.
+
+The two files of acceptance line 2 are the evidence for the owner's writer gate (CI upper bound < 1.0 against every gated row, every workload, both architectures); dev results leave the gate open. A cell that fails is an open speed item with an owner task (the next writer candidate, or W-D in P1a) and is reported to the owner with its numbers.
+
+---
+
+### P1a entry conditions recorded in P0
+
+These are not P0 work. The P1a plan starts from them; they come from the review of the two research notes.
+
+1. **Prototype comparison first.** P-D (stage 1 plus validator), P-C and the scalar parser that Task 4c leaves are measured on a fixed `1k-h20` head and on the `varied-256` ring, on both architectures. The lead candidate is chosen from that data, not from the estimates. A SIMD path is kept only where it is faster than the scalar parser, which already meets the parser gate (item 8).
+2. **x64 runtime dispatch is designed before any kernel is written:** how SSSE3 and AVX2 are selected, and whether the gated row is the `x86-64-v3` build or the shipped baseline build with dispatch.
+3. **Every `engine-simd` kernel** runs under Miri with its target features, has a differential fuzz target against the scalar path, and gets a `security-audit` pass.
+4. **The padded-window API changes the read-buffer contract Task 6 sets** (`read_buf_size`, initialised slack). P1a states the new contract before it changes the connection.
+5. **The `[bool; 256]` class tables move** from `engine-core`'s `grammar.rs` into `engine-simd`, and `engine-core` re-exports them: one source of truth, in the lower crate (design §13.1 rule 7).
+6. **The Rust tests that the research note §4.1 "Coverage limits" requires** are written, and then `tools/h1-research/` is deleted (#24).
+7. **W-D is optional:** it is built only if a measurement shows it faster than W-A on large header deltas.
+8. **The parser gate** (every rival, every workload, both architectures) is Task 4c's acceptance and is met by the scalar parser (owner decision 2026-11-13). P1a re-runs the race after every parser change: a SIMD layer must keep every cell. The research note §5.7 ranks further ideas for the hardest cells.
+9. **Template binding by id.** With profile leases a shard holds more than one `HeaderTemplate`. The connection then stores the `TemplateId` (slot and generation) it was checked out for and compares ids instead of authority bytes (research note §6.2 item 4); kept only if an A/B shows it faster.
+10. **Read while writing.** The connection reads while it writes a request, so that a final response that arrives early stops the write (design §5.1). The vector `early-final-response` runs through the connection from then on.
 
 ---
 
@@ -438,70 +759,104 @@ pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &Hea
 
 **Files:**
 - Create: `crates/engine-core/src/completion.rs`, `crates/engine-core/src/shard.rs`, `crates/engine-core/src/h1/connection.rs`, `crates/engine-core/src/buf.rs`
-- Create: `crates/engine-core/tests/shard_loopback.rs` (an in-test tokio server per scenario)
-- Create: `docs/notes/shard-and-connection.md`
+- Create: `crates/engine-core/tests/shard_loopback.rs` (an in-test tokio server per scenario), `crates/engine-core/tests/shard_body_bound.rs` (one scenario under a counting global allocator; a global allocator is per test binary, so it has its own file)
+- Modify: `docs/notes/shard-and-connection.md` (it exists on `p0/connection-research` and merges, reviewed, before this task's code: Step 0), `docs/notes/response-parser.md` (the hand-over line of `cl-1tib-no-body`: Step 0)
 
 **Interfaces:**
-- Consumes: the parser and writer (Tasks 4 and 5)
+- Consumes: the parser with field spans (Tasks 4 and 4c) and the writer (Task 5)
 - Produces:
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct RequestKey(pub u64);  // opaque; JS encodes slot+generation (+shard id from P1a)
 pub struct Submit { pub key: RequestKey, pub method: Method, pub req: Vec<u8>,
-                    pub target: Range<u32>, pub headers: Range<u32>, pub body: Range<u32> }   // ranges index `req`
+                    pub target: Range<u32>, pub headers: Range<u32>, pub body: Range<u32>,   // ranges index `req`
+                    pub header_lines: u16 /* lines the caller serialised into `headers`; `RequestParts.header_lines` */ }
 pub enum ShardCommand { Submit(Submit) }                         // P1a adds Credit, Cancel, UploadChunk, Poison
-pub struct ResponseData { pub status: u16, pub buf: Vec<u8>, pub head: Range<u32>, pub body: Range<u32> }
+pub struct ResponseData { pub status: u16, pub buf: Vec<u8>, pub head: Range<u32>, pub body: Range<u32>,
+                          pub fields: u16, pub spans: Range<u32> /* `fields` spans as u16 quadruples, stored in `buf` after the body */ }
 pub struct Completion { pub key: RequestKey, pub req: Vec<u8> /* returned to its owner */, pub outcome: Result<ResponseData, ErrorCode> }
 pub trait CompletionSink: 'static {
     /// Push one terminal record; append any read buffers the consumer has returned for this shard thread into `reclaimed`.
     fn push(&self, c: Completion, reclaimed: &mut Vec<Vec<u8>>);
 }
 pub struct ShardConfig { pub addr: SocketAddr, pub host: String, pub max_connections: usize,
-                         pub queue_capacity: usize, pub read_buf_size: usize /* default 65536 */ }
+                         pub queue_capacity: usize, pub read_buf_size: usize /* default 65536; ≥ H1_LIMITS.max_head_bytes */,
+                         pub request_timeout: Duration /* default 30 s */, pub pool_bytes: usize /* default 8 MiB */,
+                         pub max_body_bytes: usize /* default 4 MiB; a larger response body settles TooLarge(ResponseBody) */ }
 #[derive(Clone)] pub struct ShardHandle { /* tokio::sync::mpsc::Sender<ShardCommand> */ }
 impl ShardHandle { pub fn try_submit(&self, s: Submit) -> Result<(), (Submit, ErrorCode)>; } // Full → QueueFull { scope: Global, bound: queue_capacity }
-pub fn shard<S: CompletionSink>(cfg: ShardConfig, sink: S) -> (ShardHandle, impl Future<Output = ()>); // caller runs it inside a LocalSet
-pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -> std::io::Result<ShardHandle>; // dedicated thread: current_thread runtime + LocalSet
+pub enum ShardStartError { Config(ErrorCode) /* the code of the config check that failed */, Spawn(std::io::Error) }
+pub fn shard<S: CompletionSink>(cfg: ShardConfig, sink: S) -> Result<(ShardHandle, impl Future<Output = ()>), ShardStartError>; // checks cfg first; caller runs the future inside a LocalSet
+pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -> Result<ShardHandle, ShardStartError>; // dedicated thread: current_thread runtime + LocalSet
 ```
 
 **Behaviour (decided here):**
-- Shard state is `Rc<RefCell<ShardState>>`: a FIFO of pending `Submit`s, a count of live connections, a read-buffer free list and a `Notify` for idle connections. No borrow is held across `.await`.
-- The command loop uses `recv_many` into a reused `Vec` and pushes onto the FIFO. If no connection is idle and `live < max_connections`, it spawns one connection task (`spawn_local`) per missing connection. Otherwise it wakes one idle connection. Requests do not spawn tasks (§5.1).
+- Shard state is `Rc<RefCell<ShardState>>`: a FIFO of pending `Submit`s, a count of live connections and a count of parked ones, a read-buffer free list and a `Notify` for parked connections. No borrow is held across `.await`.
+- The command loop uses `recv_many` into a reused `Vec` and pushes onto the FIFO. Then it runs the **dispatch rule**: it first settles `Timeout(Total)` for every queued request whose deadline has passed (below); then, with q queued requests and i parked connections, it wakes min(q, i) parked connections and, when q is above i, spawns min(q − i, `max_connections` − `live`) new connection tasks (`spawn_local`). `live` rises at the spawn and the parked count falls at the wake, so a second run of the rule counts no connection twice. Requests do not spawn tasks (§5.1).
+- The dispatch rule also runs when a connection task ends while the FIFO is not empty, so a connection that closed (an error, a timeout, `Connection: close`) is replaced for the queued work.
+- **End of a task, a panic included [author's call]:** the release profile unwinds, and tokio contains a panic inside the task that raised it. Each connection task therefore owns a guard whose `Drop` does the end-of-task work on every exit: it lowers `live`, settles a request the task still owns with `Engine(Panic)` (design §11.3, the connection-task scope), and wakes the command loop for the dispatch rule. On a normal exit the task owns no request. The task gives up a request when it calls `sink.push`, so a panic inside the sink does not settle that request a second time. The other poisoning scopes of §11.3 arrive in P1a.
+- **No timer for the queue [author's call]:** every request has the same `request_timeout` and the FIFO is in arrival order, so each request in an exchange has a deadline no later than the FIFO head's. Every exchange therefore ends by the head's deadline, and each end either takes the head (step 1) or runs the dispatch rule; both settle an expired request. A timer of its own could not fire earlier than that. The argument needs at least one connection, which the config checks guarantee (below).
 - A connection task runs this loop:
-  1. Take the next `Submit`.
-  2. `write_request` into the connection's write `Vec`, then `write_all`.
-  3. Read into a pooled read buffer and parse.
-  4. Read the CL body.
+  1. Take the next `Submit`. One whose deadline has passed settles `Timeout(Total)` here, without a write, and the task takes the next. A new connection task takes its `Submit` before it connects: a failed connect settles that request (`Network(Refused)` or `Network(Other)`) and ends the task, and the dispatch rule then gives each request still queued its own connect attempt. A new task that finds the FIFO empty ends without connecting.
+  2. `write_request` into the connection's write `Vec` (with the shard's template, below), keep the returned `Reuse`, then `write_all`. P0 writes the whole request before it reads: a request is at most `MAX_P0_REQUEST_BYTES`, so the write is bounded. Design §5.1's rule for a final response that arrives during the write (stop writing, deliver, close) needs the read and write halves to run together and arrives with P1a's streamed uploads. Mark it `// removal: P1a read/write split (#issue)`.
+  3. Read into a pooled read buffer and `parse(buf, spans)` with the connection's one `FieldSpans`. On `Interim { consumed }`, skip those bytes and parse again in the same read.
+  4. Read the body that `head.framing` announces: `ContentLength(n)` reads n bytes, `Empty` reads nothing, and `CloseDelimited` reads to EOF. Both are bounded by `max_body_bytes`: a `Content-Length` above it settles `TooLarge(ResponseBody)` when the head is parsed, before any body byte is buffered; a close-delimited body settles the same error at the first byte past the bound. Either way the connection closes. A read buffer that grows for a body grows by doubling, and never above `read_buf_size` + `max_body_bytes` + 1: a head fills at most `read_buf_size`, and the one extra byte is the byte past the bound that settles a close-delimited body.
   5. Hand off the read buffer if the response fills ≥ ¼ of it. Otherwise copy it out into an exact-size `Vec` and keep the buffer.
-  6. Push the completion, and return `reclaimed` buffers to the free list.
-  7. Take the next request, or park on `Notify`.
+  6. Push the completion, and return `reclaimed` buffers to the free list. A returned buffer whose capacity is above `read_buf_size` (it grew for a large body) is dropped instead, so the free list never holds more than `pool_bytes`.
+  7. Take the next request, or park. A parked connection waits for `Notify` and for socket readability together: a byte, EOF or a socket error while it is idle closes it (design §5.1, idle-connection rule). Before a reused connection takes a `Submit`, straight after an exchange or when it is woken, it does one non-blocking `try_read` (the socket check). Any result other than `WouldBlock` (a byte, EOF or an error) closes the connection. It takes the `Submit` only on `WouldBlock`, so a connection that closes here holds no request: the request stays in the FIFO and the dispatch rule replaces the connection. A request is therefore always in the FIFO or owned by one task that settles it. **The order is enforced by a type, not by a test [author's call]:** the function that takes a `Submit` from the FIFO needs a `Checkout` value, and only two places make one: a new task before it connects, and the socket check when it returned `WouldBlock`. A scripted test cannot force the case, because `try_read` sees only what the reactor has already seen (design §5.1).
 - `TCP_NODELAY` is on.
-- **Reuse rules in P0** (§5.1 subset): close and never reuse the connection when bytes remain after the response, on `Connection: close`, on HTTP/1.0 without keep-alive, on close-delimited responses, and on any error. Other connections are reused.
+- **Request-body bound:** `try_submit` returns `TooLarge(RequestBody)` for a body above `H1_LIMITS.max_copied_body_bytes` and queues nothing. `write_request` treats a larger body as a bypassed contract (Task 5).
+- **Reuse rule in P0** (§5.1 subset): a connection is reused only if the writer returned `Reuse::Allowed`, the parser set `head.keep_alive`, and no bytes remain after the response. Any error closes it. The parser's `keep_alive` already covers `Connection: close` (also in a 1xx head), HTTP/1.0 without keep-alive, close-delimited bodies, and a 204 or 304 that announces a body.
+- **Spans reach the completion:** `ResponseData` carries the field count and the spans, so no Rust consumer (`engine-bench`, and the binding from P1a) scans the head again. The P0 binding does not put them on the wire: Task 13's `RawResponse.head` is one latin1 string and no P0 JavaScript looks at a field. The completion record gains the field count and the span words in P1a, with the JS headers object (design §9.3). The Task 6 research note confirms or replaces the layout shown above before any code **[author's call: the layout depends on the hand-off rule the note fixes]**.
+- **Config checks [author's call]:** `shard` checks the config before it starts anything and returns `ShardStartError::Config` on a bad value, because the future's output is `()` and has no error path. `read_buf_size` below `H1_LIMITS.max_head_bytes` is rejected with `Engine(Internal)`: the parser reports `TooLarge` only at 65,536 buffered bytes, so a smaller buffer would fill with a `Partial` head. `max_connections = 0` and `queue_capacity = 0` are rejected the same way: without a connection no queued request would ever be taken, and tokio's bounded channel panics on a capacity of 0.
+- **Template in P0:** the shard builds one `HeaderTemplate` when it starts, `HeaderTemplate::new(cfg.host.as_bytes(), b"", 0, &[])` (no default fields in P0); an error from it is returned as `ShardStartError::Config`. Every connection passes `cfg.host` as `conn_authority`. Replacing the writer's authority compare by an id compare (`TemplateId`, research note §6.2 item 4) means something only when a shard holds more than one template, so it moves to P1a with the profile leases **[author's call]** ("P1a entry conditions", item 9).
 - `Framing::Chunked` completes with `Protocol(Other)` and closes the connection. Mark it `// removal: P1a chunked FramingDecoder (#issue)`.
 - **Error mapping:**
   - Connect refused → `Network(Refused)`. Other connect errors → `Network(Other)`.
-  - EOF or reset before any response byte → `Network(ClosedBeforeResponse)`. The stale-connection re-send rule arrives in P1a.
+  - EOF, a reset or a write error (for example EPIPE) before any byte of the exchange's response, interim heads included → `Network(ClosedBeforeResponse)`; these are the stale-connection conditions of design §5.1. Any other socket error before the first response byte → `Network(Other)`. The stale-connection re-send rule arrives in P1a.
+  - EOF after at least one response byte but before the final head is complete → `Protocol(MalformedResponse)` (§5.2).
   - EOF mid-body → `Protocol(IncompleteBody)`.
-- Timeouts arrive in P1a.
+  - A socket error after at least one response byte, in the head or in the body → `Network(Reset)` for a connection reset and `Network(Other)` for any other error **[author's call: an EOF is a framing fact, so it is a protocol error; a reset is a transport fault, and the design's error table (§8) has `NETWORK/reset` for it]**.
+- **One deadline per request [author's call]:** the wait in the shard's FIFO, connect, write and read share `request_timeout`. It starts when the command loop takes the `Submit` from the channel (one clock read per `recv_many` batch); a request whose deadline passes while it waits in the FIFO settles `Timeout(Total)` without a connection (by the dispatch rule or by step 1); the design's `queue` timeout (§3, `TIMEOUT/queue`) is a phase of P1a's phase timer, and `Timeout(Total)` stands in for it in P0. When it passes during an exchange, the request settles `Timeout(Total)` and the connection closes. The owner's rule is that every network call has a timeout, so the prototype cannot wait for P1a's phase timer. Mark it `// removal: P1a phase timer (#issue)`.
 
-- [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/shard-and-connection.md`, and it is reviewed before any code in this task.
+- [ ] **Step 0: Research gate** (see "Process rules"). `docs/notes/shard-and-connection.md` exists on the unmerged branch `p0/connection-research`. The research agent updates it for this section (the idle check and the `Checkout` type, the dispatch rule and why the queue needs no timer, the end-of-task guard, the config checks, the body bound and the result of `cl-1tib-no-body`, the error mapping, the deadline, the spans layout) and corrects the hand-over line of `cl-1tib-no-body` in `docs/notes/response-parser.md`. The note is reviewed and merged before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
   - `get_round_trip_returns_status_head_body`
   - `keep_alive_reuses_one_connection`: 100 sequential requests with `max_connections = 1`; the server counts exactly 1 accept.
   - `never_exceeds_max_connections`: 200 concurrent requests with `max_connections = 8`; peak accepted ≤ 8.
   - `connection_close_reconnects`
   - `leftover_bytes_close_connection`: the server appends junk after the response; the next request uses a new connection.
-  - `server_closed_idle_connection_settles_with_network_error` (Review Focus 2): the server closes after the first response; the second request settles with `Network(ClosedBeforeResponse)` within 1 s; the third succeeds on a new connection.
+  - `idle_eof_retires_connection_before_next_request` (Review Focus 2): after the first response the server half-closes and reads until the client closes too, which shows that the idle check saw the EOF; only then is the second request submitted. It succeeds, and the server counts a second accept.
+  - `close_after_request_settles_closed_before_response` (Review Focus 2): on a reused connection the server reads the whole second request and closes without sending a byte; the request settles `Network(ClosedBeforeResponse)` within 1 s, and the third succeeds on a new connection.
   - `eof_mid_body_settles_incomplete_body` (Review Focus 2)
-  - `refused_connect_settles_refused`
+  - `reset_mid_body_settles_reset` (Review Focus 2): the server sends the head and half the body, then closes with a zero linger time so that the kernel sends RST; the request settles `Network(Reset)` and the next one succeeds on a new connection.
+  - `eof_mid_head_settles_malformed_response`
+  - `interim_then_final_in_one_read_completes_once`
+  - `close_delimited_body_is_read_to_eof_and_not_reused`
+  - `head_204_and_304_have_no_body`
+  - `stalled_server_settles_timeout_total`: the server accepts and never answers; the request settles within `request_timeout` + 1 s and the connection is closed.
+  - `queued_request_times_out_without_a_connection`: `max_connections = 1` and a stalled server. Two requests are submitted before the shard future is first polled, so they arrive in one batch and share one deadline. Both settle `Timeout(Total)` within `request_timeout` + 1 s, and the server has received the bytes of one request only.
+  - `closed_connection_is_replaced_for_queued_requests`: `max_connections = 1`; the server answers the first request with `Connection: close`; a second request that was queued behind it succeeds on a new connection without a further submit.
+  - `content_length_over_max_body_settles_too_large_at_head`: `Content-Length` is `max_body_bytes` + 1; the request settles `TooLarge(ResponseBody)` before the server sends a body byte, and the connection is closed.
+  - `close_delimited_over_max_body_settles_too_large`: the server streams without end; the request settles `TooLarge(ResponseBody)`. An error completion carries no buffer, so the memory bound is asserted in its own test binary, `tests/shard_body_bound.rs`: a counting global allocator records the largest single size passed to `alloc` or `realloc` in the same scenario, and it is ≤ `read_buf_size` + `max_body_bytes` + 1.
+  - `grown_buffer_is_not_pooled`: a body larger than `read_buf_size` is handed off and returned; the free list does not keep it.
+  - `read_buf_size_below_head_limit_is_rejected`, `zero_max_connections_is_rejected`, `zero_queue_capacity_is_rejected`
+  - `panicking_sink_releases_the_connection_slot`: `max_connections = 1` and a sink that panics on its first push; a second request, queued behind the first, succeeds on a new connection, and the sink sees no second push for the first request.
+  - `connection_guard_settles_an_owned_request_on_panic` (a unit test in `h1/connection.rs`): a guard that owns a request is dropped by a panic inside `catch_unwind`; a recording sink then holds one `Engine(Panic)` completion for it, and `live` is one lower.
+  - The connection vectors the parser note hands over: `extra-response-while-idle`, `cl-1tib-no-body`, `http11-then-http09`. Through the connection, `cl-1tib-no-body` settles `TooLarge(ResponseBody)` when the head is parsed: its `Content-Length` (1 TiB) is above `max_body_bytes`. The parser note's hand-over line expects `PROTOCOL/incomplete-body`, which holds only for a connection without a body bound; Step 0 corrects that line. `early-final-response` is not run in P0: it needs the read/write split (loop step 2) and is listed in "P1a entry conditions", item 10.
+  - `h1_response_eof_vectors_through_the_connection`: every EOF vector of the `engine-core:h1_response` suite, served by the test server, settles with the vector's error. The EOF vectors are those whose input ends before the final head is complete: today `eof-empty`, `eof-after-h`, `eof-after-version`, `eof-mid-status`, `eof-mid-fields`, `eof-after-interim` and `interim-then-eof`. The test selects them by that property, so a vector added later is run too.
+  - `h1_response_body_eof_vectors_through_the_connection`: every vector of the suite whose head is complete and announces a `Content-Length`, and whose input ends before that many body bytes (the helper-level `PROTOCOL/incomplete-body` expectations of Task 4d's C12). It settles `TooLarge(ResponseBody)` when its `Content-Length` is above `max_body_bytes`, as `cl-1tib-no-body` does, and `Protocol(IncompleteBody)` otherwise. The test selects them by that property too.
+  - `refused_connect_settles_refused`: with nothing listening, `max_connections = 1` and the default `request_timeout`, three queued requests each settle `Network(Refused)` within 1 s.
+  - `socket_check_closes_on_byte_eof_and_error` (a unit test in `h1/connection.rs`, on a loopback pair): after the peer sent a byte, closed, or reset the connection, and the stream reported readable, the socket check returns no `Checkout`; on a quiet socket it returns one.
+  - `oversized_request_body_is_rejected_at_submit`: a body of `max_copied_body_bytes` + 1 returns `TooLarge(RequestBody)` from `try_submit`; the limit itself is accepted.
   - `queue_full_fails_fast` (Review Focus 3): `queue_capacity = 4` and the shard future not yet polled; the 5th `try_submit` returns `QueueFull { scope: Global, bound: 4 }` immediately.
-  - `each_key_completes_exactly_once`: 10,000 requests with `max_connections = 50`; the sink records keys and expects no duplicate and no missing key.
+  - `each_key_completes_exactly_once`: 10,000 requests with `max_connections = 50`; the sink records keys and expects no duplicate and no missing key. It is `#[ignore]`d in the default run and runs in the capped container ("Resource limits"); the test server's buffers are capped.
   - `small_response_copied_large_handed_off`: compare `buf.capacity()` with `read_buf_size`.
   - `reclaimed_buffer_is_reused`: the sink returns the buffer, and the next large completion's `buf.as_ptr()` equals the returned one.
   - `request_buffer_returned_in_completion`: `completion.req.as_ptr()` equals the submitted one.
-- [ ] **Step 2: Run** `cargo nextest run -p engine-core --test shard_loopback`. Expected: FAIL.
-- [ ] **Step 3: Implement** `buf.rs` (free list with a max size of `max_connections × 2`), then `completion.rs`, `connection.rs` and `shard.rs`. Check the tokio APIs (`mpsc::Receiver::recv_many`, `LocalSet`, `task::spawn_local`, `Notify`) on docs.rs for the locked version.
-- [ ] **Step 4: Run** the tests, clippy and `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`. Expected: PASS.
+- [ ] **Step 2: Run** `cargo nextest run -p engine-core --test shard_loopback --test shard_body_bound`. Expected: FAIL.
+- [ ] **Step 3: Implement** `buf.rs` (free list holding at most `min(max_connections × 2, pool_bytes ÷ read_buf_size)` buffers; P1a charges the byte budget of §11.1 instead), then `completion.rs`, `connection.rs` and `shard.rs`. Check the tokio APIs (`mpsc::Receiver::recv_many`, `LocalSet`, `task::spawn_local`, `Notify`) on docs.rs for the locked version.
+- [ ] **Step 4: Run** the tests, clippy and `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`. Expected: PASS. Then run the ignored test once in the capped container (`docker run --rm --memory=2g --memory-swap=2g --cpus=1`, source mounted read-only and copied inside): `cargo nextest run -p engine-core --test shard_loopback --run-ignored only` (flag name from the nextest documentation for the installed version). CI does not run it; the PR shows its output, and the controller re-runs it before the merge.
 - [ ] **Step 5: Commit** `Add prototype shard with connection tasks, buffer handoff and completion sink` and open a PR.
 
 ---
@@ -605,7 +960,7 @@ change from the original sketch and why.
     `pub const MAX_REQUEST_TIMEOUT: Duration`
 
 **Cells (all response bytes pre-built at start-up):**
-- `/1k`: the spike payload (`spike/g0/body.json`, 847 bytes, `"id":42`, generated deterministically by the same shape as `spike/httpbench/goserver/main.go`) with 3 headers: `content-type`, `content-length` and a fixed `date`.
+- `/1k`: the spike payload (`tests/fixtures/bodies/1k.json`, a byte-for-byte copy of `spike/g0/body.json`, 847 bytes, `"id":42`, generated deterministically by the same shape as `spike/httpbench/goserver/main.go`) with 3 headers: `content-type`, `content-length` and a fixed `date`.
 - `/1k-h20`: the same payload with 20 headers.
 - `/1k-gzip`: the payload gzipped once and committed (`tests/fixtures/bodies/1k.json.gz`), with `content-encoding: gzip`.
 - `/1k-chunked`: chunked framing.
@@ -645,13 +1000,16 @@ export function bootstrapRatioCi(num: readonly number[], den: readonly number[],
 export function validateRun(m: { serverCpuPct: number; noiseCpu: number; loadAvgBefore: number }, t: ValidityThresholds): { valid: boolean; reason?: string };
 export function pairwiseLoadPoint(satA: number, satB: number): number;   // 0.8 × min(satA, satB), rounded down to 100 req/s
 export function g0Verdict(blazeCpu: readonly number[], rivalCpu: readonly number[], kind: 'engine-bound' | 'shared-limit'): { pass: boolean; ci: …; bound: 1.0 | 0.97 };
-// ratio = rival CPU µs / blaze CPU µs (higher = we are cheaper)
+// ratio = rival CPU µs / blaze CPU µs (higher = we are cheaper). engine-bound passes when ci.lo ≥ 1.0;
+// shared-limit passes when the ratio of medians is > 1.0 and ci.lo ≥ 0.97 (§16.4).
+export function g0CellVerdict(blazeCpu: readonly number[], rivals: ReadonlyMap<string, readonly number[]>, kind: 'engine-bound' | 'shared-limit'): { pass: boolean; failing: readonly string[] };
+// a cell passes only when g0Verdict passes against every rival. `pairedRatioCi` (Task 4c) belongs to the component races: this harness neither imports nor re-implements it
 ```
 
 **Validity (decided here; defaults in `config.ts`, tuned by benchmark):**
 - Server CPU is Δ`usage_usec` from `docker exec srv cat /sys/fs/cgroup/cpu.stat` divided by (Δwall × server CPUs). It must be < 60%.
 - `noiseCpu` is Δ busy jiffies from the VM's `/proc/stat` minus the server's and client's cgroup usage, averaged over the run in CPUs. It must be ≤ 0.10.
-- The 1-minute load average before the start must be ≤ 1.0.
+- The 1-minute load average must be ≤ 1.0 before the first round of a cell. Between rounds the harness pauses 5 s and relies on `noiseCpu`, which measures foreign CPU directly: after a round the load average needs about a minute to fall below 1.0 **[author's call]**.
 - Invalid rounds are re-run, up to 3 extra times per round. Then the cell reports `insufficient valid rounds`.
 - Clients run in the server's network namespace (`--network container:<server>`; the Docker bridge adds ≈ 50% server
   CPU per request, `docs/notes/bench-server.md` §7.1), so they reach `bench-server` on its default loopback address;
@@ -662,13 +1020,13 @@ export function g0Verdict(blazeCpu: readonly number[], rivalCpu: readonly number
 - The harness stops the server with `docker stop`: SIGTERM ends its connections and it exits 0.
 
 **Gate mode vs dev mode:**
-- Gate mode refuses to start outside the configured window (`BENCH_WINDOW`, unset until the owner chooses).
+- On the arm64 reference host, gate mode refuses to start outside the configured window (`BENCH_WINDOW`, unset until the owner chooses). The x64 VM has no window (benchmark host rules).
 - It aborts if any container that is not labelled `blazehttp-bench` is running. It never stops anything.
 - `--dev` runs anywhere and marks results `dev: true`. Dev results are never gate evidence.
 
 **Topology:**
-- Server container: `--cpus=4 --cpuset-cpus` pinned to 4 CPUs.
-- Client containers: `--cpus=1`, pinned to a disjoint CPU, sharing the server's network namespace (`--network container:srv`).
+- Server container: `--cpus=4 --cpuset-cpus` pinned to 4 CPUs, `--memory=2g --memory-swap=2g` (the named exception in "Resource limits").
+- Client containers: `--cpus=1 --memory=2g --memory-swap=2g` (`128m` in the G2 memory cells), pinned to a disjoint CPU, sharing the server's network namespace (`--network container:srv`).
 - netem runs in a sidecar with `--cap-add NET_ADMIN`: `tc qdisc replace dev lo root netem delay <rtt/2>ms`, because loopback traverses `lo` twice per round trip. Check at the first run that Docker Desktop's kernel has `sch_netem`. If it does not, stop and report to the owner.
 
 **Results:** one JSONL per run, `bench/results/<yyyy-mm-dd>-<host>-<label>.jsonl`. Each line is a `Sample` plus run metadata: git SHA, image digests, Node version, `docker info` CPUs and kernel, and competitor versions. `report.ts` prints the markdown tables used in the journal, including the cross-language leaderboard table format (the G8 skeleton; the published page comes in P5).
@@ -682,10 +1040,12 @@ export function g0Verdict(blazeCpu: readonly number[], rivalCpu: readonly number
   - `validity_rejects_noise_and_busy_host`
   - `pairwise_load_point_uses_slower_client`
   - `g0_verdict_engine_bound_needs_lower_bound_at_least_1`: a fixture where the point estimate is 1.05 but the lower bound is 0.98 → fail.
+  - `g0_verdict_shared_limit_needs_median_above_1`: a fixture with ratio of medians 0.99 and lower bound 0.975 → fail; 1.01 and 0.975 → pass.
+  - `g0_cell_fails_when_any_rival_fails`: two rivals pass and one fails → `pass: false`, `failing` names it.
   - `results_round_trip_jsonl`
 - [ ] **Step 2: Run** `pnpm vitest run bench/harness`. Expected: FAIL.
 - [ ] **Step 3: Implement** the pure modules, then `docker.ts` (a thin `execFile('docker', …)` wrapper) and `cli.ts` (subcommands `g0`, `g1`, `xlang`, `lowload`, `memory`; options `--cells`, `--clients`, `--rounds 10`, `--dev`).
-- [ ] **Step 4: Run** the tests. Then run a dev smoke run on the local Mac: `pnpm bench g0 --dev --rounds 2 --cells 1k --clients raw,blaze`. Expected: 4 valid samples printed and a JSONL written. This shows the Docker path works end to end. Do not commit dev results.
+- [ ] **Step 4: Run** the tests. Then, with `engine-bench` from Task 7 merged, run a dev smoke run on the local Mac under the quiet-machine rule: `pnpm bench g0 --dev --rounds 2 --cells 1k --clients raw,blaze`. Expected: 4 valid samples printed and a JSONL written. This shows the Docker path works end to end. Do not commit this result: only dev results that a note or the journal cites are committed.
 - [ ] **Step 5: Commit** `Add Docker benchmark harness with validity checks and bootstrap statistics` and open a PR.
 
 ---
@@ -717,9 +1077,10 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
 - Modify: `policy/spec.json` (add `wire`), and regenerate with `pnpm specgen`
 - Create: `crates/node-binding/test/binding.test.ts`, `crates/node-binding/test/fixtures/{idle-exit.mjs, pending-alive.mjs}`, `crates/node-binding/package.json` (private workspace package with a `build` script: `napi build --platform --release --no-js --output-dir ./dist`)
 - Create: `docs/notes/completion-path.md`
+- Create: `crates/node-binding/fuzz/{Cargo.toml, fuzz_targets/submit_codec.rs}` (own workspace, like the engine's fuzz crate). A fuzz target cannot depend on a `cdylib`, and napi symbols do not resolve outside Node. The fuzz crate therefore compiles `src/codec.rs` and the generated wire constants directly, as `#[path]` modules, and `codec.rs` imports nothing else from `node-binding` **[author's call: no extra crate for one file, so the design's crate list (§5) is unchanged]**.
 
 **`wire` section (u32 words, generated into `SUBMIT_RECORD`/`COMPLETION_RECORD` index constants in TS and Rust):**
-- Submit record, 9 words: `keyLo, keyHi, method, targetOff, targetLen, headersOff, headersLen, bodyOff, bodyLen`. Offsets index the submit arena.
+- Submit record, 10 words: `keyLo, keyHi, method, targetOff, targetLen, headersOff, headersLen, headerLines, bodyOff, bodyLen`. Offsets index the submit arena. `headerLines` is the number of header entries the JS layer serialised (`Submit.header_lines`); it is counted while the entries are written, never from the bytes.
 - Completion record, 9 words: `keyLo, keyHi, status, errWord, errArg, headOff, headLen, bodyOff, bodyLen`. Offsets index the completion arena. `errWord = 0` means success, otherwise it is `ErrorCode::to_wire().0 + 1`.
 - `takeCompleted` returns `count | (more << 31)`.
 - `arenaBytes: 4194304`, `batchRecords: 4096` (§11.5; Task 19 confirms or retunes them).
@@ -735,11 +1096,11 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
 - Per-environment state lives in napi instance data.
 - `TsfnSink::push` locks the mutex, pushes into the active `Vec`, drains this shard thread's return `Vec` into `reclaimed`, and records `was_empty`. It unlocks, and then calls the TSFN if `was_empty`. No code that can panic runs under the lock.
 - `takeCompleted` swaps active and spare under the lock (the spare must be empty). It copies outside the lock into the JS arrays and arena. Records that do not fit stay in a carry-over and set `more`. Consumed read buffers go into the return `Vec` under the lock.
-- The response head (excluding the status line) and the body are copied into the arena. Bodies larger than the arena are capped in P0 at `arenaBytes` and settle `TooLarge(ResponseBody)`; external buffers arrive in P1a.
-- The binding validates the codec input: offsets and lengths must be within the arena and the method id must be in range. A bad record produces an `Engine(Internal)` completion for that key and is never a panic.
+- The response head (excluding the status line) and the body are copied into the arena. The binding starts the shard with `max_body_bytes = arenaBytes − H1_LIMITS.max_head_bytes`, so one response always fits an empty arena and a larger body settles `TooLarge(ResponseBody)` in the shard before it is buffered (Task 6); external buffers arrive in P1a.
+- The binding validates the codec input: offsets and lengths must be within the arena, the method id must be in range and `headerLines` must fit `u16`. A bad record produces an `Engine(Internal)` completion for that key and is never a panic.
 - When `try_submit` returns `QueueFull`, a completion is queued with that error. It is never a JS throw (Review Focus 3).
 - **Ref/unref (Review Focus 5):** use the safe wrapper `TsfnRef` over `napi_ref_threadsafe_function` and `napi_unref_threadsafe_function`, called through `napi-sys`. Every `unsafe` block carries `// SAFETY:`. `ThreadsafeFunction::aborted()` is the only source of truth. The TSFN is ref'd while pending > 0 and unref'd at 0. Pending is incremented in `submit` and decremented in `takeCompleted`.
-- The env cleanup hook drops the TSFN clones and never calls `abort()` (§11.3). Verify each napi-rs 3 API on Context7 before use, and confirm none is deprecated.
+- The env cleanup hook drops the TSFN clones and never calls `abort()` (§11.3). Verify each napi-rs 3 API in its documentation for the locked version (`docs-lookup` skill) before use, and confirm none is deprecated.
 - Every export uses `#[napi(catch_unwind)]`. Add `const _: () = assert!(cfg!(panic = "unwind"));`.
 
 - [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/completion-path.md`, and it is reviewed before any code in this task.
@@ -753,7 +1114,7 @@ The four clients are the G0-eligible non-Rust rows of §1-E in order: C++ Boost.
   - `process_stays_alive_while_pending` (Review Focus 5): `pending-alive.mjs` against a server that answers after 500 ms; the child exits after the response, not before, with the result printed.
 - [ ] **Step 2: Run** `pnpm --filter node-binding build && pnpm vitest run crates/node-binding`. Expected: FAIL.
 - [ ] **Step 3: Implement** it.
-- [ ] **Step 4: Run** the tests with `--throw-deprecation`, then clippy on `node-binding`. Expected: PASS.
+- [ ] **Step 4: Run** the tests with `--throw-deprecation`, then clippy on `node-binding`. Expected: PASS. Fuzz `submit_codec` for 300 s in the capped container: the record decoder is a pure function in `codec.rs` with no napi types (which is what lets the fuzz crate compile it), and arbitrary records and arenas must never panic or read outside the arena.
 - [ ] **Step 5: Commit** `Add napi binding with batched submit and swapped completion buffers` and open a PR.
 
 ---
@@ -783,12 +1144,12 @@ export class SlotTable<T> { alloc(v: T): number /* index; generation via generat
 export interface RawResponse { status: number; head: string /* latin1, exact size */; body: Uint8Array /* copied; no arena view escapes */ }
 export class NativeSession {
   constructor(binding: NativeBinding, cfg: { host: string; port: number; maxConnections: number; queueCapacity: number });
-  request(method: Method, target: string, headers: string, body?: Uint8Array): Promise<RawResponse>;   // rejects only with TransportError
+  request(method: Method, target: string, headers: string, headerLines: number, body?: Uint8Array): Promise<RawResponse>;   // headerLines: entries the caller serialised into `headers`; rejects only with TransportError
 }
 ```
 
 **Rules:**
-- musl is detected when `process.report.getReport().header.glibcVersionRuntime` is `undefined` on Linux, called once. Verify this in the Node docs.
+- musl is detected when `process.report.getReport().header.glibcVersionRuntime` is `undefined` on Linux, called once. Verify this in the Node docs. The research step measures the call's start-up cost on Linux; if it is above 5 ms, the loader uses the fallback the note chooses (for example the interpreter path in `/usr/bin/ldd`) and does not call the report at start-up. The report then runs only in the loader's tests and in CI, where it cross-checks the fallback **[author's call: a cross-check at start-up would pay the cost the fallback avoids]**.
 - The loader:
   1. resolves `@blazehttp/<target>/blazehttp.<target>.node`;
   2. checks SHA-256 (`node:crypto`) against `integrity.ts` before loading;
@@ -845,10 +1206,45 @@ export class NativeSession {
 - [ ] **Step 5: Retire the spike.**
   1. Confirm that Task 11 has landed and that `bench/` has ported the payload, the raw loop and the xlang clients.
   2. Remove the `spike-proto` client.
-  3. Tag the last commit that contains the spike: `git tag p0-spike-final && git push origin p0-spike-final`. The x64 re-measure of the spike prototype (§16.1, "re-measured on that same host") runs from this tag whenever the VM arrives.
+  3. Tag the last commit that contains the spike, `git tag p0-spike-final`, and ask the owner before `git push origin p0-spike-final` (owner checkpoint: tag pushes always ask). The x64 re-measure of the spike prototype (§16.1, "re-measured on that same host") runs from this tag.
   4. Run `git rm -r spike/`.
   5. Run `pnpm knip && pnpm policy` (expected: clean).
 - [ ] **Step 6: Commit** `Add G1 Node benchmark runner and retire the spike` and open a PR.
+
+---
+
+### Task 15a: CI jobs that do not need the binding
+
+It needs only Task 1 and runs now, so that the parser, writer and connection code (Tasks 4–6) merge under these checks. None of the jobs needs the binding.
+
+**Files:**
+- Modify: `.github/workflows/ci.yml`
+- Create: `tools/policy-check/crate-direction.ts` and `tools/policy-check/crate-direction.test.ts` (the test feeds it recorded `cargo tree` output, one allowed and one reversed)
+- Modify: `eslint.config.js` and `package.json` (the import-cycle lint. The repo's ESLint setup has no such rule today, so the task picks the plugin or tool after a docs check and records the choice and its reason in the note)
+- Modify: `docs/notes/toolchain.md` (the tools and versions the jobs use)
+
+**Jobs:**
+- `rust` on `ubuntu-24.04` gains:
+  - `cargo deny check` (RUSTSEC unmaintained and yanked = error), `cargo audit`, `cargo shear`, `cargo hack check --workspace --each-feature`;
+  - `cargo nextest run --workspace`;
+  - `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`;
+  - the crate-direction check of design §13.1 rule 7: `crate-direction.ts` reads `cargo tree` and fails if `engine-core` depends on `node-binding`, `engine-bench`, `bench-server` or napi.
+- `ts` gains the import-cycle lint of the same rule (it runs in the `ts` job; whether inside `pnpm lint` or as a step of its own follows from the tool the task picks).
+- `fuzz-smoke`: pinned nightly, every fuzz target for 300 s with `-rss_limit_mb=1536`, the value the local container uses ("Resource limits"), so that a memory finding in CI reproduces under the container's 2 GiB. At the measured ≈ 800 executions per second on 70 KB inputs, 120 s is too short to reach the limit paths.
+
+- [ ] **Step 1:** Add the jobs on a branch and open a PR. Fix what they find at the cause: no `continue-on-error`.
+- [ ] **Step 2:** Commit `Run dependency, coverage, layering and fuzz smoke checks on every pull request`.
+
+**Acceptance:** every job is green on the PR. For each check that the repo's own code can violate, a throwaway commit that is not merged shows the job failing, and the PR links the failed run:
+- an unused dependency (`cargo shear`);
+- a feature that does not compile alone (`cargo hack`);
+- a failing test (`cargo nextest`);
+- an untested module that takes `engine-core` below 90% line coverage (`cargo llvm-cov`);
+- a reversed crate dependency (`crate-direction.ts`);
+- an import cycle (the `ts` job);
+- a planted panic in a fuzz target (`fuzz-smoke`). If the CI-move PR of "Resource limits" added the job first and showed the failing run there, this task links that run.
+
+`cargo deny` and `cargo audit` are shown by their output on the PR: the advisory database was fetched and no error is reported.
 
 ---
 
@@ -859,13 +1255,7 @@ export class NativeSession {
 
 **Jobs (all actions on current majors, pinned by SHA, `concurrency` cancels superseded runs):**
 - `policy`, `ts` (from Task 1), plus `pnpm specgen --check`, `node tools/vectors/check-index.ts` and `notices.ts --check`.
-- `rust` on `ubuntu-24.04`:
-  - `cargo fmt --check`;
-  - `cargo clippy --workspace --all-targets` with `RUSTFLAGS=-D warnings`;
-  - `cargo deny check` (RUSTSEC unmaintained and yanked = error), `cargo audit`, `cargo shear`, `cargo hack check --workspace --each-feature`;
-  - `cargo nextest run --workspace`;
-  - `cargo llvm-cov nextest -p engine-core --fail-under-lines 90`.
-- `fuzz-smoke`: pinned nightly, `h1_response` for 120 s.
+- `rust` and `fuzz-smoke` as Task 15a left them, with `cargo fmt --check` and `cargo clippy --workspace --all-targets` (`RUSTFLAGS=-D warnings`) now covering `node-binding`.
 - `native` matrix, one entry per target. Each entry builds `node-binding` with `napi build --platform --release --no-js --target <triple>`, generates `integrity.ts`, then runs the `node-binding` and `packages/blazehttp` tests on Node 22.19, 24 and 26. The musl entries run inside `node:<v>-alpine` through `docker run` on the matching Ubuntu runner. Each entry uploads the `.node` as an artefact.
   | Target | Runner |
   |---|---|
@@ -883,7 +1273,7 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
 
 - [ ] **Step 1: Write the workflow.** Push the branch, and open a draft PR to run it.
 - [ ] **Step 2: Iterate until every job is green on the PR.** Fix causes, not jobs: no `continue-on-error` and no skipped targets.
-- [ ] **Step 3: Set the required checks.** Add every job name as a required check on `main` and `milestone/p0` (`gh api … /protection`).
+- [ ] **Step 3: Set the required checks (owner checkpoint).** Give the owner the list of job names to require on `main` and `milestone/p0`. Branch protection is changed by the owner, or by the task lead only after the owner's explicit OK (`gh api … /protection`).
 - [ ] **Step 4: Commit** `Run CI on all eight native targets with Alpine load tests`, then mark the PR ready.
 
 ---
@@ -928,7 +1318,7 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
 - Create: `bench/harness/lowload.ts` (`lowload` subcommand: c ∈ {1, 2, 4, 8} × netem RTT ∈ {1 ms, 10 ms} × clients {undici, blaze-proto}), `docs/notes/wake-latency.md`
 - Modify (only for strategies that win): `crates/engine-core/src/shard.rs`, `crates/node-binding/src/sink.rs`
 
-- [ ] **Step 1: Baseline in the nightly window.** Run `pnpm bench lowload --rounds 10` and commit the results. Compute p50 and p99 deltas against undici with CIs, and compare them with the G1-low limits: p50 ≤ undici + 0.1 ms, p99 ≤ undici + 0.3 ms.
+- [ ] **Step 1: Baseline in the nightly window.** Run `pnpm bench lowload --rounds 10` and commit the results. Compute p50 and p99 deltas against undici with CIs, and compare them with the G1-low gate (§2, §16.4): the median delta is ≤ 0 for p50 and for p99, and the CI upper bound of the delta is ≤ +0.1 ms (p50) and ≤ +0.3 ms (p99).
 - [ ] **Step 2: Test strategies, one at a time.** Write each in the journal as idea → hypothesis → measurement → kept or dropped, and run each on its own branch. Measure the low-load cells and the G1 reference cell, so each strategy is checked for regressions. The candidates:
   1. On the shard thread, a short spin (≤ N µs, N swept over 0/20/50/100) on the command channel before parking.
   2. The tokio `current_thread` builder's `event_interval` and `global_queue_interval` (check docs.rs for the locked version).
@@ -968,7 +1358,8 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
   Run them. Expected: PASS.
 - [ ] **Step 2: Run** `measure.yml` on all 8 targets, and run `pending-cost` and `burst` on the reference host. Write `measured.pendingCostBytes` into `spec.json` with the R² in the journal.
 - [ ] **Step 3: Run the allocator comparison** on the reference host, plus a CI runner for macOS and Windows (trend only). Decide per target in `docs/notes/allocator.md`. **Keep only the chosen allocator code** and delete the losing variants before merging (§14.2). Burst recovery here reflects the allocator only, because pool and Vec idle trimming arrive in P1a. Note this.
-- [ ] **Step 4: Commit** `Measure pending-request memory cost and choose allocators per target` and open a PR.
+- [ ] **Step 4: 128 MiB smoke run** (an early signal for G2 and for the open 128 MiB decision in design §21). Run `blaze-proto` on `/1k` at c = 50 and at c = 500 for 60 s each in a client container with `--memory=128m --memory-swap=128m`. Record peak RSS, whether the container was OOM-killed, and the share of requests that succeeded. P0 sets no pass rule: the numbers go to the owner in the P0 report.
+- [ ] **Step 5: Commit** `Measure pending-request memory cost and choose allocators per target` and open a PR.
 
 ---
 
@@ -977,10 +1368,12 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
 **Files:**
 - Modify: `crates/engine-bench/src/clients/raw.rs`. Add an HTTPS mode over tokio-rustls behind the features `tls-ring` and `tls-aws-lc`. After the decision, only the winner's feature remains.
 - Modify: `policy/spec.json` `wire.arenaBytes` / `wire.batchRecords` (only if Step 3 changes them)
+- Modify: `crates/bench-server/src/cells/mod.rs` and `bench/cells.json` (Task 9's code: the `?size=` cells of Step 3)
 - Create: `docs/notes/tls-provider.md`, `docs/notes/external-memory.md`
 
 - [ ] **Step 1: `ring` vs `aws-lc-rs`.**
   - Run the raw loop over HTTPS on `/1k` at c = 50, 10 rounds on the reference host, with CPU µs/req for each provider.
+  - Add a handshake cell (a new connection per request) and run both cells on the x64 VM as well: the providers differ most in handshake cost and in their x64 code paths, and the choice fixes the shared-limit HTTPS cells of every later phase.
   - Add a temporary CI job that builds both providers on all 8 targets. It records whether each builds and how long it takes (`aws-lc-rs` needs extra toolchain on Windows). Remove the job after the decision.
   - Decide by CPU µs first and build portability second. Write the decision in `tls-provider.md`, citing the rustls docs for the locked version.
 - [ ] **Step 2: `napi_adjust_external_memory` double counting.**
@@ -996,26 +1389,28 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
   - For each plaintext non-gzip cell, budget µs/req = (undici CPU µs/req ÷ 1.4) − blaze-proto CPU µs/req.
   - The HTTPS and gzip budgets need the engine's TLS and decompression. The report records their undici baselines now and the formula, and says they are computed in P1a when TLS lands. This is an explicit open item, not a silent gap.
   - Put the table in the journal.
-- [ ] **Step 5: Commit** `Decide TLS provider and record P0 sizing and facade budget measurements` and open a PR.
+- [ ] **Step 5: zstd status** (§14.1). From the Node documentation for 22.19, 24 and 26 (`docs-lookup` skill), record whether `node:zlib`'s zstd API is stable or experimental in each, and the fallback the undici path uses where it is experimental. The result goes into the §22 table of the P0 report.
+- [ ] **Step 6: Commit** `Decide TLS provider and record P0 sizing and facade budget measurements` and open a PR.
 
 ---
 
 ### Task 20: G0 reference gate, P0 report, review gate and milestone PR
 
 **Files:**
-- Create: `docs/reports/p0.md`, `bench/results/<date>-arm64-ref-g0.jsonl` (and an x64 file if the VM is available)
+- Create: `docs/reports/p0.md`, `bench/results/<date>-arm64-ref-g0.jsonl`, `bench/results/<date>-x64-g0.jsonl`
 - Modify: `docs/perf/journal.md`, `THIRD_PARTY_NOTICES` (regenerate)
 
 - [ ] **Step 1: G0 reference cell gate run** in the nightly window on the reference host: `pnpm bench g0 --rounds 10 --cells 1k --work fnv --clients blaze,hyper,reqwest,ureq,isahc,raw`.
   - Load points are pairwise (Task 10): saturation is measured first, and the gate metric is CPU µs/req at the fixed offered load.
-  - Every round must be valid (server < 60%, idle host).
-  - **Acceptance:** `g0Verdict(blaze, hyper, 'engine-bound').pass`, meaning the CI lower bound ≥ 1.0.
+  - Every round must be valid by Task 10's rules (server < 60%, `noiseCpu` ≤ 0.10).
+  - **Acceptance:** `g0Verdict(blaze, hyper, 'engine-bound').pass`, meaning the CI lower bound ≥ 1.0. This is the P0 gate (§15). reqwest, ureq and isahc are reported with the same statistic and are not gated in P0; `g0CellVerdict` over all rivals is the P1a gate.
+  - The same window runs the 10-round parser race (Task 4b's owed run, whose arm64 file is also the evidence for Task 4c's acceptance line 6) and the 10-round writer race (Task 5c), if their tasks could not run them in a window.
   - Also report allocations per request (`count-allocs` run) and max throughput.
   - If it misses, keep optimising (owner rule, §15 gate misses). Every idea goes through the journal, and the run repeats. The owner may approve P0 functionality with the speed gate marked open.
-- [ ] **Step 2: x64.** If the owner has provided the VM: start it, re-measure the spike prototype from tag `p0-spike-final` (the x64 reference-cell floor, §16.1), run the same G0 gate, stop the VM, and record the cost against the budget cap. Otherwise record "x64 pending owner action" in the report.
+- [ ] **Step 2: x64 (mandatory: §16.1 gates x64 at every phase).** Start the VM, re-measure the spike prototype from tag `p0-spike-final` (the x64 reference-cell floor, §16.1), run the same G0 gate, stop the VM and check that it stopped. Budget: about one instance-hour (estimate); its duration and cost go into `bench/aws-cost-log.md`. The run is refused if it would pass the monthly cap. The P0 report then lists the x64 gate as "pending budget", the owner is asked to raise the cap for the month or to let the run wait for the next month, and P0 is not reported as passed on x64 until the run exists.
 - [ ] **Step 3: Stale-code and docs pass.**
   - Run `pnpm knip && pnpm policy && cargo shear && cargo hack check --workspace --each-feature`. Expected: clean.
-  - Every component built has a note in `docs/notes/`: response-parser, request-writer, shard-and-connection, completion-path, vectors, bench-method, xlang-baseline, wake-latency, allocator, tls-provider, external-memory, toolchain.
+  - Every component built has a note in `docs/notes/`: response-parser, request-writer, h1-speed-research, simd-scanning-research, shard-and-connection, completion-path, native-loader-and-session, vectors, bench-server, bench-method, xlang-baseline, wake-latency, allocator, tls-provider, external-memory, toolchain.
   - The journal has an entry per measurement task.
 - [ ] **Step 4: Write `docs/reports/p0.md`.**
   - A table of every P0 acceptance criterion with its evidence: commit, results file, CI run URL.
@@ -1024,14 +1419,14 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
     - G1-low 1 ms data is on the gate host.
     - The cross-language baseline result, with the 1.10× trigger.
   - A §22 decisions table: every open item and what was decided, or why it stays open (HTTPS/gzip facade budgets, node-binding coverage).
-  - The schedule deviation (wake study in week 2).
+  - The schedule: the estimate of 2026-11-13 against what happened, and the wake-study deviation.
   - The owner decisions needed.
-- [ ] **Step 5: Multi-lens review gate.** Dispatch five independent reviewers on the full `milestone/p0` diff, each given the design path, this plan and `.claude/CLAUDE.md`:
+- [ ] **Step 5: Multi-lens review gate.** Run five independent review lenses on the full `milestone/p0` diff, one after another ("Resource limits": at most 2 helper agents alive, each lens's own helpers included), each given the design path, this plan and `.claude/CLAUDE.md`:
   1. performance;
   2. architecture and patterns (§13);
   3. security (§5.2, §12, supply chain);
   4. feasibility against P1a;
   5. builder (readability, DRY, stale code).
 
-  Fix every blocker and high finding at its root, then re-review until none remain. Append the review report to `docs/reports/p0.md`.
+  Fix every blocker and high finding at its root, then re-review until none remain. A medium or low finding is fixed in the same round when its fix is local; every other one is listed in `docs/reports/p0.md` with its owner task, and none is dropped **[author's call]**. Append the review report to `docs/reports/p0.md`.
 - [ ] **Step 6: Milestone PR.** Run `gh pr create --base main --head milestone/p0 --title "P0 Foundations" --body-file docs/reports/p0.md`. Ask the owner to review and approve it. **Do not merge without the owner's approval.**
