@@ -34,11 +34,12 @@ secondary source, not checked.
 - Refusals: a head the scan refuses (§5) gets a pre-built `400` or `431` with `connection: close` at once (its
   framing is unknown); a parsed head with another HTTP major version gets `505` at once, and the connection closes
   once its declared body has been read.
-  A connection's own close is graceful (after a refusal, the client's close once its declared body has been read, a
-  timeout, or end of stream): the server shuts down its write side (TLS sends `close_notify`), then drains unread input,
-  all within 1 s and at most 64 KiB, so the kernel does not reset the connection and destroy responses the client has
-  not read yet. Stopping the server (SIGTERM/SIGINT or the `stop` future) is not graceful: it aborts the open
-  connections (`JoinSet::shutdown`), which the harness only does after a run.
+  A connection's own close is graceful (after a refusal; a close-delimited response or the client's close, once the
+  declared body has been read; a timeout; or end of stream): the server shuts down its write side (TLS sends
+  `close_notify`), then drains unread input, all within 1 s and at most 64 KiB, so the kernel does not reset the
+  connection and destroy responses the client has not read yet. Stopping the server (SIGTERM/SIGINT or the `stop`
+  future) is not graceful: it aborts the open connections (`JoinSet::shutdown`), which the harness only does after a
+  run.
 - TLS is pinned so every client negotiates the same work: rustls 0.23 with the **ring** provider (as the Rust
   competitors use, §16.2), **TLS 1.3 only, `TLS13_AES_128_GCM_SHA256`, X25519 only**
   (`benchmark_crypto_provider()`, also used by the tests' client and available to the Rust harness clients). The
@@ -157,10 +158,9 @@ request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells)
 7. When no complete request is left in the buffer, write the batch and `flush()` it (TLS); each call that does not
    complete at once must progress within the request timeout (a peer that never reads cannot hold the connection),
    then compact the leftover bytes.
-8. After a `400`/`431` (at once), a `505` or the client's close (each once the declared body is read), a request
-   timeout or end of stream: close
-   the write side (TLS `close_notify`) and read unread input, both within 1 s and at most 64 KiB, then drop the
-   connection.
+8. After a `400`/`431` (at once), a `505`, a close-delimited response or the client's close (each once the declared
+   body is read), a request timeout or end of stream: close the write side (TLS `close_notify`) and read unread input,
+   both within 1 s and at most 64 KiB, then drop the connection.
 
 Accept loop: transient accept errors are printed once per kind and retried. Running out of a resource (`EMFILE`,
 `ENFILE`, `ENOBUFS`, `ENOMEM`) pauses 10 ms first; a connection lost in the queue (`ECONNABORTED`, `ECONNRESET`, and on
