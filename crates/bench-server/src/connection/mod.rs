@@ -85,8 +85,8 @@ enum Progress {
     NeedBytes,
     /// The batch is full: write it, then keep taking from the buffer.
     BatchFull,
-    /// The last batched response ends the connection (a refusal, or once its body is read: the client's close, a 505,
-    /// or a close-delimited response).
+    /// The last batched response ends the connection (a refusal, or once the request's declared body is read: the
+    /// client's close, a 505, or a close-delimited response).
     Close,
 }
 
@@ -121,8 +121,8 @@ struct Connection<S> {
     resume: usize,
     /// Request body bytes still to drop.
     skip: u64,
-    /// The last response ends the connection (the client's close, a 505, or a close-delimited body): close once the
-    /// body still owed (`skip`) has been read.
+    /// The last response ends the connection (the client's close, a 505, or a close-delimited response): close once
+    /// the body still owed (`skip`) has been read.
     closing: bool,
     batch: Vec<IoSlice<'static>>,
     batch_bytes: usize,

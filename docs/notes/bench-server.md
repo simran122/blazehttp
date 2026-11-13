@@ -33,13 +33,12 @@ secondary source, not checked.
   - a `content-length` request body is skipped by counting (no buffering).
 - Refusals: a head the scan refuses (§5) gets a pre-built `400` or `431` with `connection: close` at once (its
   framing is unknown); a parsed head with another HTTP major version gets `505` at once, and the connection closes
-  once its declared body has been read.
-  A connection's own close is graceful (after a refusal; a close-delimited response or the client's close, once the
-  declared body has been read; a timeout; or end of stream): the server shuts down its write side (TLS sends
-  `close_notify`), then drains unread input, all within 1 s and at most 64 KiB, so the kernel does not reset the
-  connection and destroy responses the client has not read yet. Stopping the server (SIGTERM/SIGINT or the `stop`
-  future) is not graceful: it aborts the open connections (`JoinSet::shutdown`), which the harness only does after a
-  run.
+  once its declared body has been read. A connection's own close is graceful (after a `400`/`431`; a `505`, a
+  close-delimited response or the client's close, once the declared body has been read; a timeout; or end of
+  stream): the server shuts down its write side (TLS sends `close_notify`), then drains unread input, all within 1 s
+  and at most 64 KiB, so the kernel does not reset the connection and destroy responses the client has not read yet.
+  Stopping the server (SIGTERM/SIGINT or the `stop` future) is not graceful: it aborts the open connections
+  (`JoinSet::shutdown`), which the harness only does after a run.
 - TLS is pinned so every client negotiates the same work: rustls 0.23 with the **ring** provider (as the Rust
   competitors use, §16.2), **TLS 1.3 only, `TLS13_AES_128_GCM_SHA256`, X25519 only**
   (`benchmark_crypto_provider()`, also used by the tests' client and available to the Rust harness clients). The
@@ -147,11 +146,11 @@ request), because 85% of the cost is the kernel's. C is rejected (c = 500 cells)
    - `transfer-encoding` → `400`. Chunked request bodies are not supported yet, and refusing loudly beats mis-framing
      the requests that follow. TODO(#16): the G1 streaming-upload cell needs them.
    - `connection`: the `close` token, HTTP/1.0 without `keep-alive`, or a refused version (`505`, sent at once),
-     closes the connection after this response
-     **and its declared body** (the body is read, not treated as junk, so a client that writes it all first gets its
-     response and a clean close). The pre-built responses do not echo `connection: close` or `keep-alive` (RFC 9112
-     §9.6 SHOULD), deliberately: the bytes stay identical for every client. HTTP/1.0 support is best effort (an
-     HTTP/1.0 keep-alive client is kept open but not told so); the benchmark clients all speak HTTP/1.1.
+     closes the connection after this response **and its declared body** (the body is read, not treated as junk, so
+     a client that writes it all first gets its response and a clean close). The pre-built responses do not echo
+     `connection: close` or `keep-alive` (RFC 9112 §9.6 SHOULD), deliberately: the bytes stay identical for every
+     client. HTTP/1.0 support is best effort (an HTTP/1.0 keep-alive client is kept open but not told so); the
+     benchmark clients all speak HTTP/1.1.
 6. Look the target up in the cell table; an unknown target gets the pre-built 404. An HTTP/1.0 request for the chunked
    cell gets the same body close-delimited (RFC 9112 §6.1 forbids a chunked response to HTTP/1.0; §6.3 rule 8 lets
    the close end the body), and the connection closes after it, even if the client asked for keep-alive.
