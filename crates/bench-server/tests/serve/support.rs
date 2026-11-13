@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
+use tokio_rustls::rustls::crypto::CryptoProvider;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore, version};
 
@@ -79,11 +80,21 @@ pub async fn connect(addr: SocketAddr) -> TcpStream {
 }
 
 pub async fn connect_tls(tls: &TlsBound) -> TlsStream<TcpStream> {
+    handshake(tls, benchmark_crypto_provider())
+        .await
+        .expect("handshake")
+}
+
+/// A TLS 1.3 handshake offering what `provider` supports, completed or refused within [`CLOSE_WITHIN`].
+pub async fn handshake(
+    tls: &TlsBound,
+    provider: Arc<CryptoProvider>,
+) -> io::Result<TlsStream<TcpStream>> {
     let mut roots = RootCertStore::empty();
     roots
         .add(tls.certificate.clone())
         .expect("self-signed certificate as a root");
-    let config = ClientConfig::builder_with_provider(benchmark_crypto_provider())
+    let config = ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&version::TLS13])
         .expect("TLS 1.3")
         .with_root_certificates(roots)
@@ -94,7 +105,6 @@ pub async fn connect_tls(tls: &TlsBound) -> TlsStream<TcpStream> {
     timeout(CLOSE_WITHIN, handshake)
         .await
         .expect("handshake in time")
-        .expect("handshake")
 }
 
 pub fn get(path: &str) -> Vec<u8> {

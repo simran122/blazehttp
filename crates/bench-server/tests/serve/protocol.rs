@@ -1,11 +1,14 @@
 //! HTTP/1.1 behaviour beyond the cells: persistence, `HEAD`, versions, leading empty lines, refusals and graceful
 //! close.
 
+use std::sync::Arc;
+
 use bench_server::cells;
+use tokio_rustls::rustls::crypto::{CryptoProvider, ring};
 
 use crate::support::{
     BAD_REQUEST, HEAD_TOO_LARGE, VERSION_NOT_SUPPORTED, config, connect, connect_tls, exchange,
-    get, start, until_close,
+    get, handshake, start, until_close,
 };
 
 /// Pre-built bytes of the first cell.
@@ -49,6 +52,36 @@ async fn tls_close_sends_close_notify() {
         cells()[0].path
     );
     assert_eq!(until_close(&mut stream, request.as_bytes()).await, first());
+}
+
+/// A client offering everything ring supports (preferring AES-256) still gets the one pinned suite and group.
+#[tokio::test(flavor = "multi_thread")]
+async fn tls_negotiates_only_the_pinned_suite_and_group() {
+    let server = start(config(true)).await;
+    let tls = server.bound.tls.as_ref().expect("TLS port");
+    let stream = handshake(tls, Arc::new(ring::default_provider()))
+        .await
+        .expect("handshake");
+    let (_, session) = stream.get_ref();
+    let suite = session.negotiated_cipher_suite().expect("suite");
+    assert_eq!(
+        suite.suite(),
+        ring::cipher_suite::TLS13_AES_128_GCM_SHA256.suite()
+    );
+    let group = session.negotiated_key_exchange_group().expect("group");
+    assert_eq!(group.name(), ring::kx_group::X25519.name());
+}
+
+/// A client without X25519 shares no key exchange group with the server, so the handshake is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn tls_refuses_a_client_without_the_pinned_group() {
+    let server = start(config(true)).await;
+    let tls = server.bound.tls.as_ref().expect("TLS port");
+    let without_x25519 = CryptoProvider {
+        kx_groups: vec![ring::kx_group::SECP256R1, ring::kx_group::SECP384R1],
+        ..ring::default_provider()
+    };
+    assert!(handshake(tls, Arc::new(without_x25519)).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
