@@ -1523,7 +1523,8 @@ accept iff the delta is empty or ends with LF, name_c == 0, value_c == 0, lines 
 
 | What | Where | Workloads | Arches | Statistic / acceptance |
 |---|---|---|---|---|
-| P-A, P-B (keep or drop) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | the A/B rule of plan "Task 4c" (10 alternated rounds, `pairedRatioCi`) |
+| P-A (keep or drop) | `bench/parsers`, a 10-round dev race against the pinned row `blazehttp+fields@4d` (`h1_parse_bench` has no equal-work baseline for spans) | the race's timed and feed workloads | arm64, x64 | the thresholds of the A/B rule of plan "Task 4c", on `pairedRatioCi(ours, blazehttp+fields@4d)` (plan Step 4 and acceptance line 2) |
+| P-B (keep or drop, one change at a time) | `h1_parse_bench` A/B, same container | 1k, 1k-h20, ring64, mixed, trickle, varied-256 | arm64, x64 | the A/B rule of plan "Task 4c" (10 alternated rounds, `pairedRatioCi`) |
 | Plain G profile (4c step 1) | `perf stat`/sampling (x64 VM) or Instruments (arm64) | 1k-h20 | either | measured per-field split replaces §5.0's guess |
 | Parser race (4c; run again in P1a) | `bench/parsers` + fasthttp, nginx rows + `pairedRatioCi` | same | arm64 ref + x64 VM (`x86-64-v3`) | design §16.4 statistic per rival and cell; Task 4c passes only when the scalar parser wins every cell (owner decision 2026-11-13) |
 | P-C, P-D, scalar | P1a prototypes (lead chosen from data), then the race | 1k-h20, varied-256, then all | both | kept only where faster than the scalar parser; every cell of the race still passes |
