@@ -152,7 +152,7 @@ pub fn writer_shape(out: &mut Vec<u8>, framed: &Framed, template_bytes: &[u8]) {
         .expect("bench requests are small");
     out.try_reserve_exact(total)
         .expect("bench requests are small");
-    for piece in pieces {
+    for piece in pieces.into_iter().filter(|piece| !piece.is_empty()) {
         out.extend_from_slice(piece);
     }
 }
