@@ -504,9 +504,9 @@ fn template_sensitive_flag() {
 #[test]
 fn template_too_large() {
     let max = H1_LIMITS.max_request_fields_bytes;
-    assert!(new_template(HOST, &fill_template(max), &[]).is_ok());
+    assert!(new_template(HOST, &fill_fields(max), &[]).is_ok());
     assert_eq!(
-        new_template(HOST, &fill_template(max + 1), &[]).expect_err("large"),
+        new_template(HOST, &fill_fields(max + 1), &[]).expect_err("large"),
         HEADERS_TOO_LARGE
     );
     let host = vec![b'a'; max];
@@ -786,13 +786,9 @@ fn target_of(len: usize) -> Vec<u8> {
     [&b"/"[..], &vec![b'a'; len - 1]].concat()
 }
 
-/// Template fields that make the host line + fields exactly `total` bytes.
-fn fill_template(total: usize) -> Vec<u8> {
-    fill_delta(total)
-}
-
-/// A delta that makes template + delta exactly `total` bytes with the host-only template.
-fn fill_delta(total: usize) -> Vec<u8> {
+/// One `x-fill` line that makes the host line plus it exactly `total` bytes: as the template's default fields, or as
+/// the delta next to the host-only template.
+fn fill_fields(total: usize) -> Vec<u8> {
     [
         &b"x-fill: "[..],
         &vec![b'a'; total - HOST_LINE_LEN - FILL_OVERHEAD],
@@ -806,14 +802,14 @@ fn fields_limit() {
     let max = H1_LIMITS.max_request_fields_bytes;
     assert!(
         write(
-            &parts(Method::Get, b"/", &fill_delta(max), b""),
+            &parts(Method::Get, b"/", &fill_fields(max), b""),
             &template(b"")
         )
         .is_ok()
     );
     assert_eq!(
         rejected(
-            &parts(Method::Get, b"/", &fill_delta(max + 1), b""),
+            &parts(Method::Get, b"/", &fill_fields(max + 1), b""),
             &template(b"")
         ),
         HEADERS_TOO_LARGE
@@ -852,7 +848,7 @@ enum Violation {
 }
 
 /// Pairs of §7 rows whose codes differ, each with the code of the earlier row.
-const PRECEDENCE: [(Violation, Violation, ErrorCode); 8] = [
+const PRECEDENCE: [(Violation, Violation, ErrorCode); 9] = [
     (
         Violation::BodyOverLimit,
         Violation::TargetOverLimit,
@@ -890,6 +886,11 @@ const PRECEDENCE: [(Violation, Violation, ErrorCode); 8] = [
     ),
     (
         Violation::FieldsOverLimit,
+        Violation::BadTarget,
+        HEADERS_TOO_LARGE,
+    ),
+    (
+        Violation::FieldsOverLimit,
         Violation::BadDelta,
         HEADERS_TOO_LARGE,
     ),
@@ -917,7 +918,7 @@ fn violating(first: Violation, second: Violation) -> Result<Reuse, ErrorCode> {
         },
     );
     let mut headers = if has(Violation::FieldsOverLimit) {
-        fill_delta(H1_LIMITS.max_request_fields_bytes + 1)
+        fill_fields(H1_LIMITS.max_request_fields_bytes + 1)
     } else {
         Vec::new()
     };
@@ -1006,7 +1007,7 @@ fn max_p0_request_bytes_is_the_largest_request() {
     .concat();
     // OPTIONS content needs a content-type (RFC 9110 §9.3.7); the filler line tops the fields up to the limit.
     let content_type = b"content-type: a\r\n";
-    let fill = fill_delta(H1_LIMITS.max_request_fields_bytes - content_type.len());
+    let fill = fill_fields(H1_LIMITS.max_request_fields_bytes - content_type.len());
     let delta = [&content_type[..], &fill].concat();
     let body = vec![b'b'; H1_LIMITS.max_copied_body_bytes];
     let (out, reuse) = written(
