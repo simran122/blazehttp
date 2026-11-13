@@ -223,3 +223,37 @@ fn request_cases_decode_latin1_and_default_the_connection_authority() {
         }
     );
 }
+
+/// Loads [`ONE_REQUEST_CASE`] with `from` replaced by `to`; panics as the loader does.
+fn load_edited_request_case(test: &str, from: &str, to: &str) {
+    let edited = ONE_REQUEST_CASE.replacen(from, to, 1);
+    assert_ne!(edited, ONE_REQUEST_CASE, "{test}: the edit must apply");
+    let dir = TempVectors::new(
+        test,
+        &[
+            ("index.json", r#"{ "h1-request/a.json": ["s"] }"#),
+            ("h1-request/a.json", &edited),
+        ],
+    );
+    let _ = load_suite_in::<RequestCase>(dir.root(), "s");
+}
+
+#[test]
+#[should_panic(expected = "h1-request/a.json")]
+fn request_expect_with_both_bytes_and_error_panics() {
+    load_edited_request_case(
+        "request-both",
+        r#""reuse": "allowed" }"#,
+        r#""reuse": "allowed", "error": "ENGINE/internal" }"#,
+    );
+}
+
+#[test]
+#[should_panic(expected = "h1-request/a.json")]
+fn request_null_connection_authority_panics() {
+    load_edited_request_case(
+        "request-null-authority",
+        r#""body": "" }"#,
+        r#""body": "", "connAuthority": null }"#,
+    );
+}

@@ -2,7 +2,7 @@
 //! bytes the writer must produce, or its error. Format: `docs/notes/vectors.md`.
 
 use engine_core::h1::Reuse;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use super::vectors::{VectorCase, bytes};
 
@@ -74,14 +74,34 @@ struct RawRequest {
     headers: String,
     header_lines: u16,
     body: String,
+    /// Absent means "the template host"; `null` is rejected, as `tools/vectors/schema.ts` does.
+    #[serde(default, deserialize_with = "present_string")]
     conn_authority: Option<String>,
 }
 
+fn present_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}
+
+/// Each shape denies unknown fields, so an `expect` mixing `bytes` and `error` matches neither.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawExpect {
-    Written { bytes: String, reuse: RequestReuse },
-    Error { error: String },
+    Written(RawWritten),
+    Error(RawError),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWritten {
+    bytes: String,
+    reuse: RequestReuse,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawError {
+    error: String,
 }
 
 impl VectorCase for RequestCase {
@@ -94,11 +114,11 @@ impl VectorCase for RequestCase {
         let request = raw.request;
         let template_host = decode(request.template_host);
         let expect = match raw.expect {
-            RawExpect::Written { bytes, reuse } => RequestExpect::Written {
+            RawExpect::Written(RawWritten { bytes, reuse }) => RequestExpect::Written {
                 bytes: decode(bytes),
                 reuse,
             },
-            RawExpect::Error { error } => RequestExpect::Error(error),
+            RawExpect::Error(RawError { error }) => RequestExpect::Error(error),
         };
         Self {
             method: request.method,
