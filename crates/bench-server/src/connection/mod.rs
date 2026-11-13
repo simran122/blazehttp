@@ -278,15 +278,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
     }
 
     /// Drops buffered body bytes still owed; the request is complete (its deadline cleared) once the last one is gone.
+    /// Returns early when nothing is dropped, so the head is rescanned only when the buffer changed.
     fn skip_body(&mut self) {
         let buffered = self.end - self.start;
         let dropped = usize::try_from(self.skip).map_or(buffered, |skip| skip.min(buffered));
+        if dropped == 0 {
+            return;
+        }
         self.start += dropped;
         self.skip -= dropped as u64;
-        if dropped > 0 {
-            self.rescan_head();
-        }
-        if dropped > 0 && self.skip == 0 {
+        self.rescan_head();
+        if self.skip == 0 {
             self.request_deadline = None;
         }
     }
