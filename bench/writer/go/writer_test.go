@@ -74,20 +74,51 @@ func post1kRing() ([]*http.Request, [][]byte) {
 	return ring, bodies
 }
 
-// rewindBody is a request body that is reset in place, so re-arming it per op allocates nothing.
-type rewindBody struct{ bytes.Reader }
+// newBody returns the body http.NewRequest builds for a []byte: io.NopCloser over a *bytes.Reader, which net/http
+// recognises as an in-memory reader (transfer.go isKnownInMemoryReader) and writes without flushing the head first.
+// Resetting the returned reader re-arms the same body per op, so the harness itself allocates nothing.
+func newBody() (*bytes.Reader, io.ReadCloser) {
+	reader := bytes.NewReader(nil)
+	return reader, io.NopCloser(reader)
+}
 
-func (*rewindBody) Close() error { return nil }
+// writeCounter counts the writes that reach it.
+type writeCounter struct{ writes int }
+
+func (c *writeCounter) Write(p []byte) (int, error) {
+	c.writes++
+	return len(p), nil
+}
+
+// TestPost1kBodyIsInMemory checks that the body takes net/http's normal path: one write of head and body together
+// after the final Flush, no early flush of the head.
+func TestPost1kBodyIsInMemory(t *testing.T) {
+	ring, bodies := post1kRing()
+	counter := &writeCounter{}
+	w := bufio.NewWriterSize(counter, 8192)
+	reader, body := newBody()
+	reader.Reset(bodies[0])
+	ring[0].Body = body
+	if err := ring[0].Write(w); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if counter.writes != 1 {
+		t.Fatalf("got %d writes, want 1 (head flushed before the body)", counter.writes)
+	}
+}
 
 func run(b *testing.B, ring []*http.Request, bodies [][]byte) {
 	w := bufio.NewWriterSize(io.Discard, 8192)
-	body := &rewindBody{}
+	reader, body := newBody()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := ring[i%len(ring)]
 		if bodies != nil {
-			body.Reset(bodies[i%len(bodies)])
+			reader.Reset(bodies[i%len(bodies)])
 			r.Body = body
 		}
 		if err := r.Write(w); err != nil {
