@@ -85,3 +85,9 @@ No row here was benchmarked: every speed effect is unverified. Where a row's *co
 | Real hyper's `Client::encode` through a one-function shim (pre-cloned maps, clone timed separately) instead of the hyper emulation in the writer bench; real hyper over an in-memory duplex only for the byte-equality check | equal-work fidelity | Task 5c differential gate | Unverified |
 | Prior-art SIMD parsers to study later: Kourier (C++, strict, SIMD), hparse (Zig), xocomil (Rust), simdzone (DNS zone files) | may hold further tricks | read at a pinned release | Unverified (found by search, not read; links in the note §4.6) |
 | QUICHE Balsa (Envoy) HTTP/1 parser | not vectorised (survey) — no gain expected | — | Unverified |
+
+## Benchmark server (Task 9, 2026-11-07; detail in `docs/notes/bench-server.md`)
+
+| Idea | Hypothesis | How to measure | Status |
+|---|---|---|---|
+| Per-core `current_thread` runtimes, one `SO_REUSEPORT` listener each, instead of one multi-thread runtime | fewer cross-thread wakes and stealing atomics → lower server CPU per request | `/1k` c = 50 and 500, server `cpu.stat` per request, wrk in Docker | Partly measured 2026-11-07 (journal): **c = 50 only**, busy dev host, no win (median 11.05 vs 10.17 µs CPU/request), so A is kept for now. c = 500 not measured: compare at c = 50 and 500 in the nightly window (#15) |
