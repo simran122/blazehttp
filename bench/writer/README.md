@@ -28,6 +28,10 @@ write exactly our bytes:
 `http.NewRequest` builds for a byte slice (`io.NopCloser` over a `*bytes.Reader`, reset in place), so net/http takes
 its in-memory path and every reported allocation is `Request.Write`'s; `TestPost1kBodyIsInMemory` checks that path.
 
+Comparing two writer revisions: `docs/perf/harness/writer-ab/` compiles several engine-core revisions into **one**
+binary (so every baseline is literally the same machine code for all of them) and runs them in rotated order; its
+`run.sh` header gives the commands. The journal's 2026-11-13 entry was measured with it.
+
 `-- --verify` on either Rust binary runs only the byte-equality checks (CI does, with the Go tests and one Go
 iteration). Numbers are dev numbers outside the nightly window unless the journal says otherwise. The owner's goal is
 to beat every writer; the cross-language writer race is Task 5c.
