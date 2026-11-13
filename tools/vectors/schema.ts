@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { ENGINE_ERRORS, METHODS } from '../../packages/blazehttp/src/generated/spec.ts';
 import { asArray, asObject, asRecord, asString, fail } from '../json-guards.ts';
 
@@ -321,12 +321,18 @@ export function loadResponseVectorFile(path: string): VectorFile {
   return parseVectorFile(JSON.parse(readFileSync(path, 'utf8')), path);
 }
 
-/** Loads a vector file and validates it with the schema of its directory (`h1-response/` or `h1-request/`). */
-export function loadVectorFile(path: string): VectorFile | RequestVectorFile {
-  const dir = basename(dirname(path));
-  const parse = Object.hasOwn(FILE_PARSERS, dir) ? FILE_PARSERS[dir] : undefined;
-  if (parse === undefined) return fail(path, `no case schema for directory ${dir}`);
-  return parse(JSON.parse(readFileSync(path, 'utf8')), path);
+/**
+ * Loads the vector file `path` (`/`-separated, relative to the vectors directory `root`, as {@link listVectorFiles}
+ * gives it) and validates it with the schema of its directory. Only `<kind>/<file>.json` has a schema.
+ */
+export function loadVectorFile(root: string, path: string): VectorFile | RequestVectorFile {
+  const segments = path.split('/');
+  const kind = segments.length === 2 ? segments[0] : undefined;
+  const parse = kind !== undefined && Object.hasOwn(FILE_PARSERS, kind) ? FILE_PARSERS[kind] : undefined;
+  if (parse === undefined) {
+    return fail(path, `no case schema; vector files sit in ${Object.keys(FILE_PARSERS).join('/ or ')}/ directly`);
+  }
+  return parse(JSON.parse(readFileSync(join(root, path), 'utf8')), path);
 }
 
 export function parseIndex(data: unknown, label: string): VectorIndex {

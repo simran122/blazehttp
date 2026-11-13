@@ -149,7 +149,7 @@ if (import.meta.main) {
   const root = join(REPO_ROOT, VECTORS_DIR);
   const files = listVectorFiles(root).map((path) => ({
     path,
-    source: loadVectorFile(join(root, path)).source,
+    source: loadVectorFile(root, path).source,
   }));
   const text = renderNotices(files);
   if (process.argv.includes('--check')) {

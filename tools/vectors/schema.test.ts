@@ -149,21 +149,27 @@ const INVALID_FILES: [string, () => unknown, RegExp][] = [
   ['duplicate name', () => mutate((f) => (f.cases[1] = { ...f.cases[1], name: 'ok' })), /duplicate case name ok/],
 ];
 
-/** Writes `data` to `<tmp>/<dir>/v.json` (removed after the test) and returns the path. */
-const writeVectorFile = (dir: string, data: unknown): string => {
+/** Writes `data` to `<tmp>/<dir>/v.json` (removed after the test); returns the root and the `/`-separated path in it. */
+const writeVectorFile = (dir: string, data: unknown): { root: string; path: string } => {
   const root = mkdtempSync(join(tmpdir(), 'vectors-'));
   onTestFinished(() => {
     rmSync(root, { recursive: true, force: true });
   });
   mkdirSync(join(root, dir), { recursive: true });
-  const path = join(root, dir, 'v.json');
-  writeFileSync(path, JSON.stringify(data));
-  return path;
+  const path = `${dir}/v.json`;
+  writeFileSync(join(root, path), JSON.stringify(data));
+  return { root, path };
+};
+
+/** Writes `data` as {@link writeVectorFile} does and loads it with {@link loadVectorFile}. */
+const loadWritten = (dir: string, data: unknown): VectorFile | RequestVectorFile => {
+  const { root, path } = writeVectorFile(dir, data);
+  return loadVectorFile(root, path);
 };
 
 describe('loadVectorFile', () => {
   it('loads a valid file', () => {
-    expect(loadVectorFile(writeVectorFile('h1-response', VALID))).toEqual(VALID);
+    expect(loadWritten('h1-response', VALID)).toEqual(VALID);
   });
 
   it.each(INVALID_FILES)('rejects %s', (_, make, message) => {
@@ -320,22 +326,21 @@ const INVALID_REQUEST_FILES: [string, () => unknown, RegExp][] = [
 
 describe('request vector files', () => {
   it('loads a valid file by its directory', () => {
-    expect(loadVectorFile(writeVectorFile('h1-request', VALID_REQUEST))).toEqual(VALID_REQUEST);
+    expect(loadWritten('h1-request', VALID_REQUEST)).toEqual(VALID_REQUEST);
   });
 
   it('refuses a directory without a case schema', () => {
-    expect(() => loadVectorFile(writeVectorFile('other', VALID_REQUEST))).toThrow(/no case schema for directory other/);
+    expect(() => loadWritten('other', VALID_REQUEST)).toThrow(/other\/v\.json: no case schema/);
   });
 
-  it('reads the case kind from the directory one level below the vectors root only', () => {
-    // A nested file is named by its own directory, so `h1-request/x/v.json` has no schema (docs/notes/vectors.md).
-    expect(() => loadVectorFile(writeVectorFile(join('h1-request', 'x'), VALID_REQUEST))).toThrow(
-      /no case schema for directory x/,
-    );
+  it.each(['h1-request/x', 'x/h1-request'])('refuses a file nested in %s', (dir) => {
+    // Every vector file sits exactly one level below the vectors root (docs/notes/vectors.md).
+    expect(() => loadWritten(dir, VALID_REQUEST)).toThrow(/v\.json: no case schema/);
   });
 
   it('loads a response file through the typed loader', () => {
-    expect(loadResponseVectorFile(writeVectorFile('h1-response', VALID))).toEqual(VALID);
+    const { root, path } = writeVectorFile('h1-response', VALID);
+    expect(loadResponseVectorFile(join(root, path))).toEqual(VALID);
   });
 
   it.each(INVALID_REQUEST_FILES)('rejects %s', (_, make, message) => {
