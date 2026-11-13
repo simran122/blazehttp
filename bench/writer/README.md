@@ -33,7 +33,10 @@ its in-memory path and every reported allocation is `Request.Write`'s; `TestPost
 
 Comparing two writer revisions: `docs/perf/harness/writer-ab/` compiles several engine-core revisions into **one**
 binary (so every baseline is literally the same machine code for all of them) and runs them in rotated order; its
-`run.sh` header gives the commands. The journal's 2026-11-13 entry was measured with it.
+`run.sh` header gives the commands. The journal's 2026-11-13 entry was measured with it. `build.py` refuses an output
+folder inside the repository, one that contains it, or a non-empty one it did not make, and records each revision's
+commit in `provenance.txt`, which `run.sh` copies next to the binary and the logs. CI builds it at the checked-out
+commit and runs its `--verify`.
 
 `-- --verify` on either Rust binary runs only the byte-equality checks (CI does, with the Go tests and one Go
 iteration). Numbers are dev numbers outside the nightly window unless the journal says otherwise. The owner's goal is

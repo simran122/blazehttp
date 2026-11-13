@@ -69,6 +69,10 @@ jobs:
       # Each writer bench checks once, without timing, that every variant writes the writer's exact bytes.
       - run: cargo run --release -p engine-core --example h1_write_bench -- --verify
       - run: cargo run --release --locked --manifest-path bench/writer/hyper-emul/Cargo.toml -- --verify
+      # The one-binary writer A/B harness (docs/perf/harness/writer-ab) builds at the checked-out commit and verifies
+      # that every revision and baseline writes the writer's bytes (no timing).
+      - run: python3 docs/perf/harness/writer-ab/build.py "$RUNNER_TEMP/writer-ab" HEAD HEAD HEAD
+      - run: cargo run --release --manifest-path "$RUNNER_TEMP/writer-ab/Cargo.toml" -p writer-ab -- --verify
       # The Go comparison builds, vets, runs its tests and one benchmark iteration in the parser bench's pinned Go image.
       - run: >-
           docker run --rm -v "$PWD/bench/writer/go:/b" -w /b
