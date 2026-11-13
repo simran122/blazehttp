@@ -552,7 +552,7 @@ export function pairedRatioCi(ours: readonly number[], theirs: readonly number[]
 - [ ] **Step 4: Build P-A** (spans written in the scan). `h1_parse_bench` has no equal-work baseline for it, so P-A is judged by the race rows of acceptance line 2, in a dev run of 10 rounds, with the A/B rule's thresholds.
 - [ ] **Step 5: Build P-B one change at a time**, each with its own A/B: locals and one loop body per line; the STOP-set name search against the table loop; the masked `u64` prefix; the shared known-name classifier. Design G stays in the tests as the reference, and the fuzz target gains a differential oracle: the candidate's result and spans equal the reference's on every input. The padded read window is built here only if a measurement supports it; otherwise it moves to P1a.
 - [ ] **Step 6: Add the fasthttp and nginx rows** to the race. Survey the Jetty `HttpParser`, JDK `Http1HeaderParser` and .NET `HttpConnection` response parsers in the research note; one gets a race row only if it is plausibly faster than httparse. Add a Clang build of every C and C++ row as a row of its own (the runner's `--cc` option gains a Clang value; the compiler version is pinned in the Dockerfile): the rivals were built with GCC only, and each must be raced at its best **[author's call]**. Every row is gated.
-- [ ] **Step 7: Run the race on both architectures** (quiet-machine rule): arm64, and x64 with every row built for `x86-64-v3` **[author's call]**; 10 rounds in the nightly window if it exists. Our row is the scalar parser; every rival runs as shipped with its own SIMD. Record every cell in the journal and in the parser note.
+- [ ] **Step 7: Run the race on both architectures** (quiet-machine rule): arm64, and x64 with every row built for `x86-64-v3` (design §16.4 gives the rule and its reason); 10 rounds in the nightly window if it exists. Our row is the scalar parser; every rival runs as shipped with its own SIMD. Record every cell in the journal and in the parser note.
 - [ ] **Step 8: Mutation run and 300 s of fuzzing** in the capped container, as in Task 4d. Update the notes, commit `Record field spans during the response head scan` and open the first PR. It merges when acceptance lines 1–5 hold, so that Task 6 can build on the new `parse`.
 - [ ] **Step 9: Close every open cell (research loop).** While any cell of the race has a CI upper bound ≥ 1.0: profile that cell for our parser and for the rival that wins it; study how the rival wins it; design our own scalar change (own-algorithm rule: study, rewrite, never copy); apply the A/B rule; re-run the race on both architectures; record the cycle in the journal and in the research note. Each cycle is its own PR under the per-task definition of done. After every race run the owner gets a progress report: the open cells with their numbers, what was tried, and what is next. A cell is never closed with SIMD (acceptance line 6).
 
@@ -613,7 +613,7 @@ It runs before Tasks 4c and 6, which build on the parser's exact limit behaviour
 **As built** (PR #18): the interface below is the one on `p0/writer`; `docs/notes/request-writer.md` records each change from the first sketch and why. The speed work is in Tasks 5b and 5c.
 
 **Files:**
-- Create: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs, template.rs}`, `crates/engine-core/tests/{h1_writer.rs, h1_writer_alloc.rs}`, `crates/engine-core/fuzz/fuzz_targets/h1_writer.rs`, `crates/engine-core/examples/h1_write_bench.rs`, `tests/vectors/h1-request/*.json`, `docs/notes/request-writer.md`
+- Create: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs, host.rs, target.rs, template.rs}`, `crates/engine-core/tests/{h1_writer.rs, h1_writer_alloc.rs}`, `crates/engine-core/tests/support/{request_vectors.rs, write_bench.rs, write_rings.rs}`, `crates/engine-core/fuzz/fuzz_targets/h1_writer.rs`, `crates/engine-core/fuzz/h1_writer.dict`, `crates/engine-core/examples/h1_write_bench.rs`, `tests/vectors/h1-request/*.json`, `docs/notes/request-writer.md`
 - Create: `bench/writer/` (hyper and Go comparisons; replaced by Task 5c's `bench/writers/`)
 
 **Interfaces:**
@@ -630,10 +630,18 @@ impl HeaderTemplate {
 pub struct RequestParts<'a> { pub method: Method, pub target: &'a [u8], pub headers: &'a [u8] /* "name: value\r\n"* */,
                               pub header_lines: u16 /* lines the caller serialised */, pub body: &'a [u8] }
 #[must_use] pub enum Reuse { Allowed, CloseAfterExchange }
+pub const MAX_P0_REQUEST_BYTES: usize;   // the largest request P0 can write; the connection shrinks its write buffer to this size
 pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &HeaderTemplate, conn_authority: &[u8]) -> Result<Reuse, ErrorCode>;
 ```
 
-`write_request` clears `out` and writes the request line, the template, the validated per-request headers, `content-length` (only when there is a body, or the method is POST, PUT, PATCH or QUERY), a generated `connection: close` when a body rides on GET, DELETE or OPTIONS, the blank line and the body, all into one buffer for one write. It reuses `out`'s capacity, so steady state does not allocate. The caller must honour the returned `Reuse`. Size limits return `TooLarge(Url)` or `TooLarge(Headers)`; every other re-validation failure returns `Engine(Internal)`: the user-facing `INVALID_CONFIG` comes from the JS layer in P2, and a failure here means that contract was bypassed (§12).
+`write_request` clears `out` and writes the request line, the template, the validated per-request headers, `content-length` (only when there is a body, or the method is POST, PUT, PATCH or QUERY), a generated `connection: close` when a body rides on GET, DELETE or OPTIONS, the blank line and the body, all into one buffer for one write. It reuses `out`'s capacity, so steady state does not allocate. The caller must honour the returned `Reuse`. On an error nothing is written, and the first failing check wins, in this order:
+1. a body above `maxCopiedBodyBytes` → `Engine(Internal)` (the shard's `try_submit` check was bypassed);
+2. a target above `maxRequestTargetBytes` → `TooLarge(Url)`;
+3. template plus headers above `maxRequestFieldsBytes` → `TooLarge(Headers)`;
+4. any other re-validation failure → `Engine(Internal)`: `conn_authority` is not the template's authority, `HEAD` with a body, a target that is not origin-form, a malformed header line, a forbidden name, a repeated singleton, a line count other than `header_lines`, or `OPTIONS` content without `content-type`;
+5. a buffer that cannot grow to the request's length → `Engine(ResourceExhausted)`.
+
+The user-facing `INVALID_CONFIG` comes from the JS layer in P2, and an `Engine(Internal)` here means that contract was bypassed (§12).
 
 - [ ] **Step 0: Research gate** (see "Process rules"). The research agent writes `docs/notes/request-writer.md`, and it is reviewed before any code in this task.
 - [ ] **Step 1: Write the failing tests:**
@@ -658,11 +666,11 @@ pub fn write_request(out: &mut Vec<u8>, parts: &RequestParts<'_>, template: &Hea
 Research: `docs/notes/h1-speed-research.md` §6 (reviewed, PR #22). It runs after Task 5 and Task 4c.
 
 **Files:**
-- Modify: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/examples/h1_write_bench.rs`, `crates/engine-core/tests/h1_writer.rs`, `docs/notes/request-writer.md`, `docs/perf/journal.md`
+- Modify: `crates/engine-core/src/h1/writer/{mod.rs, fields.rs}`, `crates/engine-core/src/h1/grammar.rs`, `crates/engine-core/examples/h1_write_bench.rs`, `crates/engine-core/tests/h1_writer.rs`, `crates/engine-core/tests/support/{write_bench.rs, write_rings.rs}`, `docs/notes/request-writer.md`, `docs/perf/journal.md`
 
 **Not in this task:** binding a template to its connection by `TemplateId` (P1a, with the profile leases; Task 6 keeps the authority compare); W-B layout hints (P2: they need the P2 wire contract); W-D SIMD validation (P1a, optional, only if measured faster). `write_request`'s signature does not change.
 
-- [ ] **Step 1: Fix the floor measurement** (same binary, alternated order, `pairedRatioCi`, `varied-delta` workload) before any W-A A/B.
+- [ ] **Step 1: Add the workloads and fix the floor measurement** before any W-A A/B. `h1_write_bench`'s generator and `tests/support/write_rings.rs` gain `h20` (20 per-request fields, 400–800 B of headers; research note §3.13) and `varied-delta` **[author's call]**: a 256-request ring with a fixed xorshift seed in which only the per-request header block varies (2 to 20 lines, names shuffled, value lengths 0.5–1.5×), with `post1k`'s method, target and body. The floor is then measured in the same binary as the writer, in alternated order, with `pairedRatioCi`.
 - [ ] **Step 2: Write the failing tests:** the new classifier returns today's class for every forbidden, singleton and underscore-spelled name, in every letter case, and for fuzzed names (today's `classify` stays in the tests as the reference).
 - [ ] **Step 3: Build W-A one change at a time**, each under Task 4c's A/B rule on `h1_write_bench` with its ablation: the shared known-name classifier; the name search and tchar fold from `grammar.rs` (only if Task 4c kept them); limits checked once on the summed length.
 - [ ] **Step 4: Run the mutation pass and 300 s of `h1_writer` fuzzing** in the capped container; `tests/h1_writer_alloc.rs` still shows 0 allocations.
@@ -670,7 +678,7 @@ Research: `docs/notes/h1-speed-research.md` §6 (reviewed, PR #22). It runs afte
 
 **Acceptance:**
 1. Classification is unchanged (Step 2's tests and the fuzz target).
-2. Every kept change passed the A/B rule, and no workload (`get`, `post1k`, `varied`, `h20`, `varied-delta`) is slower than Task 5's writer.
+2. Every kept change passed the A/B rule, and no workload (`get`, `post1k`, `varied`, `h20`, `varied-delta`) is slower than Task 5's writer: in the A/B harness, `pairedRatioCi(this task's head, Task 5's merge commit)` has a point estimate ≤ 1.02 on each of them, on arm64 and on x64.
 3. 0 allocations; every surviving mutant is killed or listed as equivalent.
 4. `post1k` costs ≤ 2.3× the copy floor on arm64 and x64, measured as Step 1 fixes it (the owner's line). The research projects W-A at about 2.15–2.7× (estimate), so a miss is possible: the task then stays open, the numbers go to the owner, and what follows is the owner's decision ("Owner decisions needed").
 
@@ -699,16 +707,16 @@ Research: `docs/notes/h1-speed-research.md` §3.12–§3.13. It runs after Task 
 - [ ] **Step 1:** Export the workloads (`get`, `post1k`, `varied`, `h20`) once as JSON from `h1_write_bench`'s generator, so every language loads identical requests.
 - [ ] **Step 2:** Write the runner's failing tests, then the `check` mode and the differential gate: every row's bytes parse (httparse's request parser as the oracle) to the same method, target, `Content-Length`, body and field multiset as ours. A second gate runs the injection vectors (`tests/vectors/h1-request/`) through each rival's EW1 path and records reject, repair or pass in a committed table; it is never timed.
 - [ ] **Step 3:** Add the rows language by language (Rust, Go, C and C++, Zig, Java); each row must pass the differential gate before it is timed.
-- [ ] **Step 4:** Run the race on arm64 and on x64 (every row built for `x86-64-v3`), and for 10 rounds in the nightly window if it exists.
+- [ ] **Step 4:** Run the race on arm64 and on x64 (every row built for `x86-64-v3`, design §16.4), 10 rounds each. The arm64 gate run is in the nightly window. If no window exists yet, the arm64 run is a dev run, the writer gate stays open, and the gate run moves to Task 20 Step 1.
 - [ ] **Step 5:** Delete `bench/writer/`, update the notes, commit `Add cross-language request writer race` and open a PR.
 
 **Acceptance:**
 1. The differential gate passes for every row and workload before any timing, and the injection table is committed.
-2. On each architecture a committed results file holds 10 valid rounds for every row and workload.
+2. Two committed results files hold 10 valid rounds (design §16.4) for every row and workload: `bench/results/<date>-arm64-ref-writers.jsonl` from the nightly window and `bench/results/<date>-x64-writers.jsonl` from the x64 VM. A dev run (a `-dev-` file) does not count: without a window the PR merges with the dev file, and this line stays open until Task 20 Step 1.
 3. The report prints, per rival and workload, the three ratios with their CIs and the allocations per request.
 4. `bench/writer/` is gone and `pnpm knip` and `pnpm policy` are clean.
 
-The race computes the owner's writer gate (CI upper bound < 1.0 against every gated row, every workload, both architectures). A cell that fails is an open speed item with an owner task (the next writer candidate, or W-D in P1a) and is reported to the owner with its numbers.
+The two files of acceptance line 2 are the evidence for the owner's writer gate (CI upper bound < 1.0 against every gated row, every workload, both architectures); dev results leave the gate open. A cell that fails is an open speed item with an owner task (the next writer candidate, or W-D in P1a) and is reported to the owner with its numbers.
 
 ---
 
@@ -776,6 +784,7 @@ pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -
   6. Push the completion, and return `reclaimed` buffers to the free list. A returned buffer whose capacity is above `read_buf_size` (it grew for a large body) is dropped instead, so the free list never holds more than `pool_bytes`.
   7. Take the next request, or park. A parked connection waits for `Notify` and for socket readability together: a byte or EOF while it is idle closes it (design §5.1, idle-connection rule). When it is woken for a request it does one non-blocking `try_read` before the write, with the same result.
 - `TCP_NODELAY` is on.
+- **Request-body bound:** `try_submit` returns `TooLarge(RequestBody)` for a body above `H1_LIMITS.max_copied_body_bytes` and queues nothing. `write_request` treats a larger body as a bypassed contract (Task 5).
 - **Reuse rule in P0** (§5.1 subset): a connection is reused only if the writer returned `Reuse::Allowed`, the parser set `head.keep_alive`, and no bytes remain after the response. Any error closes it. The parser's `keep_alive` already covers `Connection: close` (also in a 1xx head), HTTP/1.0 without keep-alive, close-delimited bodies, and a 204 or 304 that announces a body.
 - **Spans reach the completion:** `ResponseData` carries the field count and the spans, so no Rust consumer (`engine-bench`, and the binding from P1a) scans the head again. The P0 binding does not put them on the wire: Task 13's `RawResponse.head` is one latin1 string and no P0 JavaScript looks at a field. The completion record gains the field count and the span words in P1a, with the JS headers object (design §9.3). The Task 6 research note confirms or replaces the layout shown above before any code **[author's call: the layout depends on the hand-off rule the note fixes]**.
 - **Config checks [author's call]:** `shard` checks the config before it starts anything and returns `ShardStartError::Config` on a bad value, because the future's output is `()` and has no error path. `read_buf_size` below `H1_LIMITS.max_head_bytes` is rejected with `Engine(Internal)`: the parser reports `TooLarge` only at 65,536 buffered bytes, so a smaller buffer would fill with a `Partial` head.
@@ -811,6 +820,7 @@ pub fn spawn_shard_thread<S: CompletionSink + Send>(cfg: ShardConfig, sink: S) -
   - The connection vectors the parser note hands over: `extra-response-while-idle`, `cl-1tib-no-body`, `http11-then-http09`. `early-final-response` is not run in P0: it needs the read/write split (loop step 2) and is listed in "P1a entry conditions", item 10.
   - `h1_response_eof_vectors_through_the_connection`: every EOF vector of the `engine-core:h1_response` suite, served by the test server, settles with the vector's error. The EOF vectors are those whose input ends before the final head is complete: today `eof-empty`, `eof-after-h`, `eof-after-version`, `eof-mid-status`, `eof-mid-fields`, `eof-after-interim` and `interim-then-eof`. The test selects them by that property, so a vector added later is run too.
   - `refused_connect_settles_refused`
+  - `oversized_request_body_is_rejected_at_submit`: a body of `max_copied_body_bytes` + 1 returns `TooLarge(RequestBody)` from `try_submit`; the limit itself is accepted.
   - `queue_full_fails_fast` (Review Focus 3): `queue_capacity = 4` and the shard future not yet polled; the 5th `try_submit` returns `QueueFull { scope: Global, bound: 4 }` immediately.
   - `each_key_completes_exactly_once`: 10,000 requests with `max_connections = 50`; the sink records keys and expects no duplicate and no missing key. It is `#[ignore]`d in the default run and runs in the capped container ("Resource limits"); the test server's buffers are capped.
   - `small_response_copied_large_handed_off`: compare `buf.capacity()` with `read_buf_size`.
@@ -1332,10 +1342,10 @@ Coverage for `node-binding` (instrumented `.node` driven by the JS tests) is set
   - Load points are pairwise (Task 10): saturation is measured first, and the gate metric is CPU µs/req at the fixed offered load.
   - Every round must be valid by Task 10's rules (server < 60%, `noiseCpu` ≤ 0.10).
   - **Acceptance:** `g0Verdict(blaze, hyper, 'engine-bound').pass`, meaning the CI lower bound ≥ 1.0. This is the P0 gate (§15). reqwest, ureq and isahc are reported with the same statistic and are not gated in P0; `g0CellVerdict` over all rivals is the P1a gate.
-  - The same window runs Task 4b's owed 10-round parser race if Task 4c could not.
+  - The same window runs the 10-round parser race (Task 4b's owed run, whose arm64 file is also the evidence for Task 4c's acceptance line 6) and the 10-round writer race (Task 5c), if their tasks could not run them in a window.
   - Also report allocations per request (`count-allocs` run) and max throughput.
   - If it misses, keep optimising (owner rule, §15 gate misses). Every idea goes through the journal, and the run repeats. The owner may approve P0 functionality with the speed gate marked open.
-- [ ] **Step 2: x64 (mandatory: §16.1 gates x64 at every phase).** Start the VM, re-measure the spike prototype from tag `p0-spike-final` (the x64 reference-cell floor, §16.1), run the same G0 gate, stop the VM and check that it stopped. Budget: about one instance-hour (estimate); the run is refused if it would pass the monthly cap, and its duration and cost go into `bench/aws-cost-log.md`.
+- [ ] **Step 2: x64 (mandatory: §16.1 gates x64 at every phase).** Start the VM, re-measure the spike prototype from tag `p0-spike-final` (the x64 reference-cell floor, §16.1), run the same G0 gate, stop the VM and check that it stopped. Budget: about one instance-hour (estimate); its duration and cost go into `bench/aws-cost-log.md`. The run is refused if it would pass the monthly cap. The P0 report then lists the x64 gate as "pending budget", the owner is asked to raise the cap for the month or to let the run wait for the next month, and P0 is not reported as passed on x64 until the run exists.
 - [ ] **Step 3: Stale-code and docs pass.**
   - Run `pnpm knip && pnpm policy && cargo shear && cargo hack check --workspace --each-feature`. Expected: clean.
   - Every component built has a note in `docs/notes/`: response-parser, request-writer, h1-speed-research, simd-scanning-research, shard-and-connection, completion-path, native-loader-and-session, vectors, bench-server, bench-method, xlang-baseline, wake-latency, allocator, tls-provider, external-memory, toolchain.
