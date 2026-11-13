@@ -258,3 +258,23 @@ async fn binary_stops_cleanly_on_sigterm() {
         .expect("status");
     assert!(status.success(), "a clean stop exits 0, got {status}");
 }
+
+/// A usage error is reported on stderr with exit code 2.
+#[tokio::test(flavor = "multi_thread")]
+async fn binary_reports_usage_errors() {
+    let child = Command::new(env!("CARGO_BIN_EXE_bench-server"))
+        .arg("--unknown")
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .output();
+    let run = timeout(CLOSE_WITHIN, child)
+        .await
+        .expect("exited in time")
+        .expect("ran");
+    assert_eq!(run.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("unknown argument --unknown") && stderr.contains("usage:"),
+        "{stderr}"
+    );
+}

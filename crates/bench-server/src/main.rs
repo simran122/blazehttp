@@ -229,6 +229,33 @@ mod tests {
     }
 
     #[test]
+    fn every_flag_is_read() {
+        let words = [
+            "--plain",
+            "127.0.0.1:1",
+            "--tls",
+            "127.0.0.1:2",
+            "--cert-out",
+            "c.pem",
+            "--threads",
+            "3",
+            "--max-connections",
+            "5",
+            "--stall",
+            "--print-cells",
+        ];
+        let parsed = args(&words).expect("valid arguments");
+        assert_eq!(parsed.config.plain.port(), 1);
+        assert_eq!(parsed.config.tls.map(|tls| tls.port()), Some(2));
+        assert_eq!(
+            parsed.cert_out.as_deref(),
+            Some(std::path::Path::new("c.pem"))
+        );
+        assert_eq!((parsed.threads, parsed.config.max_connections), (3, 5));
+        assert!(parsed.config.stall && parsed.print_cells);
+    }
+
+    #[test]
     fn bad_arguments_are_refused() {
         for words in [
             &["--threads", "0"][..],
