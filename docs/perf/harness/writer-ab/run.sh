@@ -1,41 +1,69 @@
 #!/usr/bin/env bash
 # One-binary writer A/B (journal 2026-11-13): the workspace build.py made (three engine-core revisions plus the
-# current baselines in one binary, rotated), three separate process launches, in the pinned rustc 1.99.1 image with
-# one CPU pinned and a 2 GiB cap. Then the committed benches through bench/writer/run.sh.
+# current baselines in one binary, rotated) and the committed benches, in two separate steps so that nothing but the
+# measured process runs while timing:
+#   build   AB_DIR BIN_DIR                    compiles the A/B binary and the committed benches into BIN_DIR;
+#   measure BIN_DIR LOG_DIR [CPUSET]          three separate launches of the A/B binary in the pinned rustc 1.99.1
+#                                             image (one CPU pinned, 2 GiB cap, no network), then the committed
+#                                             benches through bench/writer/run.sh measure. Refuses to start while
+#                                             any other container runs.
 #
-# Usage, from the repository root, alone on a quiet machine:
+# Usage, from the repository root (measure alone on a quiet machine):
 #   python3 docs/perf/harness/writer-ab/build.py AB_DIR 12d82d7 89a028c HEAD
-#   docs/perf/harness/writer-ab/run.sh AB_DIR LOG_DIR [CPUSET]
+#   docs/perf/harness/writer-ab/run.sh build AB_DIR BIN_DIR
+#   docs/perf/harness/writer-ab/run.sh measure BIN_DIR LOG_DIR [CPUSET]
 set -euo pipefail
 
 # The digest bench/writer/run.sh pins.
 readonly RUST_IMAGE='rust:1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c'
 readonly LAUNCHES=3
+readonly LIMITS=(--rm --cpus=1 --memory=2g --memory-swap=2g --label blazehttp-bench)
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "usage: $0 AB_DIR LOG_DIR [CPUSET]" >&2
+usage() {
+  echo "usage: $0 build AB_DIR BIN_DIR | $0 measure BIN_DIR LOG_DIR [CPUSET]" >&2
   exit 2
-fi
-ab_dir="$(cd "$1" && pwd)"
-log_dir="$2"
-cpuset="${3:-2}"
-mkdir -p "${log_dir}"
-log_dir="$(cd "${log_dir}" && pwd)"
-if [[ -n "$(docker ps --quiet)" ]]; then
-  echo "another container is running; run the A/B alone" >&2
-  docker ps >&2
-  exit 1
-fi
+}
 
-docker run --rm --cpus=1 "--cpuset-cpus=${cpuset}" --memory=2g --memory-swap=2g --label blazehttp-bench \
-  -e RUSTFLAGS='-C target-cpu=generic' -e "LAUNCHES=${LAUNCHES}" \
-  -v "${ab_dir}:/src:ro" -v "${log_dir}:/logs" "${RUST_IMAGE}" \
-  bash -euo pipefail -c '
-    cp -r /src /work && cd /work
-    cargo build --release -p writer-ab 2> /logs/ab-build.log
-    for launch in $(seq 1 "${LAUNCHES}"); do
-      echo "launch ${launch} $(date -u +%FT%TZ)" >> /logs/ab.log
-      ./target/release/writer-ab >> /logs/ab.log
-    done'
-bench/writer/run.sh "${log_dir}/committed" "${cpuset}"
-echo "done: ${log_dir}"
+absolute_dir() {
+  mkdir -p "$1"
+  (cd "$1" && pwd)
+}
+
+build() {
+  local ab_dir bin_dir
+  ab_dir="$(cd "$1" && pwd)"
+  bin_dir="$(absolute_dir "$2")"
+  docker run "${LIMITS[@]}" -e RUSTFLAGS='-C target-cpu=generic' -v "${ab_dir}:/src:ro" -v "${bin_dir}:/bins" \
+    "${RUST_IMAGE}" bash -euo pipefail -c '
+      cp -r /src /work && cd /work
+      cargo build --release -p writer-ab
+      cp target/release/writer-ab /bins/'
+  bench/writer/run.sh build "${bin_dir}/committed"
+  echo "binaries in ${bin_dir}"
+}
+
+measure() {
+  local bin_dir log_dir cpuset
+  bin_dir="$(cd "$1" && pwd)"
+  log_dir="$(absolute_dir "$2")"
+  cpuset="${3:-2}"
+  if [[ -n "$(docker ps --quiet)" ]]; then
+    echo "another container is running; run the A/B alone" >&2
+    docker ps >&2
+    exit 1
+  fi
+  docker run "${LIMITS[@]}" "--cpuset-cpus=${cpuset}" --network none -e "LAUNCHES=${LAUNCHES}" \
+    -v "${bin_dir}:/bins:ro" -v "${log_dir}:/logs" "${RUST_IMAGE}" bash -euo pipefail -c '
+      for launch in $(seq 1 "${LAUNCHES}"); do
+        echo "launch ${launch} $(date -u +%FT%TZ)" >> /logs/ab.log
+        /bins/writer-ab >> /logs/ab.log
+      done'
+  bench/writer/run.sh measure "${bin_dir}/committed" "${log_dir}/committed" "${cpuset}"
+  echo "done: ${log_dir}"
+}
+
+case "${1:-}" in
+  build) [[ $# -eq 3 ]] || usage; build "$2" "$3" ;;
+  measure) [[ $# -eq 3 || $# -eq 4 ]] || usage; measure "$2" "$3" "${4:-2}" ;;
+  *) usage ;;
+esac

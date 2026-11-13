@@ -1,8 +1,11 @@
 # Request writer comparisons
 
 Reproduces the comparison numbers of `docs/notes/request-writer.md` §8.2/§8.4; results go to `docs/perf/journal.md`.
-`bench/writer/run.sh LOG_DIR [CPUSET]` runs all three benches below, one after the other, in pinned containers (rustc
-1.99.1 and Go 1.27.3 images by digest, `--cpus=1` pinned to one vCPU, `--memory=2g`), and records the commit.
+`bench/writer/run.sh build BIN_DIR` compiles the three benches below in pinned containers (rustc 1.99.1 and Go 1.27.3
+images by digest) and records the commit; `bench/writer/run.sh measure BIN_DIR LOG_DIR [CPUSET]` then runs the
+prebuilt binaries one after the other (`--cpus=1` pinned to one vCPU, `--memory=2g`, no network). Measuring is a
+separate step so that nothing else (no build, test, fuzz or download) runs during a timing; `measure` refuses to
+start while any other container runs.
 
 `crates/engine-core/examples/h1_write_bench.rs` times `write_request` against three baselines in one binary, in
 rotated order (`crates/engine-core/tests/support/write_bench.rs`): `memcpy` of the finished request (the lower bound),

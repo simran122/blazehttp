@@ -786,9 +786,11 @@ atomic block (`writev(2)`), and with `TCP_NODELAY` a second write is sent "as so
 - `bench/writer/go/`: the Go `(*Request).Write` benchmark (`writer_test.go`, `go.mod` pinned to go1.27.3). Its
   `post1k` body is an `io.NopCloser` over a `*bytes.Reader`, the body `http.NewRequest` builds for bytes, so
   `net/http` takes its in-memory path (a test pins one write per request; fix round 2, R2-3).
-- `bench/writer/run.sh LOG_DIR [CPUSET]` runs all three in digest-pinned images (`rust:1-bookworm` with rustc 1.99.1,
-  `golang:1-bookworm` with Go 1.27.3), one CPU pinned with `--cpuset-cpus`, `--memory=2g`, and writes a provenance
-  file next to the logs (fix round 2, M9). `bench/writer/README.md` explains the output. Results go to
+- `bench/writer/run.sh build BIN_DIR` compiles all three in digest-pinned images (`rust:1-bookworm` with rustc
+  1.99.1, `golang:1-bookworm` with Go 1.27.3) and records the commit; `bench/writer/run.sh measure BIN_DIR LOG_DIR
+  [CPUSET]` runs the prebuilt binaries alone (it refuses while any other container runs), one CPU pinned with
+  `--cpuset-cpus`, `--memory=2g`, no network, and writes the provenance file next to the logs (fix round 2, M9). Build
+  and measure are separate so that no compile, test or download runs during a timing (owner rule, 2026-11-13). `bench/writer/README.md` explains the output. Results go to
   `docs/perf/journal.md`; the logs a journal entry cites are committed under `docs/perf/logs/`.
 
 **Zero allocations (hard gate), not timed:**
