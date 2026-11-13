@@ -468,3 +468,46 @@ not gate results.*
   also decides the exact-vs-amortised reservation growth. The owner's goal is to beat
   every writer; the cross-language writer race is Task 5c.
 - **Commit:** Task 5 PR (`p0/writer`), fix round 1.
+
+### 2026-11-13: Request writer fix round 2 (one-binary A/B and committed benches, dev numbers, quiet machine)
+
+- **Idea:** measure fix round 2 (per-component target rule, canonical IPv6 hosts) against the pre-review writer and
+  fix round 1 in **one** binary, find the cause of the `get` slowdown since fix round 1 (review finding), and keep no
+  measured slowdown without a reason.
+- **Hypothesis:** the per-component target rule costs little if its byte check stays one vectorised fold.
+- **Method:** `docs/perf/harness/writer-ab/` (engine-core at `12d82d7` = pre-review, `89a028c` = fix round 1, and the
+  fix-round-2 head, plus the `shape`, `appends` and `memcpy` baselines, all in one binary, rotated, 7 runs × 4
+  blocks, medians; 3 separate launches), then the committed benches. Binaries built first (`run.sh build`); `run.sh
+  measure` ran alone: the controller stopped every other agent and watched the machine (only the 3 bench containers,
+  one after another); Linux arm64 Docker on the owner's M2, `--cpus=1` pinned to vCPU 2, rustc 1.99.1,
+  `target-cpu=generic`. Dev runs on a quiet machine outside the nightly window: **not gate evidence**. Assembly read
+  with `cargo rustc --release -- --emit asm` (no timing). Ranges below are the three launches.
+- **Numbers.** *Run 1* (`1faf80d`, 256-entry flag table; load 3.60 → 3.28, 36 s; `docs/perf/logs/writer/fr2-run1/`):
+
+  | set | pre-review | fix round 1 | fix round 2 | shape | appends | memcpy |
+  |---|---|---|---|---|---|---|
+  | `get` | 18.3–19.1 | 21.2–22.8 | 21.0–22.7 | 20.3–21.7 | 17.8–18.6 | 4.3–4.5 |
+  | `post1k` | 79.5–83.3 | 93.4–98.9 | 91.7–97.2 | 34.8–36.2 | 31.9–33.3 | 17.8–18.5 |
+  | `varied` | 101.2–104.1 | 103.6–107.4 | 128.6–132.0 | 44.7–45.7 | 41.1–42.5 | 27.3–27.5 |
+
+  The table made `varied` 21–27% slower than fix round 1 (same-launch ratios). Cause, from the assembly: the table lookup is one
+  dependent load per byte, so the fold stays scalar (0 NEON instructions and 25 byte loads in `check_request`, against
+  55 vector instructions in fix round 1 and 32 pre-review); fix round 1 also calls `memchr` for its backslash search.
+  `get` and `post1k` stay 15–19% and 15–17% slower than pre-review (fix round 1: 16–19% and 17–19%). The committed bench in the
+  same run: writer / shape / appends / memcpy `get` 22.6 / 11.8 / 9.4 / 4.5, `post1k` 91.7 / 33.9 / 30.4 / 17.7,
+  `varied` 113.1 / 43.0 / 39.6 / 27.1 ns. The same `shape` code measured 11.8 ns there and 20.3–21.7 ns in the A/B
+  binary: at `get` size, code layout moves a baseline by ≈ 2×, so only same-binary comparisons are used here.
+  *Run 2* (`82e2020`; load 2.68 → 3.08, 37 s; `docs/perf/logs/writer/fr2-run2/`): the flags computed with
+  comparisons and selects instead of the table, plus skipping empty request pieces. `get` 41.1–44.3 (pre-review
+  17.7–19.0, fix round 1 20.6–22.0), `post1k` 113.8–114.3 (79.4–80.0 / 93.8–94.9), `varied` 133.1–136.1 ns (99.8–102.3
+  / 109.0–110.1). The fold vectorised (312 16-lane instructions) but its scalar loop for short targets compiled to
+  byte-dependent branches and a switch-table load; the check-free `shape` with the skip got slower in every set
+  (`get` 21.7–25.0, `post1k` 43.6–43.7, `varied` 53.2–53.7 ns against 20.3–21.7 / 34.8–36.2 / 44.7–45.7 in run 1).
+  *Comparisons (run 1, committed benches):* ours + join / hyper-emulation construct+encode 0.207 / 0.293 / 0.252,
+  ours / clone+encode 0.263 / 0.414 / 0.402; Go `(*Request).Write` `get` 643–669 ns, 224 B, 5 allocations, `post1k`
+  1,036–1,134 ns, 264 B, 8 allocations.
+- **Kept / dropped:** the flag table, dropped (measured +21–27% on `varied`); the comparison-and-select flags,
+  dropped (measured: `get` ×2, `varied` no better); skipping empty pieces, dropped in this form (the check-free shape
+  measured slower in every set) and kept as a Task 5b open item (`ideas.md`). Both reverted in `2466bd5`
+  ([controller's call], 2026-11-13). Run 3 measures fix round 1's fold structure with the per-component rule.
+- **Commit:** Task 5 PR (`p0/writer`), fix round 2.

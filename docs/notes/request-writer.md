@@ -401,9 +401,13 @@ impl HeaderTemplate {
   rejects only code points outside U+0021–U+00FF) and Bun (accepts ≥ 0x80), and it costs nothing for a target the
   URL layer built (design §5.2). Deviation from RFC 3986, recorded: the query bytes above are outside its `query`
   rule and stay accepted because WHATWG sends them raw.
-- **How it is checked:** one 256-entry table of two flags (not in path, not in query) and one branch-free OR fold
-  over the target. Only a target whose fold shows a flagged byte is split at `?` and folded per component, so the
-  common target costs one pass and no search for `?`.
+- **How it is checked:** one branch-free fold of comparisons joined with `&` over the target accepts the bytes
+  allowed in every component (visible ASCII without `#`, `"`, `<`, `>` and without the six component-specific bytes
+  `\`, `^`, `` ` ``, `{`, `}`, `'`); it vectorises (16 bytes per step, 8 for short targets; checked in the assembly).
+  Only a target holding one of the six is split at its first `?` and each part checked against its own component,
+  so the common target costs one pass and no search for `?`. A 256-entry flag table (scalar: one dependent load per
+  byte) and comparison-and-select flags (byte-dependent branches on short targets) both measured slower (journal
+  2026-11-13).
 - **Accepted, the caller's responsibility (not normalised):** `//x` (an empty first segment), raw dot segments
   (`/../../etc`), `/@evil.example` and `%` not followed by two hex digits (`/%zz`). WHATWG removes dot segments and
   never produces the others from a URL whose path it parsed, so P2 cannot send them; P1b, which builds redirect
@@ -903,8 +907,8 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
   and per component (fix round 2, W4) `\`, `^`, `` ` ``, `{`, `}` in the path and `'` in the query; `VALID_TARGETS`,
   7: `//evil.example/x` per the §6.3 decision, `/../a/%zz` (not normalised), percent-encoded data with `'`, `|`,
   `[`, `]` in the path, raw `\^`{|}` and a second `?` in the query);
-- `flags_follow_the_whatwg_percent_encode_sets` (unit test in `writer/target.rs`): every one of the 256 byte values
-  gets the flags the URL Standard's sets give it;
+- `byte_classes_follow_the_whatwg_percent_encode_sets` (unit test in `writer/target.rs`): every one of the 256 byte
+  values is allowed everywhere, in the path or in the query exactly as the URL Standard's sets say;
 - `rejects_target_with_space_ctl_or_non_ascii`;
 - `target_limit`: 16,384 accepted, 16,385 → `TooLarge(Url)`.
 
