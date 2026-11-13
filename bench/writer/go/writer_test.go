@@ -2,7 +2,7 @@
 // `post1k` requests as crates/engine-core/tests/support/write_rings.rs, into a reused 8 KiB bufio.Writer over
 // io.Discard with one Flush per request (as Go's Transport writeLoop does). The body is one reusable reader reset per
 // op, so every allocation reported is Request.Write's own.
-// Run: go test -run '^$' -bench . -benchmem -count 5 (in golang:1.27.3-bookworm, see ../README.md).
+// Run: bench/writer/run.sh build, then bench/writer/run.sh measure (golang:1.27.3-bookworm; see ../README.md).
 package writer
 
 import (

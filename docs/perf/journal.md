@@ -415,7 +415,9 @@ not gate results.*
   19.1 vs 29.7–38.4 ns, `post1k` 83.3–84.9 vs 105.8–123.5 ns, `varied` 87.8–99.5 vs 118.1–136.5 ns (ratios 2.17–2.20 vs
   3.38–3.40, 2.56–2.58 vs 2.82–2.84, 2.04–2.11 vs 2.23–2.32; `docs/perf/logs/writer/bench-linux-inline.log` /
   `docs/perf/logs/writer/bench-linux-3.log`). Between the two blocks the floor (same code in both builds) rose 13–34% on `post1k` and
-  `varied`, so the ns differences include host drift; the ratios do not. (b) ±5%, mixed sign; (c) 0 to +2%; (d) 0 to −10% on `varied` only;
+  `varied`, so the ns differences include host drift; the ratios do not. Both logs also hold a hyper-emulation section
+  that panicked at its byte-equality check ("both encoders write the same request", line 48 of each log, before its
+  `varied` rows); none of its rows is used here, only the writer rows above. (b) ±5%, mixed sign; (c) 0 to +2%; (d) 0 to −10% on `varied` only;
   (e) −4% on `post1k` in 2 of 3 rounds, +33% in the third.
 - **Kept / dropped:** (a) kept: by writer/floor ratio `get` ≈ 35%, `post1k` ≈ 9%, `varied` ≈ 5–12% less time (the
   ns figures first recorded here, 16–50%, included the drift above). (b)–(e) dropped: no win beyond noise
@@ -451,7 +453,8 @@ not gate results.*
   *Final rounds (Linux, writer / floor ns, median ratio):* `get` 31.0 / 12.8 (2.43), 33.4 / 13.4 (2.49), 49.6 / 20.3
   (2.51); `post1k` 151.1 / 48.1 (3.02), 135.5 / 45.2 (3.01), 166.6 / 54.5 (3.07); `varied` 166.0 / 62.7 (2.58),
   157.9 / 60.6 (2.62), 198.5 / 71.4 (2.63) (`docs/perf/logs/writer/bench-linux-fr1-final.log`). The floor's code is the same line for
-  line in both trees, yet it measured 13–21% faster in the current binary on `post1k` and `varied` (A/B above) with
+  line in both trees, yet it measured 13–21% faster in the current binary on `post1k` and `varied` in 5 of 6 round × set cells (round 2
+  `post1k`, a loaded round, +8%: 51.0 → 54.9 ns, `bench-ab-fr1-opt.log`; A/B above) with
   more bytes to copy: its time moves with code layout, so these ratios are not comparable with the earlier entry's.
   *Hyper-1.12 encoder emulation (ours / construct+encode):* `get` 0.209–0.212, `post1k` 0.239–0.266, `varied`
   0.215–0.223 — the emulation builds its `HeaderMap` from `(name, value)` pairs inside the timed region while our

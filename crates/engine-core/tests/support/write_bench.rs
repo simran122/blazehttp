@@ -4,7 +4,7 @@
 //!
 //! Baselines, cheapest first, each checked to write the writer's exact bytes:
 //! - [`memcpy`]: one copy of the finished request — the lower bound for any writer that fills a buffer;
-//! - [`unchecked_appends`] (called the "copy floor" in records before 2026-11-13): the same bytes as 7–11
+//! - [`unchecked_appends`] (called the "copy floor" in records before 2026-11-13): the same bytes as 8–12
 //!   `extend_from_slice` calls behind two framing branches — no validation, no length sum, no reservation;
 //! - [`writer_shape`]: `write_request`'s own append shape (12 pieces, checked length sum, one exact reservation)
 //!   without any check, so `writer − shape` is the cost of the checks and `shape − appends` that of the shape.
@@ -111,8 +111,10 @@ pub fn unchecked_appends(out: &mut Vec<u8>, framed: &Framed, template_bytes: &[u
     out.extend_from_slice(&request.body);
 }
 
-/// `write_request`'s append shape with its checks removed: the same 12-piece list as `request_pieces`, the checked
-/// length sum and the one exact reservation (`src/h1/writer/mod.rs`; keep in step, `frame` checks the bytes).
+/// `write_request`'s append shape with its checks removed: a hand-written copy of the 12-piece list of
+/// `request_pieces` (`src/h1/writer/mod.rs`), the checked length sum and the one exact reservation. `frame` checks
+/// only that the bytes equal the writer's; it cannot see the copy drift from the writer's piece list, so any change
+/// to `request_pieces` must be made here too (note §10.5, Task 5b).
 ///
 /// # Panics
 ///

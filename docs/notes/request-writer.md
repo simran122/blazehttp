@@ -284,7 +284,7 @@ are not needed: one `write`/`writev` per request already carries the whole reque
   singleton names, the line count, sensitive names); `template.rs` holds `HeaderTemplate`; `host.rs` validates its
   host (§6.2).
 - `crates/engine-core/src/h1/grammar.rs` (already on `milestone/p0`): reused as is (`TCHAR`, `FIELD_CONTENT`,
-  `token_len`, `value_len`). **No new table there.** The target's byte table lives in `writer/target.rs` and the host
+  `token_len`, `value_len`). **No new table there.** The target's byte rule lives in `writer/target.rs` and the host
   rules in `writer/host.rs`, because only the writer uses them (design §13.1 rule 1).
 - `crates/engine-core/src/h1/mod.rs`: re-exports `HeaderTemplate`, `RequestParts`, `Reuse` and `write_request`.
   The `#![deny(clippy::indexing_slicing, clippy::arithmetic_side_effects, clippy::unwrap_used, clippy::expect_used,
@@ -341,6 +341,19 @@ impl HeaderTemplate {
   - or a reg-name/IPv4 of **lowercase** ALPHA / DIGIT / `-._~!$&'()*+,;=` with **no `%`** (WHATWG has already
     lowercased, and decoded or rejected percent-encoding) and no empty label (one trailing dot, a fully qualified
     name, is allowed);
+  - and, when the name ends in a number, the URL Standard's IPv4 serialisation (fix round 3, F3-2). The host parser
+    ([§3.5](https://url.spec.whatwg.org/#concept-host-parser), step "If asciiDomain ends in a number") hands a name
+    to the [IPv4 parser](https://url.spec.whatwg.org/#concept-ipv4-parser) when the
+    [ends in a number checker](https://url.spec.whatwg.org/#ends-in-a-number-checker) is true: after removing one
+    trailing empty part, the last dot-separated part is non-empty ASCII digits, or parses as an
+    [IPv4 number](https://url.spec.whatwg.org/#ipv4-number-parser) (`0x`/`0X` and hex digits, the empty rest
+    included). The IPv4 parser either fails (`a.1`, five parts, a part out of range) or yields an address that the
+    [IPv4 serializer](https://url.spec.whatwg.org/#concept-ipv4-serializer) writes as four decimal parts 0–255
+    without leading zeros and without a trailing dot. So `127.1`, `2130706433`, `0x7f.0.0.1`, `127.0.0.01` and
+    `1.2.3.4.` (all `127.0.0.1` or `1.2.3.4` to WHATWG) and `a.1` are rejected; `a.1b` and `a.0xg` stay domains.
+    `host.rs` parses the name as
+    [`Ipv4Addr`](https://doc.rust-lang.org/1.99.1/core/net/struct.Ipv4Addr.html) and compares its `Display`
+    (dotted decimal, the serializer's form) against the bytes, as for IPv6, so each IPv4 origin has one spelling;
   - then optionally `:` and 1–5 DIGIT without a leading zero and a value 1–65535 (WHATWG omits default ports and
     never pads);
   - non-empty.
@@ -679,9 +692,9 @@ when the ring is built; the bench checks the bytes before timing.
 - **`memcpy`:** one `extend_from_slice` of the finished request. The lower bound for any writer that fills a buffer.
 - **Unchecked appends** (called the **"copy floor"** in this note and the journal before 2026-11-13; the prototype
   rows of §8.2 keep that label): the pieces in wire order (request line, template, delta, `content-length` line via
-  `format_into`, `connection: close` when due, CRLF, body), 7–11 `extend_from_slice` calls behind two framing
+  `format_into`, `connection: close` when due, CRLF, body), 8–12 `extend_from_slice` calls behind two framing
   branches, with no checks, no length sum and no reservation. It is **not** a lower bound and not the writer's
-  sequence: the writer always appends 12 pieces (some empty) after a checked sum and one `try_reserve_exact`.
+  sequence: the writer appends its 12 pieces (some empty) after a checked sum and one `try_reserve_exact`.
 - **Writer shape:** `write_request`'s own 12-piece append list, checked length sum and one exact reservation, with
   every check removed.
 
@@ -833,8 +846,9 @@ note are updated in the same PR. Until then each gate is the worst prototype dev
 - advisory absolute values: `get` ≤ 60 ns, `post1k` ≤ 250 ns, `varied` ≤ 300 ns (dev 28–35 / 111–220 / 110–247 ns).
 
 **Gate redefinition — proposed for the owner's decision in Task 5b (fix round 2, M2; not applied).** The ratio
-gates divide by the unchecked appends, which is not a lower bound and whose time moved 13–21% with code layout while
-its code stayed the same (journal, 2026-11-08 fix round 1). A ratio also contains the body copy, so the same check
+gates divide by the unchecked appends, which is not a lower bound and whose time moved 13–21% with code layout in 5
+of 6 round × set cells (round 2 `post1k`, a loaded round, +8%) while its code stayed the same (journal, 2026-11-08
+fix round 1). A ratio also contains the body copy, so the same check
 cost gives a different ratio per set. Proposal: (a) gate the cost of the checks in ns, `writer − shape` per set, from
 the one-binary rotated bench, with the design §16.4 bootstrap CI; (b) gate the absolute ns per set against the
 fastest rival writer measured in the same harness (Task 5c), which is the owner's "#1 against every rival" rule; (c)
@@ -875,15 +889,17 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 
 **Origin binding and templates:**
 - `rejects_template_for_other_authority`: the authority differs by port, by case and by a trailing dot;
-- `template_rejects_invalid_host` (`INVALID_HOSTS`, 42): empty; SP, `/`, `@`, `?`, `#`, `%`, CR, LF, NUL, DEL, 0x80;
+- `template_rejects_invalid_host` (`INVALID_HOSTS`, 52): empty; SP, `/`, `@`, `?`, `#`, `%`, CR, LF, NUL, DEL, 0x80;
   UTF-8 `é`; `[::1` and `::1]`; port `:`, `:0`, `:65536`, `:123456` and `:-1`; empty labels; IPv6 literals WHATWG
   never writes (fix round 2, W3): `[2001:DB8::A]`, `[0001:0db8::0001]`, `[0:0:0:0:0:0:0:1]`, `[::ffff:1.2.3.4]`,
   `[1::2:3:4:5:6:7]` (a single zero piece compressed), `[1::2:0:0:0:3]` (not the longest run), `[1:0:0:2:3::4]` (the
-  second of two equal runs);
-- `template_accepts_hosts` (`VALID_HOSTS`, 14): `example.com`, `127.0.0.1:3999`, `[::1]:8080`, `xn--bcher-kva.example`,
+  second of two equal runs); names that end in a number but are not the IPv4 serialisation (fix round 3, F3-2):
+  `127.1`, `2130706433`, `0x7f.0.0.1`, `127.0.0.01`, `1.2.3.4.`, `1.2.3.4.5`, `1.2.3.256`, `a.1`, `a.0x`, `a.1.:80`;
+- `template_accepts_hosts` (`VALID_HOSTS`, 19): `example.com`, `127.0.0.1:3999`, `[::1]:8080`, `xn--bcher-kva.example`,
   `a,b.example` (`,` is kept, §6.2), and the canonical IPv6 forms `[::ffff:102:304]`, `[2001:db8::a]`,
   `[1:0:2:3:4:5:6:7]`, `[1:0:0:2::3]` (the longer of two runs), `[1::2:3:0:0:4]` (the first of two equal runs; fix
-  round 2 mutant `>`→`>=` in `longest_zero_run`) and `[::]`;
+  round 2 mutant `>`→`>=` in `longest_zero_run`) and `[::]`; `1.2.3.4`, `0.0.0.0:80`, `255.255.255.255`, and `a.1b`
+  and `a.0xg` (last label not a number; fix round 3);
 - `template_rejects_forbidden_defaults`: every forbidden name, underscore variants included;
 - `template_sensitive_flag`: set by `authorization`, `cookie`, `x-api-key` and a custom configured name; clear
   otherwise;
@@ -910,10 +926,11 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 - `accepts_obs_text_htab_ows_and_empty_values`.
 
 **Target (§6.3):**
-- `target_must_be_origin_form` (`INVALID_TARGETS`, 21: not `/`-first, empty, `#` at start/middle/end, `"`, `<`, `>`,
-  and per component (fix round 2, W4) `\`, `^`, `` ` ``, `{`, `}` in the path and `'` in the query; `VALID_TARGETS`,
-  7: `//evil.example/x` per the §6.3 decision, `/../a/%zz` (not normalised), percent-encoded data with `'`, `|`,
-  `[`, `]` in the path, raw `\^`{|}` and a second `?` in the query);
+- `target_must_be_origin_form` (`INVALID_TARGETS`, 22: not `/`-first, empty, `#` at start/middle/end, `"`, `<`, `>`,
+  and per component (fix round 2, W4) `\`, `^`, `` ` ``, `{`, `}` in the path and `'` in the query, and `/a?b'?c`
+  (fix round 3, F3-5: the query starts at the first `?`); `VALID_TARGETS`, 8: `//evil.example/x` per the §6.3
+  decision, `/../a/%zz` (not normalised), percent-encoded data with `'`, `|`, `[`, `]` in the path, the raw bytes
+  `\`, `^`, `` ` ``, `{`, `|`, `}` in the query, and a second `?` in the query (`/a?x?\y{`, `/a?\?b`));
 - `byte_classes_follow_the_whatwg_percent_encode_sets` (unit test in `writer/target.rs`): every one of the 256 byte
   values is allowed everywhere, in the path or in the query exactly as the URL Standard's sets say;
 - `rejects_target_with_space_ctl_or_non_ascii`;
@@ -996,7 +1013,7 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 
 | File | Source | Cases (planned) |
 |---|---|---|
-| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 294) |
+| `h1-request/blazehttp-rules.json` | own (§9.2) | ≈ 160 (built: 309) |
 | `h1-request/undici-selected.json` | undici v8.12.4 (§9.4) | ≈ 25 (built: 38) |
 | `h1-request/go-selected.json` | go1.27.3 (§9.4) | ≈ 15 (built: 17) |
 | `h1-request/httpguts-selected.json` | x/net v0.62.0 `TestValidHeaderFieldName`, `TestIsTokenRune`, `TestPunycodeHostPort` | ≈ 15 (built: 145; `TestValidHeaderFieldName` has only 6 cases, so the token-rune and host tests were added) |
@@ -1035,7 +1052,8 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 - `[[bin]] name = "h1_writer"` in `crates/engine-core/fuzz/Cargo.toml`;
 - dictionary `fuzz/h1_writer.dict`: forbidden names in mixed case, underscore spellings, `\r\n`, `: `, ` HTTP/1.1`,
   `#`, `%0d%0a`, `[::1]` and `:65535`; fix round 2 adds the per-component target bytes (`^`, `` ` ``, `{`, `}`, `'`,
-  `?`) and non-canonical IPv6 hosts (`[::FFFF:1.2.3.4]`, `[0:0:0:0:0:0:0:1]`);
+  `?`) and non-canonical IPv6 hosts (`[::FFFF:1.2.3.4]`, `[0:0:0:0:0:0:0:1]`); fix round 3 adds IPv4 spellings
+  (`0x`, `127.1`, `1.2.3.4`, `.01`);
 - run with `-use_value_profile=1`.
 
 **Structure-aware input (`arbitrary`):**
@@ -1241,7 +1259,10 @@ Proxy tests:
   pre-review writer** (1.16–1.21× pre-review in one binary, journal 2026-11-13 run 3; hypothesis: a per-call fixed
   cost in the added checks, since the check-free shape is not the cause and skipping empty pieces measured slower;
   `ideas.md`), and the exact-vs-amortised reservation growth (item 31: each new high
-  reallocates; measure `try_reserve` with the §6.7 shrink bound and add a growth test).
+  reallocates; measure `try_reserve` with the §6.7 shrink bound and add a growth test). Any change to
+  `request_pieces` (the append shape) must be copied into the bench's `writer_shape`
+  (`tests/support/write_bench.rs`), whose byte check cannot see a shape that drifted (fix round 3, F3-8); a shared
+  `#[doc(hidden)]` piece builder would remove the copy.
 
 ## 11. Design changes (accepted; applied in the Task 5 PR)
 Exact text changes for `docs/specs/2026-11-06-blazehttp-design.md`. This note round does not edit the design.
