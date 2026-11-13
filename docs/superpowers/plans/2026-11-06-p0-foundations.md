@@ -412,7 +412,7 @@ git push -u origin p0/bootstrap && gh pr create --base milestone/p0 --fill
 - `tests/vectors/index.json` maps each file to the suites that consume it, e.g. `{ "h1-response/llhttp-sample.json": ["engine-core:h1_response"] }`.
 
 **Interfaces:**
-- Produces (TS): `loadVectorFile(path: string): VectorFile`, and `checkIndex(root: string): string[]`, which returns unreferenced or missing files.
+- Produces (TS): `loadVectorFile(path: string): VectorFile` (after PR #18: `loadVectorFile(root: string, path: string): VectorFile | RequestVectorFile`, with `path` relative to `root`; its folder selects the case schema), and `checkIndex(root: string): string[]`, which returns unreferenced or missing files.
 - Produces (Rust test support): `pub fn load_suite(suite: &str) -> Vec<(String /*file*/, Case)>`, which reads `index.json` and panics on an unregistered file under the suite's directory. Also `pub struct Case { name, input: Vec<u8>, method: String, expect: Expect }` and `pub enum Expect { Ok { status: u16, headers: Vec<(String, String)>, body: Vec<u8>, keep_alive: bool }, Error(String) }`.
 
 - [ ] **Step 1: Pin llhttp and read its harness.**
