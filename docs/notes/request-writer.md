@@ -1019,7 +1019,8 @@ The brief's eight tests, adapted to the new signatures (`template_rejects_invali
 **Plumbing:**
 - `[[bin]] name = "h1_writer"` in `crates/engine-core/fuzz/Cargo.toml`;
 - dictionary `fuzz/h1_writer.dict`: forbidden names in mixed case, underscore spellings, `\r\n`, `: `, ` HTTP/1.1`,
-  `#`, `%0d%0a`, `[::1]` and `:65535`;
+  `#`, `%0d%0a`, `[::1]` and `:65535`; fix round 2 adds the per-component target bytes (`^`, `` ` ``, `{`, `}`, `'`,
+  `?`) and non-canonical IPv6 hosts (`[::FFFF:1.2.3.4]`, `[0:0:0:0:0:0:0:1]`);
 - run with `-use_value_profile=1`.
 
 **Structure-aware input (`arbitrary`):**
@@ -1052,6 +1053,9 @@ count (`vec![EMPTY_HEADER; lines + 2]`), so the oracle never fails for lack of s
 8. **Sensitive flag:** a fuzzed subset of sensitive names; `is_sensitive` equals the model's.
 9. **Forbidden set from the output:** no design §12 forbidden name in any spelling appears in the written head
    besides the generated `content-length`/`connection` (read from the bytes, independent of the model's lists).
+   Fix round 2 (item 10): no underscore spelling of a singleton appears, and each singleton appears at most once
+   counting every spelling; a writer and model that both admitted `content_type` were caught in 6,278 executions,
+   where the previous oracle ran 2.37 M executions without a crash.
 
 **On `Err`:** `out` is empty.
 
