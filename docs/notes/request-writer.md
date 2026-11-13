@@ -36,8 +36,9 @@ standard library's `format_into` (stable since 1.98.0); head and body in one buf
   `RequestParts` (§6.6), and each producer states where its count comes from (P2 §10.4, P1b §10.3).
 - **Measured (committed benches, dev, Linux arm64 container, `docs/perf/journal.md` 2026-11-08 fix round 1):** the
   writer costs **≈ 31–50 ns** for a template-only `GET` and **≈ 136–167 ns** for a `POST` with a 1 KiB JSON body and 3
-  extra headers — **0.21× (GET) and 0.24–0.27× (POST)** an emulation of hyper 1.12's encoder doing equal work
-  (target parsed and every per-request field validated per call, construct+encode), and ≈ 0.73–0.82 µs / 1.3–1.5 µs
+  extra headers — **0.21× (GET) and 0.24–0.27× (POST)** an emulation of hyper 1.12's encoder (no hyper code
+  runs; target parsed and every per-request field built per call, construct+encode; 0.28–0.43× against its
+  clone+encode, the conservative figure), and ≈ 0.73–0.82 µs / 1.3–1.5 µs
   with 5 / 8 allocations for Go 1.27.3 `(*Request).Write`. (The prototype numbers of §8.2 were 28–35 / 110–220 ns.) Against the ≈ 5 µs CPU budget of a whole request (design
   §1-F) the writer is ≈ 0.5–4%.
 
@@ -471,6 +472,14 @@ field-value = *FIELD_CONTENT                 ; grammar::value_len (HTAB, SP–'~
   (P2: `INVALID_CONFIG`). The singleton bits already say whether `content-type` is present, so the check is O(1).
   **Presence only (fix round 2, W6):** the writer does not parse the media type, so `content-type: ` (empty) or a
   malformed value is written; checking that the value is a valid `media-type` (RFC 9110 §8.3.1) is P2's (§10.4).
+- **Residual differentials, accepted (fix round 2, W8):**
+  - *Obs-text* (0x80–0xFF) is allowed in values by RFC 9110 §5.5 and by design (§10: latin1). Some receivers that
+    decode header bytes as latin1 and then split on Unicode line breaks may treat a single byte such as NEL (0x85) as
+    a line end (reported for older Python header parsing; from the review, not re-checked here). Go and undici send
+    the same bytes, so this is parity, not a writer gap; P2 may restrict values to ASCII per client option later.
+  - *Routing-relevant names* (`x-forwarded-host`, `forwarded`, `x-http-method-override`, `via`, `max-forwards`) are
+    written. They are legitimate client fields; the forbidden list protects framing, credentials and connection
+    management, and is not a server-side request forgery filter.
 - **Size:** `maxRequestFieldsBytes` counts exactly the template bytes (**including the `host:` line**) plus the delta
   bytes. It excludes the request line, the generated `content-length` and `connection` lines, and the final CRLF.
 - **Line count (X3, ruling).** `RequestParts::header_lines: u16` is the number of fields the JS layer serialised
@@ -724,8 +733,9 @@ keep correct. Stability was confirmed by the review by compiling and running it 
 - *(prototype only, superseded by the fix-round-2 ablation in §8.4)* Validation costs 0.5–1.5× the copy floor.
 - *(prototype)* hyper's serialisation alone (encode-only, map pre-built, no validation) measured 1.33–1.59× our full
   prototype writer on `post1k`/`varied`. That compares a floor with a validating writer; the committed bench compares
-  equal work instead (construct+encode vs our writer: 0.21–0.27×) and floors with floors (our copy floor / hyper
-  encode-only: 0.23–0.46×), §8.4.
+  the emulation's construct+encode with our writer (0.21–0.27×; equal input shape only in the "ours + join" row added
+  in fix round 2, and 0.28–0.43× against clone+encode, the conservative figure) and floors with floors (our copy floor
+  / emulated encode-only: 0.23–0.46×), §8.4.
 - *(prototype only)* The measured prototype did not yet include the checks added in review rounds 1 and 2; the
   provisional gates were set with a 15% margin for them. The margin did not hold (§8.4).
 
@@ -799,19 +809,29 @@ atomic block (`writev(2)`), and with `TCP_NODELAY` a second write is sent "as so
   4. A check that `out.capacity()` ≤ `MAX_P0_REQUEST_BYTES` (§6.7). Growth policy (exact reservations reallocate on
      each new high, bounded by `MAX_P0_REQUEST_BYTES`): measured and decided by Task 5b (item 31).
 
-**Measured against the gates (fix round 1, `docs/perf/journal.md`):** `get` 2.43–2.51×, `post1k` 3.01–3.07× (the
-accepted miss, owned by Task 5b), `varied` 2.58–2.63× the copy floor on Linux; ours / hyper construct+encode
-0.21–0.27×.
+**Measured (fix round 1, `docs/perf/journal.md`; dev, indicative):** `get` 2.43–2.51×, `post1k` 3.01–3.07× (above
+its gate: the accepted miss, owned by Task 5b), `varied` 2.58–2.63× the copy floor (now "unchecked appends") on
+Linux; ours / hyper-emulation construct+encode 0.21–0.27× (clone+encode, the conservative figure: 0.28–0.43×).
 
 **Ratio gates: PROVISIONAL.** They hold until 10 rounds have run on the reference host in the nightly window *and*
 on the x64 VM. After that the thresholds are reset from the median and bootstrap 95% CI (design §16.4); journal and
-note are updated in the same PR. Until then each gate is the worst dev value + 15%:
-- `post1k` writer/floor ≤ **2.3×** (worst dev 1.97×);
-- `varied` writer/floor ≤ **2.9×** (worst dev 2.51×);
+note are updated in the same PR. Until then each gate is the worst prototype dev value + 15%:
+- `post1k` writer/appends ≤ **2.3×** (worst dev 1.97×);
+- `varied` writer/appends ≤ **2.9×** (worst dev 2.51×);
 - advisory absolute values: `get` ≤ 60 ns, `post1k` ≤ 250 ns, `varied` ≤ 300 ns (dev 28–35 / 111–220 / 110–247 ns).
 
-**Comparison targets** (reported in the PR and `journal.md`, not gated in P0): ≤ 0.5× the hyper-encoder emulation doing
-equal work (construct+encode; dev 0.21–0.27×), with clone+encode as a lower bound on hyper's cost and Go for context.
+**Gate redefinition — proposed for the owner's decision in Task 5b (fix round 2, M2; not applied).** The ratio
+gates divide by the unchecked appends, which is not a lower bound and whose time moved 13–21% with code layout while
+its code stayed the same (journal, 2026-11-08 fix round 1). A ratio also contains the body copy, so the same check
+cost gives a different ratio per set. Proposal: (a) gate the cost of the checks in ns, `writer − shape` per set, from
+the one-binary rotated bench, with the design §16.4 bootstrap CI; (b) gate the absolute ns per set against the
+fastest rival writer measured in the same harness (Task 5c), which is the owner's "#1 against every rival" rule; (c)
+keep `memcpy` as the reported lower bound and drop the ratio to the unchecked appends as a gate. Until the owner
+decides, the ratio gates above stay as written and are reported with the ns differences beside them.
+
+**Comparison targets** (reported in the PR and `journal.md`, not gated in P0): ≤ 0.5× the hyper-encoder emulation
+(no hyper code runs until Task 5c): reported as ours + join / construct+encode (equal input shape) and ours /
+clone+encode (the conservative figure; dev 0.28–0.43×), with Go for context.
 The owner's goal is to beat every writer; the cross-language writer race is Task 5c.
 
 **Share of a request:** ≈ 0.03–0.22 µs of ≈ 5 µs CPU (design §1-F). The parser takes ≈ 0.05–0.27 µs
@@ -819,7 +839,11 @@ The owner's goal is to beat every writer; the cross-language writer race is Task
 
 **P1a:** `value_len` and `token_len` become `engine-simd` block classification
 (`docs/notes/simd-scanning-research.md` §6.1). The delta block is contiguous, so it can be classified in one call.
-Target: validation overhead ≤ 50 ns on `post1k`. **G0:** Task 7's harness reports CPU µs per request end to end; the
+**Target (defined, fix round 2, W2):** P1a halves `writer − shape` on `post1k` and on `varied` (the cost of every
+check, §8.1), measured with the one-binary rotated bench against the fix-round-2 value in the journal. The earlier
+"validation overhead ≤ 50 ns" named no quantity: the delta scan alone was ≈ 30 ns (already met) and writer − floor
+90–112 ns (missed by 2×). The fixed cost on `get` (no delta) is not a classification cost and is Task 5b's (§10.5).
+**G0:** Task 7's harness reports CPU µs per request end to end; the
 writer is not gated separately there.
 
 ## 9. Test plan (beyond the brief)
