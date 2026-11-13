@@ -1096,9 +1096,11 @@ dictionary; the main run keeps its corpus in the task logs and the fuzz mutants 
   - **Timeouts (detected):** `split_field_line` replaced by an empty name with a fixed one-byte rest returns a rest
     that never shrinks, so the field loop never ends; the test run is killed at the timeout, which counts as caught.
   - **Equivalent (justified):** `admit`'s `seen | bit` → `seen ^ bit` runs only when `seen & bit == 0`, where `|`
-    and `^` agree; `target.rs`'s `NEVER = NOT_IN_PATH | NOT_IN_QUERY` → `^` combines two disjoint bits (1 and 2),
-    where `|` and `^` agree; `grammar::non_field_content_flags` `|` → `^` (fix round 1, outside `writer/` now) is
-    equivalent for the same reason (the first task report).
+    and `^` agree; the flag table's `NEVER = NOT_IN_PATH | NOT_IN_QUERY` → `^` (that run's `target.rs`, since
+    replaced) combined two disjoint bits, where `|` and `^` agree; `grammar::non_field_content_flags` `|` → `^`
+    (fix round 1, outside `writer/` now) is equivalent for the same reason (the first task report).
+  - **Final target check** (the fold, `target.rs` only; the other writer files are unchanged since the run above):
+    52 mutants in 3 min, **52 caught**, 0 missed, 0 timeouts, 0 unviable.
 - **Fuzz mutant check (X8):** four deliberately broken writers, each applied as a **temporary patch in a scratch
   checkout** (the parser's practice, `docs/notes/response-parser.md` §9.7), never as `cfg`-gated branches in
   engine-core. Each must be caught by §9.5 within **10 minutes or 10 M executions** on one core, from an empty corpus:
@@ -1108,10 +1110,11 @@ dictionary; the main run keeps its corpus in the task logs and the fuzz mutants 
   4. accept DEL in the target.
 
   Report the time to first crash for each in the PR. **Fix round 1** (empty corpus, after the speed fix): m1 0 s,
-  m2 0 s, m3 15 s, m4 8 s. **Fix round 2** rewrote only the target check (a flag table, `target.rs`); the field,
-  grammar and framing code m1–m3 patch is unchanged. m4 was re-applied to the table (DEL's flags set to 0) and
-  caught from an empty corpus after 424,029 executions (≈ 44 s at 9,637/s). The item-10 oracle fix was checked the
-  same way (§9.5 property 9).
+  m2 0 s, m3 15 s, m4 8 s. **Fix round 2** rewrote only the target check (`target.rs`); the field, grammar and
+  framing code m1–m3 patch is unchanged. m4 was re-applied to each version: to the flag table (DEL's flags set to 0),
+  caught from an empty corpus after 424,029 executions (≈ 44 s at 9,637/s); to the final fold (`emitted` also admits
+  `0x7F`), caught after 200,084 executions (≈ 21 s at 9,527/s). The item-10 oracle fix was checked the same way
+  (§9.5 property 9).
 
 ## 10. Hand-offs
 
