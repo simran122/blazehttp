@@ -1,0 +1,16 @@
+go version go1.27.3 linux/arm64
+goos: linux
+goarch: arm64
+pkg: github.com/simran122/blazehttp/bench/writer/go
+BenchmarkGet    	 1637394	       752.8 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1588534	       751.0 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1630405	       726.6 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1475002	       750.1 ns/op	     224 B/op	       5 allocs/op
+BenchmarkGet    	 1596859	       816.8 ns/op	     224 B/op	       5 allocs/op
+BenchmarkPost1k 	 1000000	      1349 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1295 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1294 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1524 ns/op	     264 B/op	       8 allocs/op
+BenchmarkPost1k 	 1000000	      1315 ns/op	     264 B/op	       8 allocs/op
+PASS
+ok  	github.com/simran122/blazehttp/bench/writer/go	16.685s

@@ -56,8 +56,10 @@ pub const MAX_P0_REQUEST_BYTES: usize = LONGEST_METHOD
 
 /// One request's per-request parts, borrowed from the submission arena.
 ///
-/// A passive parameter object with no invariants and no state changes, so its fields are `pub` (design §13.2 rule
-/// 1); [`write_request`] validates every field.
+/// A parameter object with no state changes, so its fields are `pub` (design §13.2 rule 1); [`write_request`]
+/// validates every field. One cross-field contract is the caller's: `header_lines` must be counted while building
+/// `headers` (one per entry serialised), never from the bytes. Malformed bytes are rejected whatever the count, but a
+/// well-formed line smuggled inside a value is caught only by that independent count (note §1, §6.4).
 pub struct RequestParts<'a> {
     pub method: Method,
     /// Origin-form target: `/` first, then only bytes WHATWG emits in that component (note §6.3, `target.rs`).

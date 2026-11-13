@@ -95,16 +95,19 @@ No row here was benchmarked: every speed effect is unverified. Where a row's *co
 ## Request writer (Task 5 research, 2026-11-07; detail in `docs/notes/request-writer.md`)
 
 Dev measurements in a Linux arm64 container (`--cpus=1`) on the owner's M2 while other agents' containers ran (load
-13–31); ratios within a run are the usable signal. Not yet in `journal.md`. The provisional ratio gates in the note
-(§8.4) are reset after 10 rounds on the reference host and the x64 VM.
+13–31); ratios within a run are the usable signal. These scratch measurements are recorded in note §8.2 and §8.3,
+not as `journal.md` entries; the scratch `writer-bench` and `sys` crates were not committed, so every "drop" below
+is **provisional (unreproduced)** until a committed bench repeats it. The committed writer measurements are in
+`journal.md` (2026-11-08 and later). The provisional ratio gates in the note (§8.4) are reset after 10 rounds on the
+reference host and the x64 VM.
 
 | Idea | Hypothesis | How to measure | Status |
 |---|---|---|---|
-| Classify the whole per-request delta block with P1a `engine-simd` stage 1, then walk masks | delta is contiguous; removes the per-line SWAR loop | `h1_write_bench` `post1k`/`varied`, writer/floor ratio, arm64 + x64 | Unverified; target validation overhead ≤ 50 ns on `post1k` |
-| `memchr` for each line's CR + branch-free fold over the value (V3) | vectorised CR search beats SWAR on short values | scratch `writer-bench` | Dev: 7–18% **slower** than SWAR `value_len` (119 vs 111 ns `post1k`, 130 vs 110 ns `varied`); drop |
+| Classify the whole per-request delta block with P1a `engine-simd` stage 1, then walk masks | delta is contiguous; removes the per-line SWAR loop | `h1_write_bench` `post1k`/`varied`, `writer − shape` ns (the checks' cost, note §8.1), arm64 + x64 | Unverified; P1a target defined in note §8.4 |
+| `memchr` for each line's CR + branch-free fold over the value (V3) | vectorised CR search beats SWAR on short values | scratch `writer-bench` | Dev: 7–18% **slower** than SWAR `value_len` (119 vs 111 ns `post1k`, 130 vs 110 ns `varied`); drop (provisional, unreproduced) |
 | Fold `" HTTP/1.1\r\n"` into the template bytes and keep a static `"GET "`-style prefix per method | 2 fewer `extend_from_slice` calls per request | `h1_write_bench` `get` | Unverified (expected ≤ 2–3 ns) |
-| Integer formatting: jeaiii / Lemire SIMD instead of `format_into` | faster `Content-Length` | scratch `writer-bench` int | Dev: `format_into`, `itoa` 1.0.18 and a safe pair table within noise (12.7–13.5 ns for 0–10⁴); `core::fmt` ≈ 2×. Literature numbers **unverified** (search summaries only): Lemire 2022 AVX-512 blog "2.5 vs 8.8 ns" for 16 digits; Champagne Gareau & Lemire 2026 (arXiv 2604.26019) "under two nanoseconds", "1.4–2× faster than the closest competitor". Gains are for ≥ 8 digits; Content-Length is 1–7 → drop |
-| `write_head` + `writev([head, body])` above a body threshold (plaintext only; owner P1b) | avoids the body copy for large bodies | `bench/writer/` sys-style bench on the reference host (nightly window) + x64 VM | Dev: copy ≈ `writev` ≤ 4 KiB; `writev` wins from 16 KiB (2 of 3 runs), 1.6–3.3× at 64 KiB; threshold to set in 4–16 KiB |
+| Integer formatting: jeaiii / Lemire SIMD instead of `format_into` | faster `Content-Length` | scratch `writer-bench` int | Dev: `format_into`, `itoa` 1.0.18 and a safe pair table within noise (12.7–13.5 ns for 0–10⁴); `core::fmt` ≈ 2×. Literature numbers **unverified** (search summaries only): Lemire 2022 AVX-512 blog "2.5 vs 8.8 ns" for 16 digits; Champagne Gareau & Lemire 2026 (arXiv 2604.26019) "under two nanoseconds", "1.4–2× faster than the closest competitor". Gains are for ≥ 8 digits; Content-Length is 1–7 → drop (provisional, unreproduced) |
+| `write_head` + `writev([head, body])` above a body threshold (plaintext only; owner P1b) | avoids the body copy for large bodies | `bench/writer/` sys-style bench on the reference host (nightly window) + x64 VM | Dev (scratch `sys`, unreproduced): copy ≈ `writev` ≤ 4 KiB; `writev` wins from 16 KiB (2 of 3 runs), 1.6–3.3× at 64 KiB; threshold to set in 4–16 KiB by P1b with a committed bench |
 | Large bodies under TLS: head-then-body plain `write`s vs one copied buffer (P1b) | two `write`s give two records but no body copy; copy gives one record | P1b, rustls 0.23.x, 16 KiB–1 MiB bodies, CPU per request + allocation counter | Unverified |
 | Hoisting the fixed request-line pieces and the `connection: close` line into static slices | fewer bounds checks per request | `h1_write_bench` | Unverified (expected ≤ 1–2 ns) |
 | Never `writev` under TLS | rustls 0.23.46 `write_vectored` collects a `Vec<&[u8]>` per call (verified in source) | allocation counter around a TLS write | Verified (source); keep the single buffer |
@@ -112,7 +115,8 @@ Dev measurements in a Linux arm64 container (`--cpus=1`) on the owner's M2 while
 | `io_uring` send with a registered buffer for the head | one fewer copy into the kernel, fewer syscalls under load | research backlog (design §7) | Unverified |
 
 Reference notes: hyper 1.12 formats the target through `Display` (own `TODO`), needs a `HeaderMap` per request and
-`writev`s head + body; Go 1.27.3 `fmt.Fprintf` + sorted header keys + 4 KiB `bufio` (5–10 allocations per request);
+`writev`s head + body; Go 1.27.3 `fmt.Fprintf` + sorted header keys + 4 KiB `bufio` (5 allocations per `get`, 8 per
+`post1k` request, journal 2026-11-08 fix round 1);
 curl 8.23.0 builds the head in a `dynbuf` with its own printf and copies head + body into a 64 KiB `sendbuf`; undici
 8.12.4 concatenates strings and `cork`s head + body into one `writev`; Bun 1.4.4 copies head + body into a per-request
 `Vec`; Boost.Beast pre-encodes each field at insertion and `writev`s one buffer per field (no CR/LF check).

@@ -288,6 +288,7 @@ empty-file panics.
     "target": "/x",
     "templateHost": "127.0.0.1:3999",
     "templateFields": "",
+    "templateFieldLines": 0,
     "headers": "x-a: a\r\nc: d\r\n",
     "headerLines": 1,
     "body": ""
@@ -301,7 +302,7 @@ empty-file panics.
 | `inputEncoding` | As for responses; applies to every byte string of the case (request fields and `expect.bytes`). |
 | `request.method` | One of the generated `METHODS`. |
 | `request.target` | The origin-form target bytes. |
-| `request.templateHost`, `request.templateFields` | `HeaderTemplate::new(host, fields, &[])`; a template that fails to build is the case's result. |
+| `request.templateHost`, `request.templateFields` | `HeaderTemplate::new(host, fields, field_lines, &[])` with `templateFieldLines` as `field_lines`; a template that fails to build is the case's result. |
 | `request.templateFieldLines` | The field count JS serialised into `templateFields` (`HeaderTemplate::new`'s `field_lines`, a `u16`), **not** the number of CRLFs present. |
 | `request.headers` | The per-request delta, `("name: value\r\n")*`. |
 | `request.headerLines` | The field count the JS layer passes (`RequestParts::header_lines`, a `u16`), **not** the number of CRLFs present: an injection case states what JS serialised. |
@@ -311,7 +312,9 @@ empty-file panics.
 
 **Provenance of the own file.** `blazehttp-rules.json` cites the note at commit `482b8e3`, which the annotated tag
 `notes/request-writer-task5` keeps reachable whatever happens to the branch (a rebase replaced the first pin, review
-item 26).
+item 26). By design the pinned commit is **not an ancestor** of the branch or of `main` after the squash merge: it is
+the pre-rebase twin of the note commit, reachable only through the tag, and the note's text at the pin is the text
+the cases were derived from.
 
 **How the files were built.** Every case states its intended outcome; an independent model of the note's rules
 (§6.2–§7, written with plain per-byte loops and set lookups, outside the repository) computes the outcome and the exact
