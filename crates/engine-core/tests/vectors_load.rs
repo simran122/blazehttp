@@ -257,3 +257,13 @@ fn request_null_connection_authority_panics() {
         r#""body": "", "connAuthority": null }"#,
     );
 }
+
+#[test]
+#[should_panic(expected = "h1-request/a.json")]
+fn request_null_derived_from_panics() {
+    load_edited_request_case(
+        "request-null-derived-from",
+        r#""inputEncoding": "latin1","#,
+        r#""inputEncoding": "latin1", "derivedFrom": null,"#,
+    );
+}

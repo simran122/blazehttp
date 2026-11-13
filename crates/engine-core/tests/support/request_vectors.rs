@@ -59,7 +59,8 @@ pub struct RawRequestCase {
     input_encoding: String,
     request: RawRequest,
     expect: RawExpect,
-    #[serde(default, rename = "derivedFrom")]
+    /// Informational; absent or a string, `null` is rejected, as `tools/vectors/schema.ts` does.
+    #[serde(default, rename = "derivedFrom", deserialize_with = "present_string")]
     _derived_from: Option<String>,
 }
 
