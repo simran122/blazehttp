@@ -1081,6 +1081,10 @@ and §7 from the RFC grammar with per-byte loops and string comparisons. `write_
 **Corpus:** runs start from an empty corpus (the §9.2 vectors are not expressible as structure-aware inputs) with the
 dictionary; the main run keeps its corpus in the task logs and the fuzz mutants are measured from an empty corpus.
 
+**Main runs, fix round 2 (capped container, one core, no crash):** 1,201 s and 5,887,521 executions on the flag-table
+target check; then 601 s and 2,681,933 executions on the final target check, continuing from the kept corpus
+(1,569 inputs, 1,998 edges).
+
 ### 9.6 Mutation testing (F8)
 - **`cargo mutants`** (27.1.0), in the capped container (`--memory=2g --cpus=1`, `--jobs 1`, 20 s timeout):
   `cargo mutants -p engine-core --file 'crates/engine-core/src/h1/writer/**' --jobs 1 --timeout 20 -- -- --test-threads 2`
